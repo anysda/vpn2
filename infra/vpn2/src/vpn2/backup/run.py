@@ -7,10 +7,12 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
 import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -124,7 +126,7 @@ def take_slice(bundle, root, wait=LOCK_WAIT):
     db = f'{root}/var/lib/anysda-vpn2/db.sqlite'
     with _pki_lock(f'{root}/etc/openvpn/server/.pki.lock', wait):
         if os.access(db, os.R_OK):
-            _must(['sqlite3', db, '.timeout 10000', f".backup '{bundle}/db.sqlite'"])
+            _sqlite(lambda: db_copy(db, f'{bundle}/db.sqlite'))
         else:
             _warn(f'anysda-backup: WARN: {db} не найден — пропускаю db.sqlite')
         os.makedirs(f'{bundle}/etc-wireguard', exist_ok=True)
@@ -134,6 +136,19 @@ def take_slice(bundle, root, wait=LOCK_WAIT):
         for name in ('openvpn', 'strongswan', 'swanctl'):
             if os.path.isdir(f'{root}/etc/{name}'):
                 _must(['cp', '-a', f'{root}/etc/{name}', f'{bundle}/etc-{name}'])
+
+
+def _sqlite(step):
+    try:
+        return step()
+    except sqlite3.Error as error:
+        raise Stop(1, NO_SPACE if 'disk is full' in str(error) else f'sqlite3: {error}') from None
+
+
+def db_copy(db, target):
+    with contextlib.closing(sqlite3.connect(db, timeout=10)) as source, \
+            contextlib.closing(sqlite3.connect(target)) as copy:
+        source.backup(copy)
 
 
 def check_slice(bundle):
@@ -205,8 +220,9 @@ def _output(argv):
 
 def _app_version():
     try:
-        return str(json.loads(_output(['curl', '-fsS', '--max-time', '10', VERSION_URL]))['version']).rstrip('\n')
-    except (ValueError, KeyError, TypeError):
+        with urllib.request.urlopen(VERSION_URL, timeout=10) as response:
+            return str(json.load(response)['version']).rstrip('\n')
+    except (OSError, ValueError, KeyError, TypeError):
         return 'unknown'
 
 
@@ -216,15 +232,14 @@ def write_manifest(bundle, root, ts):
         source = Path(f'{root}/etc/anysda/source-root').read_text(errors='surrogateescape').rstrip('\n')
     except OSError:
         source = ''
-    schema = '0'
+    schema = 0
     if os.path.isfile(f'{bundle}/db.sqlite'):
-        schema = _output(['sqlite3', f'{bundle}/db.sqlite', 'PRAGMA schema_version;'])
-        if schema is None:
-            raise Stop(1)
+        with contextlib.closing(sqlite3.connect(f'{bundle}/db.sqlite')) as db:
+            schema = _sqlite(lambda: db.execute('PRAGMA schema_version').fetchone()[0])
     data = {'version': _app_version(),
             'git_commit': _output(['git', '-C', source or '/opt/anysda-vpn2', 'rev-parse', '--short', 'HEAD'])
             or 'unknown',
-            'schema_version': int(schema),
+            'schema_version': schema,
             'timestamp': ts,
             'components': archive.components(bundle),
             'archive_format': 'tar.gz.age',
@@ -245,25 +260,23 @@ def rotate_local(local_dir, final, retention):
 
 def upload_s3(settings, final, key, retention):
     """Выгрузка в S3 и ротация по именам (метка в имени); кроме нового ключа, остаются retention последних."""
-    target = f's3://{settings.s3_bucket}'
-    print(f'anysda-backup: uploading to {target}/{key}', flush=True)
-    rc, _out, why = env.aws(settings, 'cp', final, f'{target}/{key}', '--only-show-errors')
+    print(f'anysda-backup: uploading to s3://{settings.s3_bucket}/{key}', flush=True)
+    rc, _out, why = env.s3(settings, 'copyto', final, 's3:' + key)
     if rc:
-        raise Stop(rc, _named('aws', rc, why))
-    listed, text, list_why = env.aws(settings, 'ls', f'{target}/', capture=True)
-    names = [(line.split() or [''])[-1] for line in text.splitlines()]
-    keys = sorted(name for name in names if re.fullmatch(r'anysda-vpn2-.*\.tar\.gz\.age', name))
+        raise Stop(rc, _named('rclone', rc, why))
+    listed, rows, list_why = env.s3_names(settings)
+    keys = sorted(name for name, *_rest in rows)
     if not keys:
-        raise Stop(listed or 1, _named('aws', listed, list_why) if listed else 'архива нет в списке бакета')
+        raise Stop(listed or 1, _named('rclone', listed, list_why) if listed else 'архива нет в списке бакета')
     for name in keys[:len(keys) - retention] if retention > 0 else keys:
         if name == key:
             continue
-        rc, _out, why = env.aws(settings, 'rm', f'{target}/{name}', '--only-show-errors')
+        rc, _out, why = env.s3(settings, 'deletefile', 's3:' + name)
         if rc:
-            raise Stop(rc, _named('aws', rc, why))
+            raise Stop(rc, _named('rclone', rc, why))
         print(f'anysda-backup: s3 rotated out {name}')
     if listed:
-        raise Stop(listed, _named('aws', listed, list_why))
+        raise Stop(listed, _named('rclone', listed, list_why))
 
 
 def _make(settings, paths, enter, check, pause, wait):
@@ -291,7 +304,7 @@ def _make(settings, paths, enter, check, pause, wait):
         write_manifest(bundle, root, ts)
         final = f'{settings.local_dir}/{name}.tar.gz.age'
         enter('упаковка и шифрование не прошли')
-        _must(['tar', '-C', str(work), '-czf', str(work / f'{name}.tar.gz'), name])
+        archive.pack(work, name, work / f'{name}.tar.gz')
         archive.encrypt(work / f'{name}.tar.gz', work / f'{name}.tar.gz.age', settings.passphrase)
         enter('архив не сохранён на диск')
         shutil.move(work / f'{name}.tar.gz.age', final)

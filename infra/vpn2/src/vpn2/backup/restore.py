@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from vpn2.backup import archive, check, env, revoke
+from vpn2.backup import run as run_backup
 
 NO_PASSPHRASE = ('anysda-restore FATAL: ANYSDA_BACKUP_PASSPHRASE пуст в {env_file}.\n'
                  '  Заполни backup.passphrase в config.yaml и прогони ./deploy.sh 26-backup ru')
@@ -163,14 +164,12 @@ def resolve_latest(settings):
         local = None
     cloud = None
     if settings.backend == 's3':
-        code, text, _why = env.aws(settings, 'ls', f's3://{settings.s3_bucket}/', capture=True)
+        code, rows, why = env.s3_names(settings)
         if code == 0:
-            cloud = _newest(line.strip(' \t').rpartition(' ')[2] for line in text.split('\n'))
+            cloud = _newest(row[0] for row in rows)
         else:
             _warn('WARN: S3 недоступен — выбираю только среди локальных архивов, '
-                  'в облаке может лежать более свежий:')
-            for line in text.split('\n')[-3:]:
-                print(f'  {line}', file=sys.stderr)
+                  f'в облаке может лежать более свежий:\n  {why}')
     if local is None and cloud is None:
         raise RestoreError(3, f"anysda-restore: ни одного backup'а ни в {settings.local_dir}, ни в S3")
     pick, source, other, other_from = local, 'local', None, ''
@@ -202,12 +201,12 @@ def s3_pull(settings, name):
     """Скачать архив из S3 в локальный каталог с правами 0600."""
     os.makedirs(settings.local_dir, mode=0o700, exist_ok=True)
     target = os.path.join(settings.local_dir, name)
-    code, text, _why = env.aws(settings, 'cp', f's3://{settings.s3_bucket}/{name}', target, '--only-show-errors')
-    if text:
-        raise RestoreError(1, f'anysda-restore: {text}')
+    code, _out, why = env.s3(settings, 'copyto', f's3:{name}', target)
+    if why.endswith('parameter null or not set'):
+        raise RestoreError(1, f'anysda-restore: {why}')
     try:
         if code == 0:
-            os.chmod(target, 0o600)  # aws s3 cp следует umask - выставляем явно
+            os.chmod(target, 0o600)
     except OSError:
         code = 1
     if code:
@@ -404,11 +403,10 @@ def guards(bundle, live_db, force):
         return
     size = os.path.getsize(live_db)
     try:
-        text = subprocess.run(['sqlite3', str(live_db), 'SELECT COUNT(*) FROM clients;'], capture_output=True,
-                              check=True, text=True).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        text = ''
-    clients = int(text) if text.isdigit() else 0
+        with contextlib.closing(sqlite3.connect(f'file:{live_db}?mode=ro', uri=True, timeout=10)) as db:
+            clients = db.execute('SELECT COUNT(*) FROM clients').fetchone()[0]
+    except sqlite3.Error:
+        clients = 0
     if size > 0 and clients > 0 and not force:
         raise RestoreError(6, f'anysda-restore: ABORT — текущая db.sqlite не пустая ({clients} клиентов, {size} байт).\n'
                               'Будут перетёрты: db.sqlite, /etc/anysda/*, /etc/wireguard/wg0.conf, /etc/openvpn/*, '
@@ -435,7 +433,10 @@ def pre_restore_snapshot(settings, work, root, live_db):
     tree = work / 'pre-restore'
     (tree / DB_DIR).mkdir(parents=True, exist_ok=True)
     if os.path.isfile(live_db):
-        must(['sqlite3', str(live_db), '.timeout 10000', f".backup '{tree / DB}'"])
+        try:
+            run_backup.db_copy(live_db, tree / DB)
+        except sqlite3.Error as exc:
+            raise RestoreError(1, f'anysda-restore: sqlite3: {exc}') from None
     for path in SNAPSHOT_PATHS:
         if os.path.lexists(os.path.join(root, path)):
             must(['cp', '-a', '--parents', path, f'{tree}/'], cwd=root)

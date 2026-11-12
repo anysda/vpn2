@@ -1,4 +1,4 @@
-"""Настройки бэкапа из /etc/anysda/backup.env и вызов aws с ними."""
+"""Настройки бэкапа из /etc/anysda/backup.env и вызов rclone с ними."""
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -27,7 +27,7 @@ def _bash_env(script, *args):
 
 
 def read_env(path=DEFAULT_ENV_FILE):
-    """Переменные файла, как их видит bash после source: файл пишется printf %q, разбор отдан bash."""
+    """Переменные файла, как их видит bash после source: значения в кавычках shell, разбор отдан bash."""
     if not os.access(path, os.R_OK) or os.path.isdir(path):
         raise BackupEnvError(f'anysda-backup: {path} отсутствует или unreadable')
     base = _bash_env('set -a; env -0')
@@ -70,11 +70,27 @@ def _s3_unset(values):
     return next((name for key, name in S3_NAMES.items() if not getattr(values, key)), None)
 
 
-def aws(values, *args, capture=False):
-    """`aws s3 ...` с ключами из настроек: (код, stdout при capture, причина отказа); stderr aws виден оператору."""
+def s3(values, command, *paths, capture=False):
+    """`rclone <command>` с бакетом как удалённым `s3:` из настроек: (код, stdout при capture, причина отказа).
+
+    Ключи идут окружением, stderr rclone виден оператору; `s3:<имя>` - ключ в бакете.
+    """
     if unset := _s3_unset(values):
-        return 1, f'{unset}: parameter null or not set', ''
-    environ = {**os.environ, 'AWS_DEFAULT_REGION': values.s3_region,
-               'AWS_ACCESS_KEY_ID': values.s3_access_key, 'AWS_SECRET_ACCESS_KEY': values.s3_secret_key}
-    return archive.call(['aws', '--endpoint-url', values.s3_endpoint, 's3', *args], env=environ,
-                        stdout=subprocess.PIPE if capture else None)
+        return 1, '', f'{unset}: parameter null or not set'
+    environ = {**os.environ, 'RCLONE_CONFIG_S3_TYPE': 's3', 'RCLONE_CONFIG_S3_PROVIDER': 'Other',
+               'RCLONE_CONFIG_S3_ENDPOINT': values.s3_endpoint, 'RCLONE_CONFIG_S3_REGION': values.s3_region,
+               'RCLONE_CONFIG_S3_ACCESS_KEY_ID': values.s3_access_key,
+               'RCLONE_CONFIG_S3_SECRET_ACCESS_KEY': values.s3_secret_key, 'RCLONE_S3_NO_CHECK_BUCKET': 'true'}
+    paths = [f's3:{values.s3_bucket}/{path[3:]}' if path.startswith('s3:') else path for path in paths]
+    return archive.call(['rclone', command, *paths], env=environ, stdout=subprocess.PIPE if capture else None)
+
+
+def s3_names(values):
+    """[(имя, дата, время, размер)] архивов бакета по `rclone lsl`; (код, строки, причина)."""
+    rc, text, why = s3(values, 'lsl', 's3:', capture=True)
+    rows = []
+    for line in text.splitlines():
+        parts = line.split(maxsplit=3)
+        if len(parts) == 4 and parts[3].startswith('anysda-vpn2-') and parts[3].endswith('.tar.gz.age'):
+            rows.append((parts[3], parts[1], parts[2].split('.')[0], parts[0]))
+    return rc, rows, why

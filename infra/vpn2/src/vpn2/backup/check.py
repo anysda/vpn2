@@ -4,13 +4,13 @@
 есть пир WireGuard и учётка IKEv2, у отключённого и удалённого их нет. Коды: 0 - расхождений
 нет, 2 - каталог не набор (нет manifest.json), 3 - расхождения, 5 - сверку нечем выполнить.
 """
-import base64
 import calendar
 import contextlib
 import json
 import pathlib
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 
@@ -19,34 +19,22 @@ from vpn2 import wg
 MANIFEST = 'manifest.json'
 
 
-def _tlv(data, i=0):
-    tag, size = data[i], data[i + 1]
-    i += 2
-    if size & 0x80:
-        width = size & 0x7f
-        size, i = int.from_bytes(data[i:i + width], 'big'), i + width
-    return tag, data[i:i + size], i + size
-
-
-def _children(data):
-    i = 0
-    while i < len(data):
-        tag, value, i = _tlv(data, i)
-        yield tag, value
-
-
-def _der(pem, kind):
-    match = re.search(f'-----BEGIN {kind}-----(.*?)-----END {kind}-----', pem or '', re.S)
-    return base64.b64decode(''.join(match.group(1).split())) if match else None
+def _openssl(*args, data):
+    done = subprocess.run(['openssl', *args], input=data, capture_output=True, text=True, check=False)
+    return done.stdout if done.returncode == 0 else ''
 
 
 def _serial(pem):
-    data = _der(pem, 'CERTIFICATE')
-    if data is None:
-        return None
-    tbs = _tlv(_tlv(data)[1])[1]
-    items = list(_children(tbs))
-    return int.from_bytes(items[1 if items[0][0] == 0xa0 else 0][1], 'big')
+    value = _openssl('x509', '-noout', '-serial', data=pem or '').strip().partition('=')[2]
+    return int(value, 16) if value else None
+
+
+def _revoked(crl):
+    """Серийники списка отзыва; битый CRL - ValueError."""
+    text = _openssl('crl', '-noout', '-text', data=crl)
+    if 'Certificate Revocation List' not in text:
+        raise ValueError('CRL не разобран')
+    return {int(number, 16) for number in re.findall(r'Serial Number: ([0-9A-Fa-f]+)', text)}
 
 
 def _timestamp(root):
@@ -84,13 +72,7 @@ def _compare(con, root, run):
 
     crl = root / 'etc-openvpn/server/pki/crl.pem'
     if crl.is_file() and 'ovpn_cert' in device_columns:
-        revoked = set()
-        tbs = _tlv(_tlv(_der(crl.read_text(), 'X509 CRL'))[1])[1]
-        for tag, value in _children(tbs):
-            # Список отзыва - единственная SEQUENCE из SEQUENCE{INTEGER серийник, ...}.
-            entries = [next(_children(v)) for t, v in _children(value) if t == 0x30] if tag == 0x30 else []
-            if entries and len(entries) == len(list(_children(value))) and all(t == 0x02 for t, _ in entries):
-                revoked |= {int.from_bytes(v, 'big') for _, v in entries}
+        revoked = _revoked(crl.read_text())
         for device, cert in con.execute(
                 f'SELECT d.id, d.ovpn_cert FROM devices d WHERE d.ovpn_cert IS NOT NULL AND {deleting} = 0'):
             if (number := _serial(cert)) in revoked:

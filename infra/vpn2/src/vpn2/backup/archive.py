@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import termios
 import time
@@ -17,13 +18,11 @@ from pathlib import Path
 
 MANIFEST = 'manifest.json'
 NAME = re.compile(r'anysda-vpn2-([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z)\.tar\.gz\.age')
-ENTER_PROMPT = b'Enter passphrase'
-CONFIRM_PROMPT = b'Confirm passphrase'
 TIMEOUT = 60
 
 
 class ArchiveError(Exception):
-    """Шаг архива не удался; code - код выхода (3 шифрование, 4 расшифровка, 5 распаковка)."""
+    """Шаг не удался; code - код выхода команды."""
 
     def __init__(self, code, message):
         super().__init__(message)
@@ -46,10 +45,7 @@ def code(argv, **kwargs):
 
 
 def call(argv, **kwargs):
-    """Программа, чей stderr виден оператору: (код, stdout, последняя непустая строка stderr).
-
-    Не запустилась - код 127, как у shell.
-    """
+    """Программа, чей stderr виден оператору: (код, stdout, последняя непустая строка stderr)."""
     try:
         done = subprocess.run(argv, check=False, stderr=subprocess.PIPE, text=True, errors='surrogateescape', **kwargs)
     except OSError as exc:
@@ -61,11 +57,8 @@ def call(argv, **kwargs):
 
 
 def sha_file(path):
-    digest = hashlib.sha256()
     with open(path, 'rb') as source:
-        for chunk in iter(lambda: source.read(1 << 20), b''):
-            digest.update(chunk)
-    return 'sha256:' + digest.hexdigest()
+        return 'sha256:' + hashlib.file_digest(source, 'sha256').hexdigest()
 
 
 def sha(path):
@@ -87,8 +80,7 @@ def sha(path):
 
 def components(bundle_dir):
     """Имя -> sha для всего в каталоге набора, кроме manifest.json, по порядку имён."""
-    return {name: sha(os.path.join(bundle_dir, name))
-            for name in sorted(os.listdir(bundle_dir)) if name != MANIFEST}
+    return {name: sha(os.path.join(bundle_dir, name)) for name in sorted(os.listdir(bundle_dir)) if name != MANIFEST}
 
 
 def wipe(path):
@@ -128,23 +120,29 @@ def exit_on_signals(signals=(signal.SIGTERM, signal.SIGHUP)):
             signal.signal(s, handler)
 
 
-def pack(work_dir, name, out_tar):
-    """`tar -C work_dir -czf out_tar name`."""
-    rc = code(['tar', '-C', str(work_dir), '-czf', str(out_tar), name], capture_output=True)
-    if rc:
-        raise ArchiveError(rc, 'anysda-backup: tar -czf провалился')
+def pack(directory, name, out_tar):
+    with tarfile.open(out_tar, 'w:gz') as tar:
+        tar.add(os.path.join(directory, name), arcname=name)
+
+
+def unpack(tar_path, dest):
+    try:
+        with tarfile.open(tar_path) as tar:
+            tar.extractall(dest, filter='tar')
+    except (tarfile.TarError, OSError) as exc:
+        raise ArchiveError(5, 'anysda-restore: tar -xzf провалился — архив повреждён (после успешной дешифровки)\n'
+                              f'  {exc}') from None
 
 
 def pty_run(argv, passphrase, prompts, *, timeout=TIMEOUT):
-    """Запустить argv на своём терминале и отвечать паролем на приглашения; вернуть код выхода.
+    """argv на своём терминале, на приглашения отвечает паролем; код выхода.
 
-    Пароль не попадает ни в argv, ни в окружение. После каждого ответа таймаут отсчитывается
-    заново; тишина дольше timeout - процесс убит, код отрицательный.
+    Пароль не попадает ни в argv, ни в окружение. Тишина дольше timeout после
+    последнего ответа - процесс убит, код отрицательный.
     """
     master, slave = pty.openpty()
     try:
-        proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
-                                start_new_session=True,
+        proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, close_fds=True, start_new_session=True,
                                 preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
     except OSError:
         os.close(master)
@@ -181,7 +179,7 @@ def _filled(path):
 
 def encrypt(src, dst, passphrase):
     """`age -p -o dst src` с паролем через pty; src затирается. Отказ - ArchiveError (код age или 3)."""
-    rc = pty_run(['age', '-p', '-o', str(dst), str(src)], passphrase, (ENTER_PROMPT, CONFIRM_PROMPT))
+    rc = pty_run(['age', '-p', '-o', str(dst), str(src)], passphrase, (b'Enter passphrase', b'Confirm passphrase'))
     wipe(src)
     if rc or not _filled(dst):
         raise ArchiveError(rc if rc > 0 else 3, f'anysda-backup FATAL: шифрование age не дало файла {dst}')
@@ -189,21 +187,9 @@ def encrypt(src, dst, passphrase):
 
 def decrypt(src, dst, passphrase):
     """`age -d -o dst src` с паролем через pty; отказ - dst удаляется и ArchiveError(4)."""
-    rc = pty_run(['age', '-d', '-o', str(dst), str(src)], passphrase, (ENTER_PROMPT,))
+    rc = pty_run(['age', '-d', '-o', str(dst), str(src)], passphrase, (b'Enter passphrase',))
     if rc or not _filled(dst):
         with contextlib.suppress(OSError):
             os.unlink(dst)
         raise ArchiveError(4, f'anysda-restore: дешифровка провалилась (age exit={rc})'
                               ' — неверный passphrase или повреждённый архив')
-
-
-def unpack(tar_path, dest):
-    """`tar -C dest -xzf tar_path`; отказ - ArchiveError(5) с выводом tar."""
-    try:
-        done = subprocess.run(['tar', '-C', str(dest), '-xzf', str(tar_path)], capture_output=True, check=False)
-    except OSError as exc:
-        raise ArchiveError(5, f'anysda-restore: tar не запущен: {exc.strerror}') from None
-    if done.returncode != 0:
-        text = 'anysda-restore: tar -xzf провалился — архив повреждён (после успешной дешифровки)'
-        lines = done.stderr.decode(errors='replace').splitlines()
-        raise ArchiveError(5, '\n'.join([text, *('  ' + line for line in lines)]))

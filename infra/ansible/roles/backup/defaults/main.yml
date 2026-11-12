@@ -21,11 +21,8 @@ backup_s3:
   BACKUP_S3_SECRET_KEY: "{{ vpn2_env.BACKUP_S3_SECRET_KEY | default('') }}"
 backup_s3_region: "{{ vpn2_env.BACKUP_S3_REGION | default('') }}"
 
-backup_packages: [age, expect, sqlite3]
-backup_packages_s3: [unzip, curl, gnupg]
-# Версия aws-cli v2 - из общего списка пинов; Ubuntu 24.04 убрала пакет awscli.
-backup_aws_cli_version: "{{ (lookup('ansible.builtin.file', backup_infra ~ '/versions.yml') | from_yaml).aws_cli }}"
-backup_aws_cli_url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{{ backup_aws_cli_version }}.zip"
+backup_packages: [age, sqlite3]
+backup_packages_s3: [rclone]
 # Три команды на entry и то, что restore берёт с узла вне клона.
 backup_commands:
   - {name: anysda-backup.sh, command: backup}

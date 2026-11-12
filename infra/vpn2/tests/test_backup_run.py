@@ -22,8 +22,8 @@ STUBS = {
     'age': '#!/bin/sh\n[ -z "$STUB_AGE_FAIL" ] || exit "$STUB_AGE_FAIL"\ncp "$4" "$3"\n',
     'git': '#!/bin/sh\necho abc1234\n',
     'curl': '#!/bin/sh\necho \'{"version":"9.9"}\'\n',
-    'aws': '#!/bin/sh\necho "aws $*" >> "$STUB_LOG"\n[ "$4" != ls ] || cat "$STUB_S3_LIST"\n'
-           '[ "$STUB_AWS_FAIL" != "$4" ] || { echo "aws: boom" >&2; exit 9; }\n',
+    'rclone': '#!/bin/sh\necho "rclone $*" >> "$STUB_LOG"\n[ "$1" != lsl ] || cat "$STUB_S3_LIST"\n'
+              '[ "$STUB_RCLONE_FAIL" != "$1" ] || { echo "rclone: boom" >&2; exit 9; }\n',
 }
 
 
@@ -168,16 +168,16 @@ def test_empty_passphrase_is_one_event(node, capsys):
 def test_s3_upload_and_rotation(node, monkeypatch, capsys):
     root, paths, _events = node
     old = [f'anysda-vpn2-2020-01-0{n}T000000Z.tar.gz.age' for n in (1, 2, 3)]
-    put(root / 's3', ''.join(f'2020-01-0{n} 00:00:00  10 {name}\n' for n, name in enumerate(old, 1)))
+    put(root / 's3', ''.join(f'  10 2020-01-0{n} 00:00:00.000000000 {name}\n' for n, name in enumerate(old, 1)))
     monkeypatch.setenv('STUB_S3_LIST', str(root / 's3'))
     s3 = {'BACKUP_BACKEND': 's3', 'BACKUP_RETENTION': '2', 'BACKUP_S3_BUCKET': 'b', 'BACKUP_S3_ENDPOINT': 'https://e',
           'ANYSDA_S3_ACCESS_KEY': 'k', 'ANYSDA_S3_SECRET_KEY': 's'}
     assert create(root, paths, values(root, **s3)) == 0
     log = (root / 'log').read_text().splitlines()
-    assert log[0].startswith('aws --endpoint-url https://e s3 cp ') and ' s3://b/anysda-vpn2-' in log[0]
-    assert f'aws --endpoint-url https://e s3 rm s3://b/{old[0]} --only-show-errors' in log
+    assert log[0].startswith('rclone copyto ') and ' s3:b/anysda-vpn2-' in log[0]
+    assert f'rclone deletefile s3:b/{old[0]}' in log
     assert f's3 rotated out {old[0]}' in capsys.readouterr().out
-    monkeypatch.setenv('STUB_AWS_FAIL', 'cp')
+    monkeypatch.setenv('STUB_RCLONE_FAIL', 'copyto')
     assert create(root, paths, values(root, **s3)) == 9
 
 
@@ -188,19 +188,20 @@ S3 = {'BACKUP_BACKEND': 's3', 'BACKUP_S3_BUCKET': 'b', 'BACKUP_S3_ENDPOINT': 'ht
 @needs_tools
 @pytest.mark.parametrize(('extra', 'stub_env', 'code', 'detail'), [
     ({}, {'STUB_AGE_FAIL': '7'}, 7, 'упаковка и шифрование не прошли: age: код выхода 7'),
-    (S3, {'STUB_AWS_FAIL': 'cp'}, 9, 'выгрузка в S3 не прошла: aws: boom'),
+    (S3, {'STUB_RCLONE_FAIL': 'copyto'}, 9, 'выгрузка в S3 не прошла: rclone: boom'),
     (S3, {}, 1, 'выгрузка в S3 не прошла: архива нет в списке бакета'),
-    ({}, {'STUB_SQLITE': '5'}, 5, 'снимок базы и ключей не снят: sqlite3: код выхода 5'),
-    ({}, {'STUB_SQLITE': '1 disk: No space left on device, key access-key'}, 1,
+    ({}, {'STUB_SQLITE': 'database or disk is full'}, 1,
      'снимок базы и ключей не снят: нет места на диске'),
-    (S3, {'STUB_SQLITE': '1 bad access-key secret-key парольная фраза'}, 1,
-     'снимок базы и ключей не снят: bad *** *** ***'),
+    (S3, {'STUB_SQLITE': 'bad access-key secret-key парольная фраза'}, 1,
+     'снимок базы и ключей не снят: sqlite3: bad *** *** ***'),
 ])
 def test_failure_event_names_step_and_cause(node, monkeypatch, extra, stub_env, code, detail):
     """Событие о сбое (панель шлёт его админу в Telegram) называет шаг и причину, без секретов."""
     root, paths, events = node
-    put(root / 'bin/sqlite3', '#!/bin/sh\n[ -n "$STUB_SQLITE" ] || exec /usr/bin/sqlite3 "$@"\n'
-        'set -- $STUB_SQLITE; code=$1; shift; [ -z "$*" ] || echo "$*" >&2; exit "$code"\n', 0o755)
+    if 'STUB_SQLITE' in stub_env:
+        def broken(*_args):
+            raise sqlite3.OperationalError(stub_env.pop('STUB_SQLITE'))
+        monkeypatch.setattr(backup_run, 'db_copy', broken)
     put(root / 's3', '')
     monkeypatch.setenv('STUB_S3_LIST', str(root / 's3'))
     for name, value in stub_env.items():
@@ -242,7 +243,7 @@ def test_settings_defaults_and_required():
         env.settings({'BACKUP_BACKEND': 's3'})
     lazy = env.settings({'BACKUP_BACKEND': 's3', 'ANYSDA_BACKUP_PASSPHRASE': 'секрет'}, lazy_s3=True)
     assert 'секрет' not in repr(lazy)
-    assert env.aws(lazy, 'ls') == (1, 'BACKUP_S3_BUCKET: parameter null or not set', '')
+    assert env.s3(lazy, 'lsl', 's3:') == (1, '', 'BACKUP_S3_BUCKET: parameter null or not set')
 
 
 def test_read_env_is_what_bash_sources(tmp_path):
@@ -285,8 +286,8 @@ def test_latest_prefers_strictly_newer_cloud(tmp_path, monkeypatch, capsys):
     put(tmp_path / old)
     put(tmp_path / 'anysda-vpn2-junk.tar.gz.age')
     vals = env.settings({'BACKUP_BACKEND': 's3', 'BACKUP_LOCAL_DIR': str(tmp_path)}, lazy_s3=True)
-    listed = {'code': 0, 'text': f'2026-01-02 00:00:00   10 {new}\n2026-01-01 00:00:00   10 {old}'}
-    monkeypatch.setattr(env, 'aws', lambda *_a, **_k: (listed['code'], listed['text'], ''))
+    listed = {'code': 0, 'text': f'10 2026-01-02 00:00:00.0 {new}\n10 2026-01-01 00:00:00.0 {old}'}
+    monkeypatch.setattr(env, 's3', lambda *_a, **_k: (listed['code'], listed['text'], ''))
     assert restore.resolve_latest(vals) == (new, 'S3')
     assert f'самый свежий local: {old} — старше выбранного на 1 д 0 ч' in capsys.readouterr().err
     listed.update(code=1, text='boom')

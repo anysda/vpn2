@@ -259,7 +259,7 @@ backup:
   local:
     dir: /var/backups/anysda-vpn2
 
-  # S3 — только если backend: s3. aws-cli ставится 26-backup, поддерживает любой
+  # S3 — только если backend: s3. rclone ставится 26-backup, поддерживает любой
   # S3-совместимый endpoint: AWS, MinIO, Backblaze B2, Cloudflare R2, Yandex
   # Object Storage, Cloud.ru и т.д. Креды кладёт setup.sh, доставляет 26-backup
   # в /etc/anysda/backup.env (chmod 600), systemd читает через EnvironmentFile.

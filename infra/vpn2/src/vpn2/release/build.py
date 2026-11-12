@@ -59,10 +59,6 @@ def binary_specs(root):
     version = pins['yt_pot']
     specs['yt-pot'] = spec(version, 'all', f'https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{version}.tar.gz',
                            pins['yt_pot_sha256'])
-    version = pins['aws_cli']
-    url = f'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{version}.zip'
-    specs['aws-cli'] = spec(version, 'amd64', url)
-    specs['aws-cli-signature'] = spec(version, 'amd64', url + '.sig')
     version = pins['zapret2']
     specs['zapret2-source'] = spec(version, 'all', f'https://github.com/bol-van/zapret2/archive/{version}.tar.gz')
     return specs

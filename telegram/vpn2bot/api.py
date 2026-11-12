@@ -22,7 +22,7 @@ telegram_http = httpx.AsyncClient(
     limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
 
 
-def _given(**fields) -> dict:
+def given(**fields) -> dict:
     return {key: value for key, value in fields.items() if value is not None}
 
 
@@ -46,14 +46,9 @@ async def telegram(method: str, payload: dict, files: dict | None = None) -> dic
 
 async def send(chat_id: int, text: str, parse_mode: str | None = None,
                reply_markup: dict | None = None, message_id: int | None = None) -> dict:
-    payload = _given(chat_id=chat_id, text=text, message_id=message_id or None,
+    payload = given(chat_id=chat_id, text=text, message_id=message_id or None,
                      parse_mode=parse_mode or None, reply_markup=reply_markup)
     return await telegram('editMessageText' if message_id else 'sendMessage', payload)
-
-
-async def answer(callback_id: str, text: str = '', alert: bool = False) -> dict:
-    payload = _given(callback_query_id=callback_id, text=text or None, show_alert=alert or None)
-    return (await telegram_http.post('/answerCallbackQuery', json=payload, timeout=20)).json()
 
 
 async def send_file(chat_id: int, kind: str, filename: str, content: bytes, caption: str) -> dict:
@@ -63,8 +58,6 @@ async def send_file(chat_id: int, kind: str, filename: str, content: bytes, capt
 
 
 class BotApiError(Exception):
-    """A refusal of /api/bot/*: message is for the person, code is the panel's machine code."""
-
     def __init__(self, status: int, message: str, code: str = ''):
         super().__init__(message)
         self.status, self.message, self.code = status, message, code

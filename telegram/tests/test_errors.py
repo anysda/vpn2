@@ -14,7 +14,7 @@ class ErrorPrivacyTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(bot.api.telegram_http.aclose)
         with patch.object(bot.api, 'panel', AsyncMock(side_effect=RuntimeError(
                 f'https://api.telegram.org/bot{bot.config.TOKEN}/sendPhoto'))), \
-                patch.object(bot.api, 'answer', AsyncMock(return_value={'ok': True})) as reply:
+                patch.object(bot.handlers.Ask, 'answer', AsyncMock(return_value={'ok': True})) as reply:
             await bot.handlers.dispatch(update('client', ('press', 'wg:7')), None)
             self.assertNotIn(bot.config.TOKEN, str(reply.await_args))
 

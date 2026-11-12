@@ -34,8 +34,7 @@ async def event_outbox(webapp):
 
 
 def health(**waiting):
-    """GET /health for docker HEALTHCHECK and the panel. Waiting for a token counts as healthy;
-    while polling, 503 once getUpdates has been silent too long."""
+    """GET /health: waiting for a token is healthy; polling is 503 once getUpdates is silent too long."""
     async def handle(_request: web.Request) -> web.Response:
         if waiting:
             return web.json_response({'ok': True, **waiting, 'username': ''})

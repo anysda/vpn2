@@ -86,15 +86,11 @@ async def main() -> None:
 
 
 async def invalid_token_pause() -> None:
-    """/health stays up for the pause; a new token from the panel ends it at once."""
-    runner = await serve(web.get('/health', events.health(waiting_token=True, invalid_token=True)))
-    try:
-        log.error('Telegram отверг токен бота (InvalidToken): проверьте токен в панели, '
-                  'раздел «Боты». Перезапуск через %d с или сразу после сохранения токена',
-                  config.INVALID_TOKEN_PAUSE_SEC)
-        await runtime_changed(config.INVALID_TOKEN_PAUSE_SEC)
-    finally:
-        await runner.cleanup()
+    await serve(web.get('/health', events.health(waiting_token=True, invalid_token=True)))
+    log.error('Telegram отверг токен бота (InvalidToken): проверьте токен в панели, '
+              'раздел «Боты». Перезапуск через %d с или сразу после сохранения токена',
+              config.INVALID_TOKEN_PAUSE_SEC)
+    await runtime_changed(config.INVALID_TOKEN_PAUSE_SEC)
 
 
 if __name__ == '__main__':

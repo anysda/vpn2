@@ -28,7 +28,6 @@ _TABLE = json.loads(_TABLE_FILE.read_text(encoding='utf-8'))
 # Panel codes of /api/bot/* → text for the person; the code itself goes only to the log.
 ERROR_TEXT: dict[str, str] = _TABLE['bot']
 ERROR_FALLBACK: str = _TABLE['botFallback']
-UNEXPECTED_ERROR = 'Сервис временно недоступен. Попробуйте позже.'
 NO_DEVICE = 'Устройство не найдено'
 ACCESS_OFF = 'Отключение запущено'
 NAV_DEVICES = '📱 Мои устройства'
@@ -75,12 +74,6 @@ def _protocol_lines(view: dict) -> str:
 def confirm_markup(yes_data: str, no_data: str) -> dict:
     return {'inline_keyboard': [[{'text': '✅ Да', 'callback_data': yes_data},
                                  {'text': '✖ Отмена', 'callback_data': no_data}]]}
-
-
-def no_access() -> str:
-    if config.ADMIN_USERNAME:
-        return f'🔑 Чтобы получить доступ к VPN, напишите администратору: @{config.ADMIN_USERNAME}'
-    return 'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.'
 
 
 def menu(view: dict) -> str:

@@ -35,7 +35,8 @@ class Ask:
         await api.send(self.chat_id, text, 'Markdown', markup, self.message_id)
 
     async def answer(self, text: str = '', alert: bool = False) -> dict:
-        return await api.answer(self.callback_id, text, alert)
+        payload = api.given(callback_query_id=self.callback_id, text=text or None, show_alert=alert or None)
+        return (await api.telegram_http.post('/answerCallbackQuery', json=payload, timeout=20)).json()
 
     async def json(self, method: str, path: str, body: dict | None = None):
         return (await api.panel(method, path, body)).json()
@@ -367,14 +368,15 @@ async def report_failure(ask: Ask, role: str, error: Exception) -> None:
         message = error.message
     else:
         log.error('%s %s failed (%s)', role, ask.action, type(error).__name__)
-        message = texts.UNEXPECTED_ERROR
+        message = 'Сервис временно недоступен. Попробуйте позже.'
     # The panel does not know this chat: never linked, or unlinked in the middle of the request.
     if (role == CLIENT and isinstance(error, BotApiError) and error.status == 404
             and 'not_linked' in (error.code, error.message)):
         # As a message: «Готовлю конфиг…» may have used up the one answer to the button.
         if ask.callback_id:
             await ask.answer()
-        await ask.say(texts.no_access())
+        await ask.say(f'🔑 Чтобы получить доступ к VPN, напишите администратору: @{config.ADMIN_USERNAME}'
+                      if config.ADMIN_USERNAME else 'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.')
     elif not ask.callback_id:
         await ask.say(f'❌ {message}')
     else:

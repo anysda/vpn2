@@ -14,9 +14,18 @@ const form = reactive<SsoForm>({
 const secretMasked = ref('')
 const saved = ref('')
 const dirty = computed(() => JSON.stringify(form) !== saved.value)
-const loaded = ref(false)
-const loading = ref(false)
-const loadError = ref('')
+
+// Форма заперта, пока настройки не пришли или перечитываются.
+const { data: stored, error: loadError, status, refresh: reload } = useFetch('/api/admin/sso', { server: false })
+const loaded = computed(() => status.value === 'success')
+watch(stored, (v) => {
+  if (!v) return
+  const { clientSecretMasked, ...rest } = v
+  Object.assign(form, rest, { clientSecret: '' })
+  saved.value = JSON.stringify(form)
+  secretMasked.value = clientSecretMasked
+}, { immediate: true })
+
 const checking = ref(false)
 const check = ref<{ ok: boolean, text: string } | null>(null)
 
@@ -28,40 +37,13 @@ const fields = computed<{ key: TextKey, label: string, ph?: string, hint?: strin
   { key: 'label', label: 'Подпись кнопки', ph: 'Authentik' },
 ])
 
-async function reload() {
-  if (loading.value) return
-  loading.value = true
-  loaded.value = false
-  loadError.value = ''
-  try {
-    const { clientSecretMasked, ...rest } = await $fetch('/api/admin/sso')
-    Object.assign(form, rest, { clientSecret: '' })
-    saved.value = JSON.stringify(form)
-    secretMasked.value = clientSecretMasked
-    loaded.value = true
-  }
-  catch (e) {
-    loadError.value = errText(e)
-  }
-  finally {
-    loading.value = false
-  }
-}
-onMounted(reload)
-
 async function runCheck() {
   checking.value = true
-  check.value = null
-  try {
-    const r = await $fetch('/api/admin/sso/check', { method: 'POST', body: { authentikUrl: form.authentikUrl, appSlug: form.appSlug } })
-    check.value = { ok: true, text: `Discovery отвечает, issuer: ${r.issuer}` }
-  }
-  catch (e) {
-    check.value = { ok: false, text: errText(e) }
-  }
-  finally {
-    checking.value = false
-  }
+  const body = { authentikUrl: form.authentikUrl, appSlug: form.appSlug }
+  check.value = await $fetch('/api/admin/sso/check', { method: 'POST', body }).then(
+    r => ({ ok: true, text: `Discovery отвечает, issuer: ${r.issuer}` }),
+    e => ({ ok: false, text: errText(e) }))
+  checking.value = false
 }
 
 function save() {
@@ -85,11 +67,11 @@ function save() {
     </div>
     <template v-if="loadError">
       <div role="alert" class="al red">
-        <b>Не удалось загрузить настройки входа</b>{{ loadError }}
+        <b>Не удалось загрузить настройки входа</b>{{ errText(loadError) }}
       </div>
       <div class="fld">
         <span /><code />
-        <button type="button" class="pill" :disabled="loading" @click="reload">
+        <button type="button" class="pill" :disabled="status === 'pending'" @click="reload()">
           Повторить загрузку
         </button>
       </div>

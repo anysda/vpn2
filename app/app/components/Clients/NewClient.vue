@@ -3,41 +3,33 @@ import { createClient } from '~/composables/useClients'
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ created: [id: number] }>()
 const { canSend, reason: tgReason } = useTelegramStatus()
-const toast = useToast()
+const { toast, busy, act } = useAct()
 
-const form = reactive({ name: '', expires: '', limit: 3 as number | string, unlimited: false, filter: true, bot: false })
-const busy = ref(false)
-watch(open, now => now && Object.assign(form, { name: '', expires: '', limit: 3, unlimited: false, filter: true, bot: false }))
+const BLANK = { name: '', expires: '', limit: 3 as number | string, unlimited: false, filter: true, bot: false }
+const form = reactive({ ...BLANK })
+watch(open, now => now && Object.assign(form, BLANK))
 
-async function submit() {
+function submit() {
   const name = form.name.trim()
   if (!name) return toast.add({ title: 'Укажите имя', color: 'error' })
   const expiresAt = form.expires.trim() ? parseRuDateUtc(form.expires) : null
   if (form.expires.trim() && !expiresAt) return toast.add({ title: 'Дата — в формате ДД.ММ.ГГГГ', color: 'error' })
-  busy.value = true
-  try {
-    const deviceLimit = form.unlimited ? null : Math.max(1, Math.floor(Number(form.limit) || 1))
+  const deviceLimit = form.unlimited ? null : Math.max(1, Math.floor(Number(form.limit) || 1))
+  return act('create', async () => {
     const client = await createClient({ name, filterTraffic: form.filter, expiresAt, deviceLimit })
     open.value = false
     toast.add(doneToast(`Клиент «${name}» создан`, client.warning))
     emit('created', client.id)
-    if (form.bot && canSend.value) {
-      await sendBotAccess(client.id).then(
-        () => toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' }),
-        () => toast.add({ title: 'Клиент создан, но пароль не отправлен в Telegram', color: 'warning' }))
-    }
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    busy.value = false
-  }
+    if (!form.bot || !canSend.value) return
+    await sendBotAccess(client.id).then(
+      () => toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' }),
+      () => toast.add({ title: 'Клиент создан, но пароль не отправлен в Telegram', color: 'warning' }))
+  })
 }
 </script>
 
 <template>
-  <PanelDialog v-model:open="open" title="Новый клиент" ok="Создать" :busy="busy" @ok="submit">
+  <PanelDialog v-model:open="open" title="Новый клиент" ok="Создать" :busy="busy.has('create')" @ok="submit">
     <label class="fl2"><span>Имя</span><input v-model="form.name" class="in" placeholder="Иван Иванов" @keydown.enter="submit"></label>
     <label class="fl2">
       <span>Срок действия</span>

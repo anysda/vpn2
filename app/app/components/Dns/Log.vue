@@ -8,38 +8,32 @@ const TAGS: Record<Kind, [string, string]> = { ok: ['ok', 'разрешён'], b
 const { toast, busy, act } = useAct()
 const f = ref<typeof FILTERS[number]['value']>('all')
 const q = ref('')
+const typed = useDebounced(q, 300)
 const rows = ref<Row[]>([])
 const older = ref<string | null>(null)
 const loading = ref(false)
 const error = ref('')
 const today = new Date().toDateString()
-let seq = 0, timer: ReturnType<typeof setTimeout> | undefined
+let sent = 0
 
+/** Первая страница по фильтру и поиску; `more` - следующая страница старых записей. */
 async function load(more = false) {
-  const my = ++seq
+  const my = ++sent
   loading.value = true
-  try {
-    const r = await $fetch('/api/dns/log', {
-      query: { f: f.value, q: q.value.trim() || undefined, older: more ? older.value ?? undefined : undefined },
-    })
-    if (my !== seq) return
-    rows.value = more ? [...rows.value, ...r.rows] : r.rows
-    older.value = r.older
-    error.value = ''
+  const query = { f: f.value, q: typed.value.trim() || undefined, older: more ? older.value ?? undefined : undefined }
+  const r = await $fetch('/api/dns/log', { query }).catch((e: unknown) => ({ failed: errText(e) }))
+  if (my !== sent) return
+  loading.value = false
+  if ('failed' in r) {
+    error.value = r.failed
+    return
   }
-  catch (e) {
-    if (my === seq) error.value = errText(e)
-  }
-  finally {
-    if (my === seq) loading.value = false
-  }
+  rows.value = more ? [...rows.value, ...r.rows] : r.rows
+  older.value = r.older
+  error.value = ''
 }
 onMounted(load)
-watch(f, () => load())
-watch(q, () => {
-  clearTimeout(timer)
-  timer = setTimeout(load, 300)
-})
+watch([f, typed], () => load())
 async function refresh() {
   await load()
   if (!error.value) toast.add({ title: 'Журнал обновлён' })

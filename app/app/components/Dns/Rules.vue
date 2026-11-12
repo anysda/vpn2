@@ -1,44 +1,25 @@
 <script setup lang="ts">
 // Поле - весь набор своих правил: до ответа GET закрыто, пока идёт «Применить» - только для чтения.
-type Verdict = Api<'/api/dns/check'>
-
 const { data, load, toast, busy, act } = useDns('/api/dns/rules')
 const text = ref('')
 watch(data, v => v && (text.value = v.text), { immediate: true })
+
+// Проверка домена; пустое поле сервер отклоняет с 400 - это не ошибка для тоста.
 const q = ref('')
-const res = ref<Verdict | null>(null)
-let seq = 0, timer: ReturnType<typeof setTimeout> | undefined
+const typed = useDebounced(q, 250)
+const name = computed(() => typed.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0] ?? '')
+const { data: res, error, refresh: check } = useFetch('/api/dns/check', { query: { name }, server: false, immediate: false, watch: [name] })
+watch(error, e => e && e.statusCode !== 400 && toast.add({ title: errText(e), color: 'error' }))
+
 // AdGuard пересобирает фильтры в фоне и ещё ~0,5 с отвечает по старым правилам.
-let settleUntil = 0
-
-async function check() {
-  const name = q.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0] ?? ''
-  const my = ++seq
-  if (!name) {
-    res.value = null
-    return
-  }
-  try {
-    const v = await $fetch('/api/dns/check', { query: { name } })
-    if (my !== seq) return
-    res.value = v
-    if (Date.now() < settleUntil) setTimeout(() => my === seq && void check(), 250)
-  }
-  catch (e) {
-    if (my !== seq) return
-    res.value = null
-    if ((e as { statusCode?: number }).statusCode !== 400) toast.add({ title: errText(e), color: 'error' })
-  }
+function recheckWhileSettling() {
+  void check()
+  const every = setInterval(check, 250)
+  setTimeout(() => clearInterval(every), 2000)
 }
-watch(q, () => {
-  clearTimeout(timer)
-  timer = setTimeout(check, 250)
-})
-
 const apply = () => act('save', async () => {
   text.value = (await $fetch<{ text: string }>('/api/dns/rules', { method: 'PUT', body: { text: text.value } })).text
-  settleUntil = Date.now() + 2000
-  void check()
+  if (name.value) recheckWhileSettling()
 }, 'Свои правила применены')
 
 const COLOR = { blk: 'text-(--red-t)', ok: 'text-(--green)', rw: 'text-(--t1)' }

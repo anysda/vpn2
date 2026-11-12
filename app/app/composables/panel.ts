@@ -12,6 +12,18 @@ export function usePoll(fn: () => unknown, ms: number) {
   })
 }
 
+/** `source`, обновлённый через `ms` после последней правки (ввод в поиске). */
+export function useDebounced<T>(source: Ref<T>, ms: number) {
+  const settled = ref(source.value) as Ref<T>
+  let timer: ReturnType<typeof setTimeout> | undefined
+  watch(source, (v) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => { settled.value = v }, ms)
+  })
+  onUnmounted(() => clearTimeout(timer))
+  return settled
+}
+
 /** Окно до 720px - мобильный каркас (panel.css); до монтирования - десктоп. */
 export function useMobile() {
   const on = useState('mobile', () => false)

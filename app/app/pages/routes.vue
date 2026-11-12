@@ -2,7 +2,6 @@
 import { plural } from '#shared/plural'
 
 type Route = Api<'/api/routes'>[number]
-type Check = Api<'/api/routes/check'>
 const WHY = {
   manual: 'своё правило',
   client: 'выбран у клиента',
@@ -75,23 +74,12 @@ const add = () => act('add', async () => {
 
 // Проверка адреса: пустое поле - разбор примера серым; после правок правил - заново.
 const query = ref('')
-const checked = ref<Check | null>(null)
-const checkError = ref('')
-let seq = 0, timer: ReturnType<typeof setTimeout> | undefined
-async function runCheck() {
-  const my = ++seq
-  try {
-    const r = await $fetch('/api/routes/check', { query: { q: query.value.trim() || EXAMPLE } })
-    if (my === seq) [checked.value, checkError.value] = [r, '']
-  }
-  catch (e) {
-    if (my === seq) [checked.value, checkError.value] = [null, errText(e)]
-  }
-}
-const schedule = (ms: number) => { clearTimeout(timer); timer = setTimeout(runCheck, ms) }
-watch(query, () => schedule(250))
-watch(() => rules.value.map(r => `${r.id}:${r.outbound}`).join(), () => schedule(0), { immediate: true })
-onUnmounted(() => clearTimeout(timer))
+const asked = useDebounced(query, 250)
+const { data: checked, error: checkError } = useFetch('/api/routes/check', {
+  query: { q: computed(() => asked.value.trim() || EXAMPLE) },
+  watch: [() => rules.value.map(r => `${r.id}:${r.outbound}`).join()],
+  server: false,
+})
 const checkRule = computed(() => {
   const r = checked.value!
   return r.reason === 'default' ? 'по умолчанию' : r.reason === 'client' ? 'предпочитаемый экзит' : r.reason === 'manual' ? `правило ${r.rule}` : r.rule
@@ -121,7 +109,7 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
             <span class="tag" :class="{ badt: checked.delay === null }">{{ checkOut }} · {{ checked.delay ?? '—' }} мс</span>
             <span data-testid="route-why" class="text-xs text-(--t3)">{{ WHY[checked.reason] }}</span>
           </template>
-          <span v-else-if="checkError" class="text-xs text-(--t3)">{{ checkError }}</span>
+          <span v-else-if="checkError" class="text-xs text-(--t3)">{{ errText(checkError) }}</span>
         </div>
       </div>
       <form class="card" @submit.prevent="add">

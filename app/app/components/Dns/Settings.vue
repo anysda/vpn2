@@ -79,18 +79,14 @@ function reset(what: keyof typeof RESET) {
         </div>
       </div>
       <div class="card sc">
-        <div class="sh">
-          <h3>Защита</h3>
-        </div>
+        <h3 class="sh">Защита</h3>
         <div v-for="p in PROTECT" :key="p.k" class="fld">
           <span>{{ p.name }}</span><code>{{ p.note }}</code>
           <PanelSwitch :model-value="data[p.k]" :label="p.name" :disabled="busy.has(p.k)" @update:model-value="tog(p.k)" />
         </div>
       </div>
       <div class="card sc">
-        <div class="sh">
-          <h3>Кэш и ограничения</h3>
-        </div>
+        <h3 class="sh">Кэш и ограничения</h3>
         <div class="fld">
           <span>Размер кэша</span><code>{{ data.cache }}</code>
           <button type="button" class="pill" @click="reset('cache')">
@@ -109,9 +105,7 @@ function reset(what: keyof typeof RESET) {
         </div>
       </div>
       <div class="card sc">
-        <div class="sh">
-          <h3>Журнал и статистика</h3>
-        </div>
+        <h3 class="sh">Журнал и статистика</h3>
         <div class="fld">
           <span>Хранить журнал</span>
           <SegTabs :model-value="String(data.logHours)" small :options="LOG" @update:model-value="v => patch({ logHours: Number(v) })" />

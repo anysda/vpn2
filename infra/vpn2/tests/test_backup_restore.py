@@ -69,7 +69,7 @@ def node(tmp_path, monkeypatch, capsys):
     put(src / 'infra/envs/ru.env', 'SSH_PASS=x\nHOST=ru\n')
     for name in ('22-adguard', '30-frontend', '35-telegram'):
         put(src / f'infra/scripts/{name}.sh', STAGE, 0o755)
-    for name, body in (('__init__.py', ''), ('cli/__init__.py', ''), ('cli/verify.py', ''),
+    for name, body in (('__init__.py', ''), ('cli/__init__.py', ''), ('verify/stage.py', ''),
                        ('cli/__main__.py', VERIFY)):
         put(src / 'infra/vpn2/src/vpn2' / name, body)
     put(Path(paths.source_root_file), f'{src}\n')

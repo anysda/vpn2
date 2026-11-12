@@ -51,7 +51,7 @@ def make_source(root):
         fixture.write(root / 'infra/scripts' / (stage + '.sh'), '''#!/bin/sh
 printf '%s|%s|%s\\n' "$0" "$(cat /tmp/anysda/anysda-config.yaml.tpl)" "$(grep '^SOURCE=' "$1")" >> /test-output/stages
 ''', 0o755)
-    fixture.write(root / 'infra/vpn2/src/vpn2/cli/verify.py', VERIFY)
+    fixture.write(root / 'infra/vpn2/src/vpn2/verify/stage.py', VERIFY)
     fixture.write(root / 'infra/configs/anysda-config.yaml.tpl', f'template from {root}')
     fixture.write(root / 'infra/envs/all.env', f'SOURCE={root}\n')
     fixture.write(root / 'infra/envs/ru.env', '''HOST_TAG=ru
@@ -122,7 +122,7 @@ class ClonePath(unittest.TestCase):
         self.assertEqual(stages.read_text().splitlines(),
                          [f'{root}/infra/{path}|template from {root}|SOURCE={root}'
                           for path in [f'scripts/{stage}.sh' for stage in STAGES]
-                          + ['vpn2/src/vpn2/cli/verify.py']])
+                          + ['vpn2/src/vpn2/verify/stage.py']])
 
     def assert_speedtest_uses(self, root):
         text = (REPO / 'infra/tests/speedtest.py').read_text()

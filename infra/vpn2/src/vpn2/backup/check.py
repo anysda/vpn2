@@ -174,8 +174,7 @@ def check_bundle(bundle_dir, *, run=wg.run, out=None, err=None):
     """Код выхода `anysda-backup.sh --check-bundle <каталог>`; строки расхождений - в out, отказ - в err.
 
     run - запуск программ для wg (как в vpn2.wg). Без db.sqlite в наборе проверять нечего - 0.
-    Необработанная ошибка (битая БД, битый CRL) у bash - traceback и код 1; здесь - строка
-    «Тип: текст» в err и код 1.
+    Битая БД или CRL - строка «Тип: текст» в err и код 1.
     """
     out = sys.stdout if out is None else out
     err = sys.stderr if err is None else err
@@ -188,7 +187,7 @@ def check_bundle(bundle_dir, *, run=wg.run, out=None, err=None):
         return 0
     try:
         bad, nocheck = _problems(root, run)
-    except Exception as error:  # noqa: BLE001 - у bash любой сбой разбора - traceback и код 1
+    except Exception as error:  # noqa: BLE001 - любой сбой разбора - код 1
         print(f'{type(error).__name__}: {error}', file=err)
         return 1
     for line in bad + nocheck:

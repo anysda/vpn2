@@ -61,13 +61,7 @@ QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 SIGNALS = {signal.SIGINT: (130, 'получен сигнал INT'), signal.SIGTERM: (143, 'получен сигнал TERM')}
 
 
-class RestoreError(Exception):
-    """Шаг restore не удался: code - код выхода, message - текст для stderr."""
-
-    def __init__(self, code, message):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+RestoreError = archive.ArchiveError
 
 
 class StepFailed(Exception):
@@ -218,11 +212,8 @@ def s3_pull(settings, name):
 def _open(archive_path, work, passphrase):
     """Расшифровать и распаковать архив в work; вернуть каталог набора anysda-vpn2-*."""
     plain = work / 'restore.tar.gz'
-    try:
-        archive.decrypt(archive_path, plain, passphrase)
-        archive.unpack(plain, work)
-    except archive.ArchiveError as exc:
-        raise RestoreError(exc.code, exc.message) from None
+    archive.decrypt(archive_path, plain, passphrase)
+    archive.unpack(plain, work)
     archive.wipe(plain)
     found = sorted(path for path in glob.glob(os.path.join(glob.escape(str(work)), 'anysda-vpn2-*'))
                    if os.path.isdir(path) and not os.path.islink(path))
@@ -444,10 +435,7 @@ def pre_restore_snapshot(settings, work, root, live_db):
     must(['find', str(tree), '(', '-type', 's', '-o', '-type', 'p', '-o', '-type', 'b', '-o', '-type', 'c', ')',
           '-delete'])
     tar_path, encrypted = work / 'pre-restore.tar.gz', work / 'pre-restore.tar.gz.age'
-    try:
-        archive.pack(tree, '.', tar_path)
-    except archive.ArchiveError as exc:
-        raise RestoreError(exc.code, exc.message) from None
+    archive.pack(tree, '.', tar_path)
     try:
         archive.encrypt(tar_path, encrypted, settings.passphrase)
     except archive.ArchiveError:
@@ -636,7 +624,7 @@ def carry_revocations(rb):
                           live_pki=rb.live('etc/openvpn/server/pki'), live_wg_dir=rb.live('etc/wireguard'),
                           live_ike_conf=rb.live('etc/swanctl/conf.d/anysda-clients.conf'),
                           live_ccd=rb.live('etc/openvpn/server/ccd'), runner=rb.run)
-    except revoke.RevokeError as exc:
+    except RestoreError as exc:
         print(exc.message, file=sys.stderr, flush=True)
         raise StepFailed(exc.code, cause) from None
     if code:
@@ -868,7 +856,7 @@ def resync(source_root, env_file, work):
 def smoke(source_root, env_file, presnap_final):
     """vpn2 verify пакетом установленного дерева: код 2 - предупреждение, иной отказ - RestoreError(7)."""
     package = Path(source_root) / 'infra/vpn2/src'
-    if not ((package / 'vpn2/cli/verify.py').is_file() and _filled(env_file)):
+    if not ((package / 'vpn2/verify/stage.py').is_file() and _filled(env_file)):
         return _warn(f'WARN: нет vpn2 verify ({package}) или env стадий — пропуск smoke-test')
     _say('99-verify…')
     code = archive.code(['bash', '-c', VERIFY, 'anysda-restore', str(env_file), str(package), sys.executable])

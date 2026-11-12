@@ -1,4 +1,4 @@
-"""Отзывы после архива при restore: перенос heredoc из anysda-restore.sh как есть.
+"""Отзывы после архива при restore: отзывы живого узла переносятся в распакованный набор.
 
 Старый архив помнит ключи, которые узел с тех пор отозвал; отзывы живого узла
 переносятся в распакованный набор до замены (openssl ca -revoke/-gencrl,
@@ -6,14 +6,7 @@
 """
 import hashlib, os, re, shutil, sqlite3, subprocess, tempfile
 
-
-class RevokeError(Exception):
-    """Прежний sys.exit(сообщение): код выхода и текст для stderr."""
-
-    def __init__(self, code, message):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+from vpn2.backup.archive import ArchiveError as RevokeError
 
 
 def wg_values(text, wanted):
@@ -27,7 +20,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         live_pki='/etc/openvpn/server/pki', live_wg_dir='/etc/wireguard',
         live_ike_conf='/etc/swanctl/conf.d/anysda-clients.conf',
         live_ccd='/etc/openvpn/server/ccd', runner=subprocess.run):
-    """Тело прежнего heredoc; возвращает код выхода, ошибка openssl - RevokeError."""
+    """Перенос отзывов в набор; возвращает код выхода, ошибка openssl - RevokeError."""
     LIVE_DB, LIVE_PKI = live_db, live_pki
     pki = os.path.join(bundle, 'etc-openvpn/server/pki')
     db_path = os.path.join(bundle, 'db.sqlite')

@@ -16,7 +16,7 @@ export function isLoopbackAddr(ip: string | undefined): boolean {
 
 /**
  * Запрос пришёл напрямую с этой ноды, а не через Caddy: тот тоже ходит с
- * 127.0.0.1 (VPN2-51), но ставит X-Forwarded-For. Основной замок - 404 на эти
+ * 127.0.0.1, но ставит X-Forwarded-For. Основной замок - 404 на эти
  * пути в Caddyfile, это второй.
  */
 function isDirectLocal(event: H3Event): boolean {

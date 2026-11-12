@@ -12,7 +12,7 @@ type OtpKey = string | CryptoKey
 // В типах createOTP ключ только строка, но CryptoKey проходит как есть.
 export const otp = (key: OtpKey) => createOTP(key as string, { period: TOTP_PERIOD, digits: 6 })
 
-/** Секрет, заведённый до better-auth: base32 от сырых байт ключа. */
+/** Секрет из users.totp_secret: base32 от сырых байт ключа. */
 async function legacyKey(secret: string): Promise<CryptoKey> {
   const bytes = base32.decode(secret.toUpperCase().replace(/[\s=]/g, ''))
   return crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])

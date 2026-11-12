@@ -1,3 +1,4 @@
+import type { H3Event } from 'h3'
 import errorText from '../../../shared/error-text.json' with { type: 'json' }
 import { isLoopbackAddr } from '../../utils/bot-api'
 import { joinDetail, recordEvent } from '../../utils/events'
@@ -5,10 +6,10 @@ import { SSO_PROVIDER } from '../../utils/sso'
 import { FIELD_LABELS } from '../../utils/validate'
 
 /**
- * Ручки входа, сессий и 2FA ведёт better-auth (utils/auth.ts). Здесь: адрес
- * клиента для лимита (X-Forwarded-For только с loopback, от Caddy этой ноды,
- * VPN2-63), список открытых ручек с проверкой Origin, лимит неудачных попыток
- * и вид ошибок: код в `statusMessage`, русский текст в `message`.
+ * Ручки входа, сессий и 2FA ведёт better-auth (utils/auth.ts). Здесь: адрес клиента
+ * для лимита (X-Forwarded-For только с loopback, от Caddy этой ноды), список открытых
+ * ручек с проверкой Origin, лимит неудачных попыток и вид ошибок: код в `statusMessage`,
+ * русский текст в `message`.
  */
 
 const TEXT: Record<string, string> = {
@@ -29,25 +30,27 @@ const TEXT: Record<string, string> = {
   SESSION_EXPIRED: 'Сессия завершена, войдите заново',
 }
 
-function clientAddress(event: Parameters<Parameters<typeof defineEventHandler>[0]>[0]): string {
+/**
+ * Открыты только ручки, которыми пользуется панель: библиотека доверяет любому
+ * Origin и callbackURL (allowedHosts: ['*']), остальные стали бы открытым редиректом.
+ */
+const OPEN: Record<string, ReadonlySet<string>> = {
+  GET: new Set(['/get-session', '/ok', `/callback/${SSO_PROVIDER}`]),
+  POST: new Set(['/sign-in/username', '/sign-out', '/change-password', '/two-factor/enable', '/two-factor/verify-totp', '/two-factor/disable']),
+}
+
+const LOGIN_WINDOW_SEC = 300
+const MAX_ENTRIES = 100_000
+
+function clientAddress(event: H3Event): string {
   const peer = event.node.req.socket.remoteAddress ?? ''
-  if (isLoopbackAddr(peer)) {
-    const forwarded = getRequestHeader(event, 'x-forwarded-for')
-      ?.split(',').map(s => s.trim()).filter(Boolean).at(-1)
-    return forwarded || peer
-  }
-  return peer
+  if (!isLoopbackAddr(peer)) return peer
+  return getRequestHeader(event, 'x-forwarded-for')?.split(',').map(s => s.trim()).filter(Boolean).at(-1) || peer
 }
 
 async function humanError(res: Response): Promise<Response> {
-  let body: { code?: string, message?: string }
-  try {
-    body = await res.clone().json()
-  }
-  catch {
-    // тело не JSON — отдаём как есть
-    return res
-  }
+  const body = await res.clone().json().catch(() => null) as { code?: string, message?: string } | null
+  if (!body) return res
   let code = body.code || (res.status === 429 ? 'TOO_MANY_REQUESTS' : 'UNKNOWN')
   let message = TEXT[code]
   if (code === 'VALIDATION_ERROR') {
@@ -58,65 +61,28 @@ async function humanError(res: Response): Promise<Response> {
   const headers = new Headers(res.headers)
   headers.delete('content-length')
   headers.set('content-type', 'application/json')
-  return new Response(JSON.stringify({
-    statusCode: res.status,
-    statusMessage: code.toLowerCase(),
-    message: message ?? body.message ?? code.toLowerCase(),
-  }), { status: res.status, headers })
+  const statusMessage = code.toLowerCase()
+  return new Response(JSON.stringify({ statusCode: res.status, statusMessage, message: message ?? body.message ?? statusMessage }), { status: res.status, headers })
 }
-
-/**
- * Открыты только ручки, которыми пользуется панель: библиотека доверяет любому
- * Origin и callbackURL (allowedHosts: ['*']), остальные стали бы открытым редиректом.
- */
-const OPEN: Record<string, ReadonlySet<string>> = {
-  GET: new Set(['/get-session', '/ok', `/callback/${SSO_PROVIDER}`]),
-  POST: new Set([
-    '/sign-in/username',
-    '/sign-out',
-    '/change-password',
-    '/two-factor/enable',
-    '/two-factor/verify-totp',
-    '/two-factor/disable',
-  ]),
-}
-
-const LOGIN_WINDOW_SEC = 300
 
 /*
- * Лимит неудач входа и кода 2FA (VPN2-162): считаются только неудачи, окно
- * фиксированное, от первой неудачи. Попытка занимает место до ответа, так что
- * параллельная пачка мимо лимита не проскочит.
+ * Лимит неудач входа и кода 2FA: считаются только неудачи, окно фиксированное, от
+ * первой неудачи. Попытка занимает место до ответа: параллельная пачка мимо лимита не проскочит.
  */
 interface Entry { failures: number, pending: number, since: number }
-
 const entries = new Map<string, Entry>()
-const MAX_ENTRIES = 100_000
-
-function prune(now: number, windowMs: number) {
-  if (entries.size < MAX_ENTRIES) return
-  for (const [key, e] of entries) {
-    if (e.pending === 0 && now - e.since >= windowMs) entries.delete(key)
-  }
-}
 
 /** Занять попытку: null - можно, затем loginFinish(key, ok); число - секунд до конца окна. */
 export function loginAttempt(key: string, max: number, windowSec: number): number | null {
   const now = Date.now()
   const windowMs = windowSec * 1000
-  prune(now, windowMs)
-  let e = entries.get(key)
-  if (e && e.since && now - e.since >= windowMs) {
-    e.failures = 0
-    e.since = 0
+  if (entries.size >= MAX_ENTRIES) {
+    for (const [k, e] of entries) if (e.pending === 0 && now - e.since >= windowMs) entries.delete(k)
   }
-  if (!e) {
-    e = { failures: 0, pending: 0, since: 0 }
-    entries.set(key, e)
-  }
-  if (e.failures + e.pending >= max) {
-    return e.since ? Math.max(1, Math.ceil((e.since + windowMs - now) / 1000)) : windowSec
-  }
+  const e = entries.get(key) ?? { failures: 0, pending: 0, since: 0 }
+  entries.set(key, e)
+  if (e.since && now - e.since >= windowMs) Object.assign(e, { failures: 0, since: 0 })
+  if (e.failures + e.pending >= max) return e.since ? Math.max(1, Math.ceil((e.since + windowMs - now) / 1000)) : windowSec
   e.pending++
   return null
 }
@@ -127,30 +93,30 @@ export function loginFinish(key: string, ok: boolean) {
   e.pending = Math.max(0, e.pending - 1)
   if (!ok) {
     e.failures++
-    if (!e.since) e.since = Date.now()
+    e.since ||= Date.now()
   }
   if (e.pending === 0 && e.failures === 0) entries.delete(key)
 }
 
-/** Неудачный вход в журнал: неверный пароль или код 2FA. Отказ ограничителя (429) — не новая попытка. */
+/** Неудачный вход в журнал: неверный пароль или код 2FA. Отказ ограничителя (429) - не новая попытка. */
 async function recordFailedLogin(path: string, request: Request | undefined, status: number, ip: string): Promise<void> {
   if (status < 400 || status >= 500 || status === 429) return
+  let reason = ''
   if (path === '/sign-in/username') {
     const body = await request?.json().catch(() => null) as { username?: unknown } | null | undefined
     const login = typeof body?.username === 'string' ? body.username.trim().slice(0, 64) : ''
-    await recordEvent({ type: 'login_failed', level: 'alarm', title: 'Неудачный вход в панель', detail: joinDetail(login && `логин «${login}»`, ip) })
+    reason = login && `логин «${login}»`
   }
-  else if (path === '/two-factor/verify-totp') {
-    await recordEvent({ type: 'login_failed', level: 'alarm', title: 'Неудачный вход в панель', detail: joinDetail('неверный код 2FA', ip) })
-  }
+  else if (path === '/two-factor/verify-totp') reason = 'неверный код 2FA'
+  else return
+  await recordEvent({ type: 'login_failed', level: 'alarm', title: 'Неудачный вход в панель', detail: joinDetail(reason, ip) })
 }
 
 /** Запрос со страницы этой же панели: Origin (или Referer) того же хоста. */
-function sameOrigin(event: Parameters<Parameters<typeof defineEventHandler>[0]>[0]): boolean {
+function sameOrigin(event: H3Event): boolean {
   const from = getRequestHeader(event, 'origin') || getRequestHeader(event, 'referer')
-  if (!from) return false
   try {
-    return new URL(from).host === getRequestHeader(event, 'host')
+    return !!from && new URL(from).host === getRequestHeader(event, 'host')
   }
   catch {
     return false
@@ -159,9 +125,7 @@ function sameOrigin(event: Parameters<Parameters<typeof defineEventHandler>[0]>[
 
 export default defineEventHandler(async (event) => {
   const path = event.path.split('?')[0]!.replace(/^\/api\/auth/, '').replace(/\/+$/, '')
-  if (!OPEN[event.method]?.has(path)) {
-    throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  }
+  if (!OPEN[event.method]?.has(path)) throw createError({ statusCode: 404, statusMessage: 'not_found' })
   if (event.method !== 'GET' && !sameOrigin(event)) {
     throw createError({ statusCode: 403, statusMessage: 'invalid_origin', message: 'Запрос не со страницы панели' })
   }
@@ -169,8 +133,7 @@ export default defineEventHandler(async (event) => {
   const limited = path === '/sign-in/username' || path === '/change-password' || path.startsWith('/two-factor/')
   const key = limited ? `${ip}|${path}` : null
   if (key) {
-    const max = Number(useRuntimeConfig().authLoginMaxAttempts) || 10
-    const retryAfter = loginAttempt(key, max, LOGIN_WINDOW_SEC)
+    const retryAfter = loginAttempt(key, Number(useRuntimeConfig().authLoginMaxAttempts) || 10, LOGIN_WINDOW_SEC)
     if (retryAfter !== null) {
       return humanError(new Response(JSON.stringify({ code: 'TOO_MANY_REQUESTS' }), {
         status: 429,
@@ -189,7 +152,7 @@ export default defineEventHandler(async (event) => {
     res = await useAuth().handler(forwarded)
   }
   finally {
-    // Ошибка сервера (5xx, исключение) — не неудача человека, её не считаем.
+    // Ошибка сервера (5xx, исключение) - не неудача человека.
     if (key) loginFinish(key, !res || res.status < 400 || res.status >= 500)
   }
   await recordFailedLogin(path, copy, res.status, ip)

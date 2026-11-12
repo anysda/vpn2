@@ -57,7 +57,7 @@ export function discoveryFrom(authentikUrl: string, appSlug: string): string {
   return `${url}/application/o/${appSlug.trim() || 'vpn2'}${WELL_KNOWN}`
 }
 
-/** Засев из env стадии 30: так было до настроек в профиле. */
+/** Засев из env стадии 30. */
 function seedFromConfig(): SsoStored {
   const cfg = useRuntimeConfig()
   const oidc = cfg.oauth.oidc
@@ -155,7 +155,7 @@ export async function resolveSsoUser(sub: string, preferredUsername?: string) {
   if (!sub) throw new SsoDenied('sso_no_sub', 'IdP не вернул sub')
   const db = useDb()
 
-  // Список проверяется первым и для уже привязанных: привязка переживает удаление sub (VPN2-43).
+  // Список проверяется первым и для уже привязанных: привязка переживает удаление sub.
   const { allowed } = ssoSettings()
   if (!allowed.has(sub)) {
     throw new SsoDenied('sso_not_allowed', `sub ${sub} (${preferredUsername ?? '?'}) не в списке sso.allowed_subs`)

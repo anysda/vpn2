@@ -106,7 +106,7 @@ async function initPanel() {
     }
     // Пароль из конфига применяется, только когда сменили сам конфиг (сравнение
     // с последним применённым), иначе смена в панели откатывалась бы на каждом
-    // перезапуске. Вместе с ним рвутся все сессии (VPN2-49).
+    // перезапуске. Вместе с ним рвутся все сессии.
     const yamlPassword = yamlConfig?.admin?.password
     if (yamlPassword) {
       const [applied] = await localDb.select().from(adminConfigPassword)

@@ -3,7 +3,7 @@ import { SSO_PROVIDER, ssoSettings } from '../../utils/sso'
 
 /**
  * Точка входа и адрес возврата SSO. Протокол ведёт better-auth; запрос с кодом
- * пересылаем в её колбэк: адрес возврата у провайдера прежний, /auth/authentik.
+ * пересылаем в её колбэк: адрес возврата у провайдера - /auth/authentik.
  */
 export default defineEventHandler(async (event) => {
   if (!ssoSettings().enabled) {

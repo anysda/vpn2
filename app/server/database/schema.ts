@@ -21,9 +21,9 @@ export const users = sqliteTable('users', {
   emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(true),
   image: text('image'),
   twoFactorEnabled: integer('two_factor_enabled', { mode: 'boolean' }).notNull().default(false),
-  // Секрет 2FA, заведённый до better-auth (base32): его проверяет хук в utils/auth.ts.
+  // Секрет 2FA в base32, его проверяет хук в utils/auth.ts.
   legacyTotpSecret: text('totp_secret'),
-  // Последний принятый шаг TOTP: код этого и более раннего шага повторно не принимается (VPN2-62).
+  // Последний принятый шаг TOTP: код этого и более раннего шага повторно не принимается.
   totpLastStep: integer('totp_last_step'),
   ...timestamps,
 })
@@ -132,7 +132,7 @@ export const devices = sqliteTable('devices', {
   ...timestamps,
 }, table => [
   index('devices_client_idx').on(table.clientId),
-  // UNIQUE защищает от гонки параллельных созданий за адрес и логин (VPN2-50, VPN2-70).
+  // UNIQUE защищает от гонки параллельных созданий за адрес и логин.
   uniqueIndex('devices_wg_ip_unique').on(table.wgIp),
   uniqueIndex('devices_ikev2_ip_unique').on(table.ikev2Ip),
   uniqueIndex('devices_ovpn_ip_unique').on(table.ovpnIp),

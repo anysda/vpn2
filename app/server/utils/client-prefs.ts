@@ -31,7 +31,7 @@ async function reconcileExits(): Promise<void> {
   const changes = await db.transaction(async (tx) => {
     const [saved] = await tx.select().from(collectorState).where(eq(collectorState.name, EXIT_MAP_STATE))
     if (saved?.value === value) return []
-    // При первом обновлении со старой панели деплой передаёт её NUXT_NODE_HOSTS, дальше карта живёт в базе.
+    // Пока карты в базе нет, её засевает NUXT_NODE_HOSTS.
     const previous: Record<string, string> = saved ? JSON.parse(saved.value) : exitHosts(String(cfg.previousNodeHosts || ''))
     const rows = await tx.select({ id: clients.id, oldTag: clients.preferredExit })
       .from(clients).where(isNotNull(clients.preferredExit))

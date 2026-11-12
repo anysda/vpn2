@@ -151,7 +151,8 @@ const used = (dev: Device) => dev.rxTotal + dev.txTotal
 
 async function addDev() {
   const n = newDev.name.trim()
-  if (!n || !await act('dev', () => addDevice(d.value!.id, n), r => doneToast(`Девайс «${n}» добавлен`, r.warning), 'Не удалось добавить девайс')) return
+  // Enter в поле, пока идёт первый запрос, второго девайса не создаёт.
+  if (!n || busy.value.has('dev') || !await act('dev', () => addDevice(d.value!.id, n), r => doneToast(`Девайс «${n}» добавлен`, r.warning), 'Не удалось добавить девайс')) return
   newDev.open = false
   await changed()
 }

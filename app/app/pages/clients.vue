@@ -25,8 +25,9 @@ const listed = ref(false)
 const loadError = ref('')
 watch(status, (s) => {
   if (s === 'success') [listed.value, loadError.value] = [true, '']
-  const code = (error.value as { statusCode?: number } | null)?.statusCode
-  if (s === 'error') loadError.value = code ? `ошибка сервера (код ${code})` : /timeout/i.test(String(error.value)) ? 'сервер не ответил вовремя' : 'нет связи с сервером'
+  // Nuxt ставит 500 и обрыву связи: код - только у ответа сервера в исходной ошибке.
+  const code = (error.value?.cause as { response?: { status?: number } } | undefined)?.response?.status
+  if (s === 'error') loadError.value = code ? `ошибка сервера (код ${code})` : /TimeoutError|timed? ?out/i.test(String(error.value)) ? 'сервер не ответил вовремя' : 'нет связи с сервером'
 }, { flush: 'sync' })
 
 const subtitle = computed(() => {
@@ -68,16 +69,28 @@ function select(id: number) {
   selectedId.value = id
   if (mobile.value) void router.push({ query: { ...route.query, id } })
 }
-// Пропавшего (удалён, скрыт поиском) сменяет тот, кто стоял на его месте; телефон - к списку.
+// Пропавшего из списка (удалён) сменяет тот, кто стоял на его месте; телефон - к списку.
+// Скрытый поиском или фильтром остаётся открытым: переименованный не закрывается.
+// Удаляемых список ещё показывает (замороженными), но открывать их снова нельзя.
 let lastIndex = 0
+const deleting = new Set<number>()
 function selectNeighbour(list: Client[]) {
-  selectedId.value = list[Math.min(lastIndex, list.length - 1)]?.id ?? null
+  const left = list.filter(c => !deleting.has(c.id))
+  selectedId.value = left[Math.min(lastIndex, left.length - 1)]?.id ?? null
   if (mobile.value && screen.value === 'client') void leave({ query: { ...route.query, id: undefined } })
 }
-watch(rows, (list) => {
+watch([rows, selectedId], ([list]) => {
+  // Удаление открытого здесь клиента встало (служба отказала): справа снова он - со статусом и «Повторить».
+  const stalled = selectedId.value === null && list.find(c => deleting.has(c.id) && c.accessStatus.includes('не завершено'))
+  if (stalled) {
+    deleting.delete(stalled.id)
+    selectedId.value = stalled.id
+    return
+  }
   const at = list.findIndex(c => c.id === selectedId.value)
+  const kept = clients.value.some(c => c.id === selectedId.value && !deleting.has(c.id))
   if (at >= 0) lastIndex = at
-  else if (listed.value) selectNeighbour(list)
+  else if (listed.value && !kept) selectNeighbour(list)
 })
 
 async function onCreated(id: number) {
@@ -93,7 +106,10 @@ async function onGone(id: number) {
   removed.value = [...removed.value, id]
   await refresh()
 }
-const onDeleting = (id: number) => selectNeighbour(rows.value.filter(c => c.id !== id))
+function onDeleting(id: number) {
+  deleting.add(id)
+  selectNeighbour(rows.value)
+}
 
 const newOpen = ref(false)
 function dot(c: Client) {
@@ -133,7 +149,7 @@ const tgText = (c: Client) => c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? '
     </div>
 
     <div class="seg">
-      <NuxtLink v-for="[f, label] in FILTERS" :key="f" :to="filterTo(f)" replace role="button" :aria-pressed="filter === f" :class="{ on: filter === f }">
+      <NuxtLink v-for="[f, label] in FILTERS" :key="f" :to="filterTo(f)" replace role="button" :aria-pressed="filter === f" :aria-current="undefined" :class="{ on: filter === f }">
         {{ label }} <b>{{ counts[f] }}</b>
       </NuxtLink>
     </div>

@@ -213,7 +213,7 @@ async function clash<T>(path: string, unavailable: T): Promise<T> {
   }
 }
 
-export const fetchProxies = async () => Object.values((await clash<{ proxies?: Record<string, ClashProxy> }>('proxies', {})).proxies ?? {})
+export const fetchProxies = async () => Object.values((await clash<{ proxies?: Record<string, ClashProxy> }>('proxies', {}))?.proxies ?? {})
 export const fetchConnections = () =>
   clash<{ connections: Array<{ chains: string[], metadata?: { sourceIP?: string } }> } | null>('connections', null)
 

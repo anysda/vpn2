@@ -19,19 +19,6 @@ const Telegram = z.object({
   admin_username: z.string().optional(),
 })
 
-const Sso = z.object({
-  enabled: z.boolean(),
-  authentikUrl: z.string().trim(),
-  appSlug: z.string().trim(),
-  clientId: z.string().trim(),
-  // Пусто - оставить сохранённый: секрет в браузер не отдаётся.
-  clientSecret: z.string().trim().default(''),
-  allowedSubs: z.string().trim(),
-  label: z.string().trim().max(40),
-  autoRedirect: z.boolean(),
-  passwordLogin: z.boolean(),
-  redirectUrl: z.string().trim(),
-})
 /** То, от чего зависит сам вход через Authentik. */
 const PROTOCOL: (keyof SsoStored)[] = ['enabled', 'authentikUrl', 'appSlug', 'clientId', 'clientSecret', 'allowedSubs', 'redirectUrl']
 
@@ -193,7 +180,7 @@ export default {
   'PUT /admin/sso': async (event: H3Event) => {
     const s = await session(event)
     if (!s) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
-    const body = await readBodyAs(event, Sso)
+    const body = await readBodyAs(event, SsoSchema)
     const { stored: cur } = readSsoStored()
     const next: SsoStored = { ...body, label: body.label || 'Authentik', clientSecret: body.clientSecret || cur.clientSecret }
     const allowed = parseAllowedSubs(next.allowedSubs)

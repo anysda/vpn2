@@ -13,7 +13,7 @@ _clash_delay() {
     2>/dev/null | grep -oE '"delay":[1-9][0-9]*' | grep -oE '[0-9]+$'
 }
 
-_env_value() ( source "$DEPLOY_ROOT/envs/all.env"; source "$DEPLOY_ROOT/envs/$1.env"; echo "${!2:-}" )
+_env_value() ( source "$ENVS/$1.env"; echo "${!2:-}" )
 
 _on_exit_node() {
   ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$REPO/config.yaml" \
@@ -35,8 +35,8 @@ s.sendto(b'PING-$port', ('$host', $port)); print(s.recvfrom(1024)[0].decode())" 
 }
 
 _set_port() {
-  python3 "$DEPLOY_ROOT/lib/config2env.py" "$REPO" --set-port "$1" "$2" >/dev/null
-  python3 "$DEPLOY_ROOT/lib/config2env.py" "$REPO" >/dev/null
+  inventory --set-port "$1" "$2" >/dev/null
+  envs_write
 }
 
 _redeploy() {
@@ -100,7 +100,7 @@ verify_and_rotate_ports() {
       printf '%s\n' "${dead[@]}"; } > "$list"
     chmod 644 "$list"
     printf '\n  %b⚠ Полностью недостижимые экзиты исключены из деплоя: %s%b\n    Записано в %s\n' "$C_Y" "${dead[*]}" "$C_END" "$list"
-    python3 "$DEPLOY_ROOT/lib/config2env.py" "$REPO" >/dev/null
+    envs_write
     _redeploy "$VPN2_STATE_DIR/excluded-reroute.log" 20-ru-router:ru \
       || die 'verify_and_rotate_ports: entry не пересобран после исключения экзитов'
   else

@@ -25,7 +25,7 @@ SLICE_NAMES = ('db.sqlite', 'etc-wireguard', 'etc-openvpn', 'etc-strongswan', 'e
 FATAL_TEXT = '''anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.
 
 Ожидается в {env_file}. Источник:
-  config.yaml (backup.passphrase)  →  config2env.py  →
+  config.yaml (backup.passphrase)  →
   стадия 26-backup рендерит /etc/anysda/backup.env (chmod 600)  →
   source в Bash-скрипте anysda-backup.sh (вручную или из systemd).
 

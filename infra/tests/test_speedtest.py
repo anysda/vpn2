@@ -20,10 +20,8 @@ class PanelCallFixture(unittest.TestCase):
         directory = tempfile.TemporaryDirectory(prefix='speedtest-')
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        (self.root / 'infra/lib').mkdir(parents=True)
-        for name in ('infra/lib/config2env.py', 'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py'):
-            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(ROOT / name, self.root / name)
+        shutil.copytree(ROOT / 'infra/vpn2/src/vpn2', self.root / 'infra/vpn2/src/vpn2',
+                        ignore=shutil.ignore_patterns('__pycache__'))
         self.script = runpy.run_path(str(ROOT / 'infra/tests/speedtest.py'))['PANEL_CALL']
         for path, replacement in (
             ('/opt/anysda-vpn2', str(self.root)),

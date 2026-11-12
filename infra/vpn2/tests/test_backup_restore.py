@@ -67,8 +67,7 @@ def node(tmp_path, monkeypatch, capsys):
     src = tmp_path / 'src'
     put(src / 'app/server/database/migrations/meta/_journal.json', '{"entries": []}')
     put(src / 'infra/configs/anysda-config.yaml.tpl', 'tpl\n')
-    put(src / 'infra/envs/all.env', 'AGH_PORT=3000')
-    put(src / 'infra/envs/ru.env', 'SSH_PASS=x\nHOST=ru\n')
+    put(src / 'infra/ansible/inventory.py', "print('AGH_PORT=3000\\nSSH_PASS=x\\nHOST=ru')\n")
     for name, body in (('__init__.py', ''), ('cli/__init__.py', ''), ('verify/stage.py', ''),
                        ('cli/__main__.py', VERIFY)):
         put(src / 'infra/vpn2/src/vpn2' / name, body)

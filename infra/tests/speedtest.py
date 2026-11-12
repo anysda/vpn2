@@ -143,16 +143,17 @@ set -euo pipefail
 umask 077
 settings=$(python3 - <<'PY'
 from pathlib import Path
-import runpy, shlex
+import shlex, sys
 # Клон деплоя (отметка стадии 26-backup), у старых установок - /opt.
 mark = Path('/etc/anysda/source-root')
 root = Path(mark.read_text().strip() if mark.is_file() else '/opt/anysda-vpn2')
-parser = runpy.run_path(str(root / 'infra/lib/config2env.py'))
-config = parser['parse_yaml']((root / 'config.yaml').read_text())
-domain = config['panel'].get('domain', '')
-origin = 'https://' + parser['normalize_domain'](domain, 'panel.domain') if domain else 'http://127.0.0.1:51821'
+sys.path.insert(0, str(root / 'infra/vpn2/src'))
+from vpn2 import config, nodevars
+raw = config.loads((root / 'config.yaml').read_text()).raw
+domain = raw.get('panel', {}).get('domain', '')
+origin = 'https://' + nodevars.normalize_domain(domain, 'panel.domain') if domain else 'http://127.0.0.1:51821'
 print('origin=' + shlex.quote(origin))
-print('user=' + shlex.quote(config['admin'].get('user') or 'anysda'))
+print('user=' + shlex.quote(raw.get('admin', {}).get('user') or 'anysda'))
 PY
 )
 eval "$settings"

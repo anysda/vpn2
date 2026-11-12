@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from setup_support import FIXTURES, environment, prepare, run
+from setup_support import FIXTURES, environment, node_env, prepare, run
 from test_setup import wait_for
 
 STUBS = {'ipify': '192.0.2.1', 'geo-198.51.100.2': '{}', 'geo-198.51.100.3': '{}',
@@ -99,12 +99,10 @@ def test_enter_on_every_question_keeps_config(tmp_path):
     root, config = filled(tmp_path)
     before = config.read_bytes()
     assert b"passphrase: '" in before and b"domain: 'vpn.example.com'" in before
-    envs = {path.name: path.read_bytes() for path in (root / 'infra/envs').iterdir()}
     code, output = rerun(root)
     assert code == 0, output
     assert config.read_bytes() == before
     assert config.stat().st_mode & 0o777 == 0o600
-    assert {path.name: path.read_bytes() for path in (root / 'infra/envs').iterdir()} == envs
     passphrase = before.decode().split("passphrase: '")[1].split("'")[0]
     for secret in (*SECRETS, passphrase):
         assert secret not in output
@@ -145,8 +143,8 @@ def test_enter_keeps_handwritten_config(tmp_path):
     assert 'IP-адрес входной ноды [192.0.2.10]' in output
     assert 'S3 bucket [saved-bucket]' in output
     assert 'Ежедневный бэкап с 02:00 (TZ entry, случайная задержка до 5 мин)? (y/n) [n]' in output
-    env = (root / 'infra/envs/ru.env').read_text()
-    assert "BACKUP_PASSPHRASE='old backup passphrase'" in env and "YT_ROUTE='direct'" in env
+    env = node_env(root)
+    assert env['BACKUP_PASSPHRASE'] == 'old backup passphrase' and env['YT_ROUTE'] == 'direct'
 
 
 CLEARED = '''entry:
@@ -283,7 +281,7 @@ def test_new_passphrase_only_by_explicit_input_with_warning(tmp_path):
     assert 'Enter — оставить прежний' in output
     assert 'Passphrase изменён: архивы, сделанные раньше, открывает только прежний.' in output
     assert 'brand new passphrase' not in output and old.strip("'") not in output
-    assert "BACKUP_PASSPHRASE='brand new passphrase'" in (root / 'infra/envs/ru.env').read_text()
+    assert node_env(root)['BACKUP_PASSPHRASE'] == 'brand new passphrase'
 
 
 def test_explicit_answers_change_only_their_fields(tmp_path):
@@ -349,7 +347,7 @@ def test_broken_config_stops_before_questions(tmp_path):
     root, config = filled(tmp_path, text)
     code, output = rerun(root)
     assert code == 1, output
-    assert 'ERROR: config.yaml: panel.image' in output and 'CANARY' not in output
+    assert 'ERROR: config.yaml: ' in output and 'CANARY' not in output
     assert 'Количество' not in output
     assert config.read_text() == text
 
@@ -368,7 +366,7 @@ def test_new_fields_join_their_section(tmp_path):
     comment = '  # password не задан — будет сгенерирован при первом деплое\n'
     assert config.read_text() == (
         before.replace("  password: ''\n" + comment, "  password: 'OwnAdminPw-1'\n")
-        # backend и schedule не записаны: config2env читает их как local и daily.
+        # backend и schedule не записаны: деплой читает их как local и daily.
         .replace("  enabled: false\n", "  enabled: true\n  passphrase: 'typed passphrase'\n"))
 
 

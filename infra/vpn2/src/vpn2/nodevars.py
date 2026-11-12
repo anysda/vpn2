@@ -1,9 +1,7 @@
-"""Переменные узлов из config.yaml: то же, что config2env.py пишет в infra/envs/*.env.
+"""Переменные узлов из config.yaml: окружение каждого узла, которое инвентарь отдаёт ролям.
 
-env_by_node отдаёт на каждый узел окружение, которое bash получает после
-`source all.env; source <узел>.env`: те же имена и те же строки. Состояние
-деплоя (mgmt-ips.txt, excluded-exits.txt) только читается; закрепляет октеты
-по-прежнему config2env.py, пока он жив.
+Состояние деплоя (mgmt-ips.txt, excluded-exits.txt) только читается; октеты
+закрепляет infra/ansible/inventory.py --prepare.
 """
 import ipaddress
 import json
@@ -138,7 +136,7 @@ def _sections(cfg):
 
 
 def validate(cfg: Config) -> dict:
-    """Проверки config2env до записи env; возвращает разделы с каноническим panel.domain."""
+    """Проверки config.yaml до деплоя; возвращает разделы с каноническим panel.domain."""
     sec = _sections(cfg)
     entry = sec['entry']
     _check_host(entry.get('host', ''), 'entry.host')

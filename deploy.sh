@@ -54,9 +54,9 @@ if [[ ! -f "${REPO_ROOT}/config.yaml" ]]; then
   exit 1
 fi
 
-# ── Генерация env-файлов из config.yaml ─────────────────────────────────────
-python3 "${REPO_ROOT}/infra/lib/config2env.py" "${REPO_ROOT}" \
-  || die "Ошибка при генерации env-файлов из config.yaml"
+PYTHONPATH="$REPO_ROOT/infra/vpn2/src" python3 -B "$REPO_ROOT/infra/ansible/inventory.py" --prepare || exit 1
+# Каталог окружений прежних выпусков (с секретами) не читается никем.
+rm -rf "$REPO_ROOT/infra/envs"
 
 # ── Делегируем в оркестратор ─────────────────────────────────────────────────
 # Без аргументов: install_prereqs → check → full deploy.

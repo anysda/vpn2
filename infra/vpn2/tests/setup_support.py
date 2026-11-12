@@ -19,10 +19,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = Path(__file__).parent / 'fixtures/setup'
 
-COPIED = ('setup.sh', 'infra/lib/config2env.py',
+COPIED = ('setup.sh', 'infra/ansible/inventory.py',
           'infra/vpn2/src/vpn2/__init__.py', 'infra/vpn2/src/vpn2/setup.py', 'infra/vpn2/src/vpn2/config.py',
           'infra/vpn2/src/vpn2/nodevars.py', 'infra/vpn2/src/vpn2/watchdog/__init__.py',
           'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py')
+
+
+
+def node_env(root, node='ru'):
+    """Переменные узла из записанного config.yaml - то, что деплой отдаёт ролям инвентарём."""
+    from vpn2 import config, nodevars
+    cfg = config.loads((root / 'config.yaml').read_text())
+    return nodevars.env_by_node(cfg, state=root / 'state', repo_root=root)[node]
+
 
 STUBS = {
     'ip': '''case "$*" in *route*) f=ip-route ;; *) f=ip-addr ;; esac

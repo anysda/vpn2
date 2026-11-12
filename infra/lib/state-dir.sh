@@ -32,7 +32,7 @@ _state_move() {
 
 # Перенос состояния старой раскладки (infra/state/*, infra/.known_hosts) в
 # VPN2_STATE_DIR. Аргумент - каталог infra. Зовётся под замком деплоя и до
-# config2env.py: тот при пустом каталоге засеял бы октеты mesh заново.
+# inventory.py --prepare: тот при пустом каталоге засеял бы октеты mesh заново.
 # Повторный вызов и вызов после обрыва посередине доводят перенос до конца.
 state_dir_migrate() {
   local infra="$1" src name

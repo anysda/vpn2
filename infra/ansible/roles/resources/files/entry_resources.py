@@ -90,7 +90,7 @@ def shell(values, service):
 
 
 def patch_adguard(path, state_path, values, overrides, fresh=False, check=False):
-    import yaml  # На entry ставится bootstrap; расчёт и config2env без PyYAML.
+    import yaml  # На entry PyYAML ставит bootstrap; расчёт без него.
 
     cfg = yaml.safe_load(path.read_text())
     before = copy.deepcopy(cfg)

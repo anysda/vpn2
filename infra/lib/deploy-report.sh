@@ -6,7 +6,7 @@ print_summary() {
   local total=$(( $(date +%s) - _TOTAL_T0 )) timing url pass title entry row width=0 rows=()
   timing="$(( total / 60 ))m $(( total % 60 ))s"; timing=${timing#0m }
   # shellcheck disable=SC1091
-  source "$DEPLOY_ROOT/envs/ru.env"
+  source "$ENVS/ru.env"
   url="http://${SSH_HOST}/"
   [[ "$(cat /etc/vpn2/tls/panel/secure 2>/dev/null)" != true ]] || url="https://${ENTRY_HOST:-$SSH_HOST}/"
   [[ -z "${PANEL_DOMAIN:-}" ]] || url="https://${PANEL_DOMAIN}/"
@@ -57,7 +57,7 @@ print_ikev2_notice() {
 
 print_sso_notice() (
   # shellcheck disable=SC1091
-  source "$DEPLOY_ROOT/envs/ru.env"
+  source "$ENVS/ru.env"
   secret="${SSO_CLIENT_SECRET:-}"
   if [[ "${SSO_REQUESTED:-${SSO_ENABLED:-false}}" == true && -z "${secret//[[:space:]]/}" && ! -f /etc/anysda/sso-runtime.json ]]; then
     printf '%s\n' 'SSO не включён, потому что не задан секрет. Входите по паролю администратора. Чтобы включить SSO, заполните sso.client_secret в config.yaml и запустите ./deploy.sh 30-frontend ru.'
@@ -67,7 +67,7 @@ print_sso_notice() (
 # Бот включён, если токен и чат заданы в config.yaml или в панели.
 announce_deploy_done() (
   # shellcheck disable=SC1091
-  source "$DEPLOY_ROOT/envs/ru.env"
+  source "$ENVS/ru.env"
   if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
     python3 -c 'import json, sys; r = json.load(open("/etc/anysda/telegram-runtime.json")); sys.exit(not (r.get("bot_token") and r.get("chat_id")))' 2>/dev/null || exit 0
   fi

@@ -12,7 +12,7 @@ verify_command_exit: >-
   /usr/bin/env PYTHONPATH={{ verify_tmp }}/{{ verify_wheel | basename }} /usr/bin/python3 -B -m vpn2.cli verify
 verify_command: "{{ verify_command_entry if verify_entry else verify_command_exit }}"
 
-# Настройки проверки из окружения узла (envs/all.env и envs/<узел>.env).
+# Настройки проверки из окружения узла (vpn2_env инвентаря).
 verify_env_names:
   - HOST_TAG
   - MGMT_IP

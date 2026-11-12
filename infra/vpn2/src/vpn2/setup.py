@@ -1,4 +1,4 @@
-"""Мастер config.yaml: задаёт вопросы, пишет config.yaml, генерирует infra/envs.
+"""Мастер config.yaml: задаёт вопросы, пишет config.yaml.
 
 Запускается обёрткой setup.sh из дерева репы до установки пакета, поэтому
 только стандартная библиотека. Вопросы, их порядок, проверки ввода и итоговый
@@ -12,7 +12,6 @@ import ipaddress
 import json
 import os
 import re
-import runpy
 import secrets
 import signal
 import string
@@ -222,8 +221,79 @@ def detect_geo(address):
     return code, country
 
 
-def config2env():
-    return runpy.run_path(str(ROOT / 'infra/lib/config2env.py'))
+SECTIONS = ('entry', 'panel', 'admin', 'alerts', 'entry_resources', 'failover', 'openvpn', 'ports',
+            'sso', 'tgbot', 'wireguard', 'backup', 'telegram', 'youtube')
+
+
+def checked(text, validate=True):
+    """Разобранный конфиг пакетом vpn2; отказ - одной строкой с путём ключа, без значений."""
+    from vpn2 import config, nodevars
+    try:
+        cfg = config.loads(text)
+        if validate:
+            nodevars.validate(cfg)
+    except config.ConfigError as error:
+        sys.exit(f'ERROR: {error}')
+    return cfg
+
+
+def parse_yaml(text):
+    """Разделы config.yaml строками; файл без ключей (пустой, заготовка) - пустые разделы."""
+    raw = checked(text, validate=False).raw if re.search(r'^[^#\s]', text, re.MULTILINE) else {}
+    for section in SECTIONS:
+        raw.setdefault(section, {})
+    raw.setdefault('exits', [])
+    return raw
+
+
+def _blocks(text, pattern):
+    matches = list(re.finditer(pattern, text, re.MULTILINE))
+    ends = [match.start() for match in matches[1:]] + [len(text)]
+    return (text[:matches[0].start()] if matches else text,
+            [text[match.start():end] for match, end in zip(matches, ends)])
+
+
+def merge_setup_config(previous, answers):
+    """Обновляет в прежнем config.yaml только ответы мастера; остальные строки и комментарии целы.
+
+    Экзиты сопоставляются по тегу: удалённые в мастере уходят, лишние поля оставшихся остаются.
+    """
+    old_exits, new_exits = parse_yaml(previous)['exits'], parse_yaml(answers)['exits']
+    tags = [item.get('tag') for item in old_exits]
+    if any(not tag for tag in tags) or len(tags) != len(set(tags)):
+        sys.exit('ERROR: config.yaml: exits: для сохранения настроек нужны уникальные непустые теги')
+
+    def merge(old, new, indent):
+        pattern = '^' + ' ' * indent + r'[^ #\n][^:\n]*:'
+        prefix, old_parts = _blocks(old, pattern)
+        keyed = {part.split(':', 1)[0].strip(): part for part in old_parts}
+        for part in _blocks(new, pattern)[1]:
+            name = part.split(':', 1)[0].strip()
+            if name not in keyed:
+                keyed[name] = part
+                continue
+            (old_head, _, old_body), (new_head, _, new_body) = keyed[name].partition('\n'), part.partition('\n')
+            new_value = new_head.partition(':')[2].strip()
+            if indent == 0 and name == 'exits':
+                lead, old_items = _blocks(old_body, '^  - ')
+                by_tag = {item['tag']: text for item, text in zip(old_exits, old_items)}
+                merged = [merge(by_tag.get(item['tag'], '').replace('  - ', '    ', 1),
+                                text.replace('  - ', '    ', 1), 4).replace('    ', '  - ', 1)
+                          for item, text in zip(new_exits, _blocks(new_body, '^  - ')[1])]
+                keyed[name] = old_head + '\n' + lead + ''.join(merged)
+            elif not new_value or new_value.startswith('#'):
+                keyed[name] = old_head + '\n' + merge(old_body, new_body, indent + 2)
+            else:
+                # Комментарий в строке прежнего значения остаётся; # внутри кавычек - часть значения.
+                value = old_head.partition(':')[2].lstrip()
+                found = re.fullmatch(r'''(?:'(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|.*?)([ \t]+\#.*)?''', value)
+                keyed[name] = new_head + ((' ' + value) if value.startswith('#') else (found[1] or '')) + '\n' + old_body
+        return prefix + ''.join(keyed.values())
+
+    result = merge(previous.rstrip() + '\n', answers, 0)
+    checked(result, validate=False)
+    return result
+
 
 
 def validate_tag(ui, tag, used):
@@ -351,7 +421,8 @@ def ask_domain(ui, entry_ip, stored):
     ui.hint('Hysteria2-туннели остаются на self-signed TLS (IP), домен — только для UI')
     if not ui.ask_yn('Настроить HTTPS-домен для панели?', 'y' if stored else 'n'):
         return ''
-    normalize = config2env()['normalize_domain']
+    from vpn2.config import ConfigError
+    from vpn2.nodevars import normalize_domain as normalize
     while True:
         if stored:
             domain = clean(ui.ask('Домен (например vpn.example.com)', stored), stored)
@@ -362,7 +433,7 @@ def ask_domain(ui, entry_ip, stored):
             break
         try:
             domain = normalize(domain, 'panel.domain')
-        except SystemExit:
+        except ConfigError:
             ui.fail('Неправильный формат домена: нужно DNS-имя без схемы, порта и пробелов')
             continue
         ui.err(f'  {ui.D}проверяю DNS...{ui.E} ')
@@ -532,7 +603,7 @@ def defaults():
 def stored_answers(config):
     """Прежние ответы из разобранного config.yaml: то, с чем сейчас живёт деплой.
 
-    Незаписанное поле читается так же, как его читает config2env, поэтому
+    Незаписанное поле читается так же, как его читает деплой, поэтому
     Enter на вопросе не меняет ни файл, ни поведение.
     """
     backup = config['backup']
@@ -585,7 +656,7 @@ def render(answers):
         lines += [f'  {key}: {scalar(key, backup[key])}' for key in ('backend', 'passphrase', 'schedule')]
         if backup['backend'] == 's3':
             lines += ['  s3:', *(f'    {key}: {quoted(backup["s3"][key])}' for key in S3_KEYS)]
-    # quic и retention не спрашиваются: значения по умолчанию берёт config2env.
+    # quic и retention не спрашиваются: значения по умолчанию берёт деплой.
     lines += ['', 'youtube:', f"  route: {quoted(answers['youtube']['route'])}"]
     return '\n'.join(lines) + '\n'
 
@@ -624,8 +695,7 @@ def update(previous, changed):
     остаются, экзиты сопоставляются по тегу. Новое поле он дописывает в конец
     секции, после её пустых строк - возвращаем его к остальным полям.
     """
-    library = config2env()
-    known = library['parse_yaml'](previous)
+    known = parse_yaml(previous)
     merged, appended, runs = [], [], []
     for name, fields in changed.items():
         present = re.search(f'^{name}:', previous, re.MULTILINE)
@@ -652,7 +722,7 @@ def update(previous, changed):
         (merged if present else appended).append('\n'.join([f'{name}:', *lines]) + '\n')
     text = previous.rstrip() + '\n'
     if merged:
-        text = library['merge_setup_config'](previous, ''.join(merged))
+        text = merge_setup_config(previous, ''.join(merged))
         for run in filter(None, runs):
             block = '\n'.join(run) + '\n'
             while '\n\n' + block in text:
@@ -661,7 +731,7 @@ def update(previous, changed):
             text = text.replace(NO_PASSWORD + '\n', '', 1)
         text = text.rstrip('\n') + '\n'
     text += ''.join('\n' + section for section in appended)
-    library['validate_yaml'](library['normalize_yaml'](text))
+    checked(text)
     return text
 
 
@@ -683,7 +753,7 @@ def wizard(ui):
     config = ROOT / 'config.yaml'
     previous = config.read_text(encoding='utf-8') if config.exists() else None
     # Битый config.yaml останавливает мастер до вопросов: править его вслепую нельзя.
-    known = stored_answers(config2env()['parse_yaml'](previous)) if previous is not None else None
+    known = stored_answers(parse_yaml(previous)) if previous is not None else None
     # Файл без нод (пустой или заготовка) - ещё не конфигурация: вопросы как на чистой машине.
     rerun = bool(known and (known['entry']['host'] or known['exits']))
     old = known if rerun else defaults()
@@ -729,7 +799,7 @@ def wizard(ui):
     ui.err('\n')
     summary(ui, entry_ip, new['exits'])
     ui.err('\n')
-    if not ui.ask_yn('Сохранить config.yaml и сгенерировать envs?', 'y'):
+    if not ui.ask_yn('Сохранить config.yaml?', 'y'):
         ui.err('  Отменено.\n')
         return 0
     if previous is None:
@@ -746,8 +816,8 @@ def wizard(ui):
             ui.ok('config.yaml без изменений')
 
     ui.err('\n')
-    code = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), str(ROOT)],
-                          check=False).returncode
+    code = subprocess.run([sys.executable, str(ROOT / 'infra/ansible/inventory.py'), '--prepare'], check=False,
+                          env={**os.environ, 'PYTHONPATH': str(ROOT / 'infra/vpn2/src')}).returncode
     if code:
         return code
     ui.err('\n')

@@ -10,7 +10,7 @@ from test_deploy import ROOT
 
 
 HELP = '''anysda-vpn — интерактивный конфигуратор
-Задаёт вопросы → записывает config.yaml → генерирует infra/envs/*.env
+Задаёт вопросы → записывает config.yaml
 
 Команды:
   ./setup.sh                    Запустить мастер настройки

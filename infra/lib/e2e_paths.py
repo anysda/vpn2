@@ -20,7 +20,7 @@ DEPENDENCIES = {
     'infra/tests/test_speedtest.py',
     'infra/tests/test_deploy.py',
     'infra/tests/test_panel_proxy.py',
-    'infra/lib/config2env.py',
+    'infra/ansible/inventory.py',
     'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py',
     'infra/ansible/roles/router/templates/config-base.json.j2',
     'infra/tests/router_support.py',

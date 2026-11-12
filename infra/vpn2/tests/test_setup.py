@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from setup_support import FIXTURES, ROOT, environment, normalize, prepare, run, run_tty
+from setup_support import FIXTURES, ROOT, environment, node_env, normalize, prepare, run, run_tty
 from vpn2 import setup
 
 SCENARIOS = sorted(path.name for path in FIXTURES.iterdir() if (path / 'output').exists())
@@ -74,8 +74,7 @@ def test_save_and_repeat(tmp_path):
         assert code == 0, output
         assert 'Выход de: 198.51.100.2' in output
         assert (root / 'config.yaml').stat().st_mode & 0o777 == 0o600
-        assert (root / 'infra/envs/all.env').stat().st_size
-        assert "EXIT_TAGS='de'" in (root / 'infra/envs/exits.env').read_text().splitlines()
+        assert node_env(root)['EXIT_TAGS'] == 'de'
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason='от root мастер ставит пакеты сам')
@@ -104,7 +103,7 @@ def test_missing_package_without_root_stops_before_questions(tmp_path):
     ('1\np\n198.51.100.2\np\nde\n\nlongpassword\n', None),
     ('1\np\n198.51.100.2\np\nde\n\n\n', None),
     ('1\np\n198.51.100.2\np\nde\n\n\n\nn\nn\ny\ny\nlocal\n', None),
-    (MINIMAL[:-2], '✗ EOF: Сохранить config.yaml и сгенерировать envs? (y/n) — ввод прерван'),
+    (MINIMAL[:-2], '✗ EOF: Сохранить config.yaml? (y/n) — ввод прерван'),
 ])
 def test_input_end_aborts_without_config(tmp_path, answers, message):
     root = prepare(tmp_path, stubs=MINIMAL_STUBS)
@@ -112,7 +111,7 @@ def test_input_end_aborts_without_config(tmp_path, answers, message):
     assert code == 1, output
     assert (message in output) if message else ('EOF' not in output)
     assert 'Traceback' not in output
-    assert list(root.glob('*.yaml')) == [] and not (root / 'infra/envs').exists()
+    assert list(root.glob('*.yaml')) == []
 
 
 def test_dig_failure_reads_as_unresolved_domain(tmp_path):

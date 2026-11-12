@@ -36,10 +36,20 @@ FRESH_LOGIN='-o ControlMaster=no -o ControlPath=none'
 export VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} VPN2_INFRA=$DEPLOY_ROOT VPN2_SOURCE_ROOT=$REPO
 export VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json
 
-exit_tags() {
-  [[ -f "$DEPLOY_ROOT/envs/exits.env" ]] || die "envs/exits.env не найден — запусти ./setup.sh"
-  ( source "$DEPLOY_ROOT/envs/exits.env"; echo "${EXIT_TAGS:-}" )
+inventory() {
+  PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B "$DEPLOY_ROOT/ansible/inventory.py" "$@"
 }
+
+# Переменные узлов из config.yaml на время запуска: ENVS/<узел>.env для source.
+envs_write() {
+  local node
+  ENVS=$TMP/envs
+  install -d -m 700 "$ENVS"
+  inventory --env ru > "$ENVS/ru.env" || exit 1
+  for node in $(exit_tags); do inventory --env "$node" > "$ENVS/$node.env" || exit 1; done
+}
+
+exit_tags() { ( source "$ENVS/ru.env"; echo "${EXIT_TAGS:-}" ); }
 
 # Группа → узлы через пробел; экзиты, пропущенные в pre-flight, в стадии не идут.
 expand_hosts() {
@@ -265,6 +275,7 @@ on_exit() {
 case "${1:-}" in -h|--help) usage ;; esac
 TMP=$(mktemp -d)
 trap on_exit EXIT
+envs_write
 trap 'exit 130' INT
 trap 'exit 143' TERM
 dry_restore=false

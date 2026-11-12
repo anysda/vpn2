@@ -810,26 +810,27 @@ def mark_good(rb):
 # После замены: стадии с паролями из архива и проверка узла
 
 def stage_env(source_root, work):
-    """Окружение стадий как у deploy.sh: all.env, пустая строка, ru.env без SSH_PASS; путь к файлу.
+    """Окружение стадий entry из config.yaml клона (инвентарь деплоя) без SSH_PASS; путь к файлу.
 
-    Нет all.env или ru.env - файл не создаётся. ADMIN_PASSWORD снимается: стадии читают
+    Конфиг не читается - файл не создаётся. ADMIN_PASSWORD снимается: стадии читают
     восстановленный файл, а не засевают новый.
     """
-    envs = Path(source_root) / 'infra/envs'
+    root = Path(source_root)
     target = Path(work) / 'ru.env'
-    if not (os.access(envs / 'all.env', os.R_OK) and os.access(envs / 'ru.env', os.R_OK)):
+    found = subprocess.run([sys.executable, str(root / 'infra/ansible/inventory.py'), '--env', 'ru'],
+                           capture_output=True, check=False,
+                           env={**os.environ, 'PYTHONPATH': str(root / 'infra/vpn2/src'),
+                                'VPN2_CONFIG': str(root / 'config.yaml')})
+    if found.returncode:
         return target
-    own = b''.join(line for line in (envs / 'ru.env').read_bytes().splitlines(keepends=True)
-                   if not line.startswith(b'SSH_PASS='))
-    if own and not own.endswith(b'\n'):
-        own += b'\n'
+    own = b''.join(line for line in found.stdout.splitlines(keepends=True) if not line.startswith(b'SSH_PASS='))
     tail = f"unset ADMIN_PASSWORD\nVPN2_DEVELOPMENT={shlex.quote(os.environ.get('VPN2_DEVELOPMENT') or 'false')}\n"
     # /tmp/anysda/release-manifest.json живёт до перезагрузки: деплой оставляет манифест
     # установленного выпуска в состоянии, стадии берут его оттуда.
     manifest = os.path.join(os.environ.get('VPN2_STATE_DIR') or f'/{DB_DIR}/state', 'release-manifest.json')
     if os.path.isfile(manifest):
         tail += f'VPN2_RELEASE_MANIFEST={shlex.quote(manifest)}\n'
-    _write_private(target, (envs / 'all.env').read_bytes() + b'\n' + own + tail.encode())
+    _write_private(target, own + tail.encode())
     return target
 
 
@@ -838,10 +839,9 @@ def resync(source_root, env_file, work):
 
     Первая неудача останавливает цепочку; вывод стадии - в work/<стадия>.log, его хвост - в причине.
     """
-    envs = Path(source_root) / 'infra/envs'
     for stage, steps in STAGES.items():
         if not _filled(env_file):
-            fail = f'нет {envs}/all.env или {envs}/ru.env (их пишет ./deploy.sh из config.yaml)'
+            fail = f'не прочитан {source_root}/config.yaml: окружение стадий не собрано'
         else:
             _say(f'{stage} с восстановленными паролями…')
             log = Path(work) / f'{stage}.log'

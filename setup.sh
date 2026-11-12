@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # anysda-vpn — интерактивный конфигуратор
-# Задаёт вопросы → записывает config.yaml → генерирует infra/envs/*.env
+# Задаёт вопросы → записывает config.yaml
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 usage() {
   cat <<'EOF'
 anysda-vpn — интерактивный конфигуратор
-Задаёт вопросы → записывает config.yaml → генерирует infra/envs/*.env
+Задаёт вопросы → записывает config.yaml
 
 Команды:
   ./setup.sh                    Запустить мастер настройки

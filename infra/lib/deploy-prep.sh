@@ -103,7 +103,7 @@ pull_secrets() {
 warn_insecure_exits() {
   local host
   for host in $(exit_tags); do
-    ! grep -qx "$(tr 'a-z-' 'A-Z_' <<<"$host")_HY2_INSECURE=1" "$DEPLOY_ROOT/envs/all.env" 2>/dev/null \
+    ! grep -qx "$(tr 'a-z-' 'A-Z_' <<<"$host")_HY2_INSECURE=1" "$ENVS/ru.env" 2>/dev/null \
       || warn "$host: exits[].hy2_insecure: true — сертификат экзита не проверяется, подмену экзита на пути entry → экзит не видно"
   done
 }
@@ -121,7 +121,7 @@ preflight_ssh() {
       printf '  %-30s %b✓%b\n' "$host" "$C_G" "$C_END"
       continue
     fi
-    addr=$(source "$DEPLOY_ROOT/envs/$host.env"; echo "$SSH_HOST")
+    addr=$(source "$ENVS/$host.env"; echo "$SSH_HOST")
     reason=$(tr '\n' ' ' < "$dir/$host.fail")
     case "$reason" in
       *'IDENTIFICATION HAS CHANGED'*|*'Host key verification failed'*)

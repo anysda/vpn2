@@ -1,10 +1,8 @@
 """Запуск всего мастера со stdin и PTY; сетевые ответы фиксированы."""
-import importlib.util
 import difflib
 import os
 from pathlib import Path
 import pty
-import runpy
 import select
 import shutil
 import signal
@@ -17,6 +15,7 @@ import unittest
 import yaml
 
 from test_deploy import ROOT
+from vpn2 import config as vpn2_config, nodevars, setup
 
 
 STUBS = {
@@ -25,10 +24,15 @@ STUBS = {
     'dig': "printf '192.0.2.1\\n'",
 }
 COMMAND = 'PATH="$PWD/stubs:$PATH" exec bash setup.sh'
-COPIED = ('setup.sh', 'infra/lib/config2env.py',
+COPIED = ('setup.sh', 'infra/ansible/inventory.py',
           'infra/vpn2/src/vpn2/__init__.py', 'infra/vpn2/src/vpn2/setup.py', 'infra/vpn2/src/vpn2/config.py',
           'infra/vpn2/src/vpn2/nodevars.py', 'infra/vpn2/src/vpn2/watchdog/__init__.py',
           'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py')
+
+
+def node_env(root, node):
+    cfg = vpn2_config.loads((root / 'config.yaml').read_text())
+    return nodevars.env_by_node(cfg, state=root / 'state', repo_root=root)[node]
 
 
 def prepare(directory):
@@ -105,24 +109,20 @@ class SetupInputTests(unittest.TestCase):
             self.assertNotIn('ERROR: config.yaml:', output)
 
     def test_merge_keeps_inline_comments_outside_yaml_quotes(self):
-        module = runpy.run_path(str(ROOT / 'infra/lib/config2env.py'))
         for value in ("'old # secret'", "'it''s # secret'", '"escaped \\" # secret"',
                       'plain#secret', "''", ''):
             with self.subTest(value=value):
                 original = f'admin:\n  password: {value}  # keep credential note\n'
-                result = module['merge_setup_config'](original, "admin:\n  password: 'new # secret'\n")
+                result = setup.merge_setup_config(original, "admin:\n  password: 'new # secret'\n")
                 self.assertEqual(yaml.safe_load(result)['admin']['password'], 'new # secret')
                 self.assertIn('# keep credential note', result)
 
     def test_merge_preserves_example_except_answered_fields(self):
-        spec = importlib.util.spec_from_file_location('config2env', ROOT / 'infra/lib/config2env.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
         original = (ROOT / 'config.example.yaml').read_text()
         expected = yaml.safe_load(original)
         expected['entry']['password'] = 'new secret'
         expected['backup']['enabled'] = False
-        result = module.merge_setup_config(original, "entry:\n  password: 'new secret'\n"
+        result = setup.merge_setup_config(original, "entry:\n  password: 'new secret'\n"
                                            'backup:\n  enabled: false\n')
         self.assertEqual(yaml.safe_load(result), expected)
         self.assertIn('# Кастомные порты (опционально).', result)
@@ -212,10 +212,10 @@ orchestrator_pubkey: 'ssh-ed25519 fake' # synthetic public key
             self.assertFalse(any(actual['telegram'].values()))
             self.assertEqual((root / '.ssh/id_ed25519').read_text(), 'fake key\n')
             self.assertIn("orchestrator_key: 'ZmFrZSBrZXkK' # synthetic key", config.read_text())
-            env = (root / 'infra/envs/ru.env').read_text()
-            self.assertNotIn('BACKUP_ENABLED=', env)
-            self.assertNotIn('fake-token', env)
-            self.assertIn("YT_ROUTE='off'", env)
+            env = node_env(root, 'ru')
+            self.assertNotIn('BACKUP_ENABLED', env)
+            self.assertNotIn('fake-token', env.values())
+            self.assertEqual(env['YT_ROUTE'], 'off')
 
     def test_rerun_rejects_invalid_yaml_without_modifying_files(self):
         answers = ['1', 'entry secret', '192.0.2.2', 'exit secret', 'se',
@@ -228,14 +228,10 @@ orchestrator_pubkey: 'ssh-ed25519 fake' # synthetic public key
                 root = prepare(directory)
                 config = root / 'config.yaml'
                 config.write_text(existing)
-                env = root / 'infra/envs/ru.env'
-                env.parent.mkdir()
-                env.write_text('unchanged\n')
                 code, output = run_setup(directory, '\n'.join(answers) + '\n')
                 self.assertNotEqual(code, 0, output)
                 self.assertNotIn('CANARY', output)
                 self.assertEqual(config.read_text(), existing)
-                self.assertEqual(env.read_text(), 'unchanged\n')
                 self.assertEqual(list(root.glob('.config-*.yaml')), [])
 
     def test_rerun_preserves_unprompted_settings(self):
@@ -327,7 +323,7 @@ youtube:
             code, output = run_setup(directory, '\n'.join(answers) + '\n')
             self.assertEqual(code, 0, output)
             self.assertIn('Выход us-2: 192.0.2.2', output)
-            self.assertTrue((root / 'infra/envs/us-2.env').is_file())
+            self.assertEqual(node_env(root, 'us-2')['SSH_HOST'], '192.0.2.2')
 
     def test_bot_token_is_not_echoed_on_terminal(self):
         prompts = [
@@ -385,16 +381,10 @@ youtube:
             root = prepare(directory)
             code, output = run_setup(directory, '\n'.join(answers) + '\n')
             self.assertEqual(code, 0, output)
-            result = subprocess.run(['bash', '-euc',
-                                     'source infra/envs/ru.env; '
-                                     'printf "%s\\0" "$SSH_PASS" "$ADMIN_PASSWORD" "$BACKUP_PASSPHRASE"; '
-                                     'source infra/envs/se.env; printf "%s\\0" "$SSH_PASS"'],
-                                    cwd=root, capture_output=True, text=True, timeout=5)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.split('\0')[:-1], [secret] * 4)
+            ru, se = node_env(root, 'ru'), node_env(root, 'se')
+            self.assertEqual([ru['SSH_PASS'], ru['ADMIN_PASSWORD'], ru['BACKUP_PASSPHRASE'], se['SSH_PASS']], [secret] * 4)
             self.assertNotIn('CANARY', output)
-            for path in ('config.yaml', 'infra/envs/ru.env', 'infra/envs/se.env'):
-                self.assertEqual((root / path).stat().st_mode & 0o777, 0o600)
+            self.assertEqual((root / 'config.yaml').stat().st_mode & 0o777, 0o600)
 
     def test_eof_aborts_without_writing_config(self):
         for answers in ('', '1\n', '1\nroot secret\n'):

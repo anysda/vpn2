@@ -1,11 +1,6 @@
 ---
-# YouTube с адреса entry. На российских адресах YouTube не крутит рекламу, а
-# через зарубежный экзит мы сами её включаем и тратим канал экзита на самый
-# тяжёлый трафик. Мешает одно: DPI провайдера режет TLS к youtube.com - это
-# лечится десинком (zapret2/nfqws2), а не туннелем.
-#
-# Роль идёт до роутера: сначала готов путь десинка, потом sing-box начинает на
-# него отправлять трафик.
+# YouTube с адреса entry через DPI-десинк zapret2/nfqws2. Роль идёт до роутера:
+# сначала готов путь десинка, потом sing-box начинает на него отправлять.
 - name: Команда vpn2
   ansible.builtin.stat:
     path: "{{ zapret_vpn2 }}"
@@ -13,11 +8,9 @@
   failed_when: not (zapret_vpn2_stat.stat.executable | default(false))
 
 - name: Десинк выключен - развёрнутое снято
-  ansible.builtin.command:
-    argv: "{{ zapret_step + ['off'] }}"
-  environment: "{{ zapret_env }}"
-  register: zapret_off
-  changed_when: "'changed=1' in zapret_off.stdout"
+  ansible.builtin.include_tasks: off.yml
+  vars:
+    zapret_off: "{{ zapret_all_off }}"
   when: zapret_route != 'zapret'
 
 - name: Десинк YouTube

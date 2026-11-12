@@ -1,0 +1,51 @@
+---
+# Зависимости видеопробы качаются из PyPI, npm и GitHub: одна сетевая заминка не роняет установку.
+- name: Версии yt-dlp и Node видеопробы
+  ansible.builtin.command:
+    argv: ["{{ zapret_probe_venv }}/bin/{{ item }}", --version]
+  loop: [yt-dlp, node]
+  register: zapret_have
+  changed_when: false
+  failed_when: false
+
+- name: Зависимости видеопробы
+  block:
+    - name: yt-dlp видеопробы
+      when: zapret_have.results[0].stdout | default('') != zapret_ytdlp_version
+      ansible.builtin.shell:
+        cmd: >-
+          /usr/bin/python3 -m venv {{ zapret_probe_venv }} &&
+          {{ zapret_probe_venv }}/bin/pip install --disable-pip-version-check 'yt-dlp[default]=={{ zapret_ytdlp_version }}'
+      register: zapret_pip
+      until: zapret_pip is succeeded
+      retries: 2
+      delay: 10
+
+    - name: Node и npm видеопробы
+      when: zapret_have.results[1].stdout | default('') != zapret_node_version
+      ansible.builtin.shell:
+        cmd: >-
+          {{ zapret_release | map('quote') | join(' ') }} artifact yt-node {{ zapret_tmp }}/node.tar.xz
+          --url {{ zapret_node_url }} --sha256 {{ zapret_node_sha256 }} &&
+          tar -xJf {{ zapret_tmp }}/node.tar.xz -C {{ zapret_probe_venv }} --strip-components=1
+          {{ zapret_node_tree }}/bin/node {{ zapret_node_tree }}/lib/node_modules/npm
+      register: zapret_node
+      until: zapret_node is succeeded
+      retries: 2
+      delay: 10
+
+    - name: PO-токены видеопробы
+      ansible.builtin.command:
+        argv: [bash, "{{ zapret_tmp }}/install-yt-pot.sh", "{{ zapret_probe_venv }}"]
+      environment: "{{ zapret_env | combine({'PATH': zapret_path}) }}"
+      register: zapret_pot
+      changed_when: "'PO-токены установлены' in zapret_pot.stdout"
+      until: zapret_pot is succeeded
+      retries: 2
+      delay: 30
+  rescue:
+    - name: Зависимости видеопробы не установились
+      ansible.builtin.fail:
+        msg: >-
+          зависимости видеопробы не установились за 3 попытки: {{ ansible_failed_task.name }};
+          проверьте доступ entry к сети и повторите ./deploy.sh

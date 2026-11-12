@@ -15,8 +15,8 @@ class ZapretRoleTests(unittest.TestCase):
 
     def test_route_selects_teardown_or_desync(self):
         main = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())
-        off = next(task for task in main if "'off'" in str(task.get('ansible.builtin.command', {}).get('argv')))
-        self.assertEqual(off['when'], "zapret_route != 'zapret'")
+        off = next(task for task in main if task.get('ansible.builtin.include_tasks') == 'off.yml')
+        self.assertEqual((off['vars'], off['when']), ({'zapret_off': '{{ zapret_all_off }}'}, "zapret_route != 'zapret'"))
         desync = next(task for task in main if 'ansible.builtin.import_tasks' in task)
         self.assertEqual((desync['ansible.builtin.import_tasks'], desync['when']),
                          ('desync.yml', "zapret_route == 'zapret'"))
@@ -27,8 +27,7 @@ class ZapretRoleTests(unittest.TestCase):
             argv = str(task.get('ansible.builtin.command', {}).get('argv'))
             if 'zapret_step' in argv:
                 steps[argv.split("'")[1]] = task
-        self.assertEqual(list(steps), ['off', 'source', 'facts', 'offload-keep', 'quic-off', 'restart', 'probe',
-                                       'remeasure'])
+        self.assertEqual(list(steps), ['source', 'facts', 'restart', 'remeasure'])
         self.assertEqual(sorted(steps), sorted(stage.STEPS))
         for name, task in steps.items():
             # Повтор роли остаётся без изменений: шаг сам говорит, менял ли он хост.

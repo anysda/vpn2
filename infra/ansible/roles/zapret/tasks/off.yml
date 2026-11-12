@@ -1,0 +1,29 @@
+---
+# zapret_off: {units, tables, files}. Исходники и бинарник остаются: обратное включение мгновенное.
+- name: Службы сняты
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ zapret_off.units }}"
+  failed_when: false
+
+- name: Таблицы nft сняты
+  ansible.builtin.command:
+    argv: [nft, delete, table, inet, "{{ item }}"]
+  loop: "{{ zapret_off.tables }}"
+  register: zapret_tables
+  changed_when: zapret_tables.rc == 0
+  failed_when: false
+
+- name: Файлы сняты
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ zapret_off.files }}"
+  register: zapret_files
+
+- name: Systemd перечитал юниты
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: zapret_files is changed

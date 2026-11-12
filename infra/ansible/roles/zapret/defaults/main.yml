@@ -1,55 +1,60 @@
 ---
-zapret_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 zapret_tmp: /tmp/anysda
 zapret_vpn2: /opt/vpn2/venv/bin/vpn2
 zapret_step: ["{{ zapret_vpn2 }}", zapret]
-zapret_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
 zapret_units: /etc/systemd/system
-
-# youtube.route и youtube.quic из config.yaml: роль ставит десинк только при
-# route=zapret, иначе снимает развёрнутое.
 zapret_route: "{{ vpn2_env.YT_ROUTE | default('off', true) }}"
 zapret_quic: "{{ vpn2_env.YT_QUIC | default('block', true) }}"
+zapret_development: "{{ vpn2_env.VPN2_DEVELOPMENT | default('') == 'true' }}"
+zapret_manifest: "{{ vpn2_env.VPN2_RELEASE_MANIFEST | default('/tmp/anysda/release-manifest.json', true) }}"
+zapret_path: /opt/vpn2/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# zapret2 - чистый C: g++ из build-essential не нужен.
-zapret_packages:
-  - gcc
-  - make
-  - libc6-dev
-  - git
-  - ca-certificates
-  - libcap-dev
-  - libnetfilter-queue-dev
-  - libnfnetlink-dev
-  - libmnl-dev
-  - zlib1g-dev
-  - libluajit-5.1-dev
-  - luajit
-  - nftables
-  - ethtool
-  - curl
-  - python3-venv
-  - xz-utils
-  - kmod
+# Видеопроба под диагностическим пользователем: yt-dlp с EJS, свой Node (>=22) и PO-токены.
+zapret_probe_venv: /opt/anysda-yt-probe
+zapret_ytdlp_version: '2026.10.26'
+zapret_node_version: v26.13.0
+zapret_node_sha256: d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997
+zapret_node_tree: "node-{{ zapret_node_version }}-linux-x64"
+zapret_node_url: https://nodejs.org/dist/{{ zapret_node_version }}/{{ zapret_node_tree }}.tar.xz
+zapret_release: >-
+  {{ ['/opt/vpn2/venv/bin/python', '-m', 'vpn2.release']
+     + ([] if zapret_development else ['--manifest', zapret_manifest]) }}
 
-# Юниты с долей CPU и памяти по ресурсам entry (infra/ansible/roles/resources/files/entry-resources.sh).
-zapret_resource_skip: >-
-  {{ ([] if zapret_v.offload == 'off' else ['anysda-yt-offload'])
-     + ([] if zapret_quic == 'block' else ['anysda-yt-quic', 'anysda-yt-quic-refresh']) }}
+zapret_packages: [gcc, make, libc6-dev, git, ca-certificates, libcap-dev, libnetfilter-queue-dev, libnfnetlink-dev,
+                  libmnl-dev, zlib1g-dev, libluajit-5.1-dev, luajit, nftables, ethtool, curl, python3-venv, xz-utils,
+                  kmod]
 
-# Переменные стадии, которые читают шаги.
-zapret_env_names:
-  - YT_ROUTE
-  - YT_QUIC
-  - YT_MARK
-  - YT_ZAPRET_QUEUE
-  - YT_ZAPRET_REPO
-  - YT_ZAPRET_REF
-  - YT_ZAPRET_BASE
-  - YT_ZAPRET_WINDOW_SCALE
-  - YT_ZAPRET_STRATEGY
-  - YT_ZAPRET_WSCALE
-  - YT_ZAPRET_OFFLOAD
-  - VPN2_RELEASE_MANIFEST
-  - VPN2_DEVELOPMENT
+# Юниты с долей CPU и памяти по ресурсам entry.
+zapret_resource_units: >-
+  {{ ['anysda-yt-nft', 'anysda-yt-nfqws', 'anysda-yt-failover']
+     + (['anysda-yt-offload'] if zapret_v.offload == 'off' else [])
+     + (['anysda-yt-quic', 'anysda-yt-quic-refresh'] if zapret_quic == 'block' else []) }}
+
+zapret_quic_off:
+  units: [anysda-yt-quic-refresh.timer, anysda-yt-quic-refresh.service, anysda-yt-quic.service]
+  tables: [anysda_ytquic]
+  files: ["{{ zapret_units }}/anysda-yt-quic.service", "{{ zapret_units }}/anysda-yt-quic-refresh.service",
+          "{{ zapret_units }}/anysda-yt-quic-refresh.timer", /usr/local/sbin/anysda-yt-quic-refresh.sh,
+          /etc/nftables-yt-quic.conf]
+zapret_offload_off:
+  units: [anysda-yt-offload.service]
+  tables: []
+  files: ["{{ zapret_units }}/anysda-yt-offload.service"]
+zapret_all_off:
+  units: "{{ ['anysda-yt-failover.timer', 'anysda-yt-failover.service'] + zapret_quic_off.units
+             + ['anysda-yt-nfqws.service', 'anysda-yt-nft.service', 'anysda-yt-offload.service'] }}"
+  tables: [anysda_ytquic, ytzapret]
+  files: >-
+    {{ zapret_quic_off.files + zapret_offload_off.files
+       + [zapret_units ~ '/anysda-yt-failover.timer', zapret_units ~ '/anysda-yt-failover.service',
+          '/usr/local/bin/anysda-yt-failover', '/var/lib/anysda-yt-failover/state.json',
+          zapret_units ~ '/anysda-yt-nfqws.service', zapret_units ~ '/anysda-yt-nft.service',
+          zapret_units ~ '/nftables.service.d/90-anysda-youtube.conf',
+          zapret_units ~ '/sing-box.service.d/90-anysda-youtube.conf', '/usr/local/sbin/anysda-yt-nfqws-ready',
+          '/usr/local/bin/anysda-yt-check', '/etc/nftables-yt-zapret.conf', '/etc/sysctl.d/97-anysda-yt-zapret.conf',
+          '/etc/modules-load.d/anysda-yt-zapret.conf', '/var/anysda/.stamps/19-yt-zapret'] }}
+
+zapret_env_names: [YT_ROUTE, YT_QUIC, YT_MARK, YT_ZAPRET_QUEUE, YT_ZAPRET_REPO, YT_ZAPRET_REF, YT_ZAPRET_BASE,
+                   YT_ZAPRET_WINDOW_SCALE, YT_ZAPRET_STRATEGY, YT_ZAPRET_WSCALE, YT_ZAPRET_OFFLOAD,
+                   VPN2_RELEASE_MANIFEST, VPN2_DEVELOPMENT]
 zapret_env: "{{ dict(zapret_env_names | product([''])) | combine(vpn2_env | dict2items | selectattr('key', 'in', zapret_env_names) | items2dict) }}"

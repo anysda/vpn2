@@ -16,10 +16,7 @@
   register: zapret_source
   changed_when: "'changed=1' in zapret_source.stdout"
 
-# Статус юнита десинк не доказывает: nfqws2 поднимается и с нерабочей
-# стратегией. Нужен A/B по помеченному пути и мимо него. Метку снаружи не
-# воспроизвести (её ставит sing-box на свой сокет), поэтому исходящий трафик
-# этого пользователя nft метит той же меткой.
+# A/B-проверка: исходящий трафик этого пользователя nft метит той же меткой, что sing-box.
 - name: Диагностический пользователь
   ansible.builtin.user:
     name: ytzdiag
@@ -27,8 +24,7 @@
     create_home: false
     shell: /usr/sbin/nologin
 
-# На чистой машине conntrack ещё не загружен: sysctl появляется только после
-# modprobe. При перезагрузке modules-load должен опередить systemd-sysctl.
+# sysctl conntrack появляется только после modprobe; при загрузке modules-load идёт раньше systemd-sysctl.
 - name: Модуль conntrack при загрузке
   ansible.builtin.copy:
     content: "nf_conntrack\n"
@@ -40,11 +36,28 @@
     argv: [modprobe, nf_conntrack]
   changed_when: false
 
-- name: Conntrack пропускает сегменты десинка
+- name: Каталоги дополнений юнитов и списка сетей Google
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop: ["{{ zapret_units }}/nftables.service.d", "{{ zapret_units }}/sing-box.service.d", /var/lib/anysda]
+
+# nftables.service стирает ruleset при restart и reload: drop-in возвращает таблицы YouTube.
+# sing-box стартует после того, как nfqws2 занял свою очередь.
+- name: Файлы десинка и видеопробы
   ansible.builtin.copy:
-    src: 97-anysda-yt-zapret.conf
-    dest: /etc/sysctl.d/97-anysda-yt-zapret.conf
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
     mode: '0644'
+  loop:
+    - {src: 97-anysda-yt-zapret.conf, dest: /etc/sysctl.d/97-anysda-yt-zapret.conf}
+    - {src: nftables-90-anysda-youtube.conf, dest: "{{ zapret_units }}/nftables.service.d/90-anysda-youtube.conf"}
+    - {src: sing-box-90-anysda-youtube.conf, dest: "{{ zapret_units }}/sing-box.service.d/90-anysda-youtube.conf"}
+    - {src: anysda-yt-nft.service, dest: "{{ zapret_units }}/anysda-yt-nft.service"}
+    - {src: anysda-yt-failover.service, dest: "{{ zapret_units }}/anysda-yt-failover.service"}
+    - {src: anysda-yt-failover.timer, dest: "{{ zapret_units }}/anysda-yt-failover.timer"}
+    - {src: install-yt-pot.sh, dest: "{{ zapret_tmp }}/install-yt-pot.sh"}
 
 - name: Настройка conntrack применена
   ansible.builtin.command:
@@ -69,46 +82,17 @@
     mode: '0644'
     validate: /usr/sbin/nft -c -f %s
 
-- name: Каталоги дополнений юнитов
-  ansible.builtin.file:
-    path: "{{ zapret_units }}/{{ item }}.service.d"
-    state: directory
-    mode: '0755'
-  loop: [nftables, sing-box]
-
-# nftables.service стирает ruleset при restart и reload, а уже активные
-# oneshot-службы этого не замечают: таблицы возвращаются после обеих операций.
-- name: Таблицы YouTube переживают перезапуск nftables
-  ansible.builtin.copy:
-    src: nftables-90-anysda-youtube.conf
-    dest: "{{ zapret_units }}/nftables.service.d/90-anysda-youtube.conf"
-    mode: '0644'
-
-# Роутер стартует после того, как nfqws2 занял свою очередь.
-- name: Роутер ждёт очередь nfqws2
-  ansible.builtin.copy:
-    src: sing-box-90-anysda-youtube.conf
-    dest: "{{ zapret_units }}/sing-box.service.d/90-anysda-youtube.conf"
-    mode: '0644'
-
-- name: Проверка очереди nfqws2
+- name: Юниты и скрипты десинка
   ansible.builtin.template:
-    src: anysda-yt-nfqws-ready.j2
-    dest: /usr/local/sbin/anysda-yt-nfqws-ready
-    mode: '0755'
+    src: "{{ item.src }}.j2"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - {src: anysda-yt-nfqws-ready, dest: /usr/local/sbin/anysda-yt-nfqws-ready, mode: '0755'}
+    - {src: anysda-yt-nfqws.service, dest: "{{ zapret_units }}/anysda-yt-nfqws.service"}
+    - {src: anysda-yt-check, dest: /usr/local/bin/anysda-yt-check, mode: '0755'}
 
-- name: Юнит цепочек nft
-  ansible.builtin.copy:
-    src: anysda-yt-nft.service
-    dest: "{{ zapret_units }}/anysda-yt-nft.service"
-    mode: '0644'
-
-- name: Юнит nfqws2
-  ansible.builtin.template:
-    src: anysda-yt-nfqws.service.j2
-    dest: "{{ zapret_units }}/anysda-yt-nfqws.service"
-    mode: '0644'
-
+# Выключение TSO/GSO бьёт по скорости всей ноды: только по youtube.offload: off.
 - name: Юнит выключения офлоада
   ansible.builtin.template:
     src: anysda-yt-offload.service.j2
@@ -117,53 +101,30 @@
   when: zapret_v.offload == 'off'
 
 - name: Офлоад оставлен как есть
-  ansible.builtin.command:
-    argv: "{{ zapret_step + ['offload-keep'] }}"
-  register: zapret_offload
-  changed_when: "'changed=1' in zapret_offload.stdout"
+  ansible.builtin.include_tasks: off.yml
+  vars:
+    zapret_off: "{{ zapret_offload_off }}"
   when: zapret_v.offload != 'off'
 
-# Второй рубеж. Первый - правило sing-box, которое режет QUIC к YouTube по SNI;
-# оно верно, пока сниффер видит домен. Фрагментированный ClientHello, 0-RTT или
-# обращение на голый адрес - и QUIC утекает мимо десинка, который работает
-# только по TCP. Лишний раз отрезанный QUIC к Google - откат на TCP, пропущенный -
-# сломанный YouTube у всех, поэтому UDP/443 к сетям Google режется по адресам.
+# Второй рубеж к правилу sing-box по SNI: UDP/443 к сетям Google режется по адресам.
 - name: Блокировка QUIC к Google
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode | default('0644') }}"
+    force: "{{ item.force | default(true) }}"
+  loop:
+    - {src: anysda-yt-quic-refresh.sh, dest: /usr/local/sbin/anysda-yt-quic-refresh.sh, mode: '0755'}
+    - {src: google-prefixes.json, dest: /var/lib/anysda/google-prefixes.json, force: false}
+    - {src: anysda-yt-quic.service, dest: "{{ zapret_units }}/anysda-yt-quic.service"}
+    - {src: anysda-yt-quic-refresh.service, dest: "{{ zapret_units }}/anysda-yt-quic-refresh.service"}
+    - {src: anysda-yt-quic-refresh.timer, dest: "{{ zapret_units }}/anysda-yt-quic-refresh.timer"}
   when: zapret_quic == 'block'
-  block:
-    - name: Каталог списка сетей Google
-      ansible.builtin.file:
-        path: /var/lib/anysda
-        state: directory
-        mode: '0755'
-
-    - name: Обновление списка сетей Google
-      ansible.builtin.copy:
-        src: anysda-yt-quic-refresh.sh
-        dest: /usr/local/sbin/anysda-yt-quic-refresh.sh
-        mode: '0755'
-
-    # Стартовое наполнение: дальше список обновляет таймер, но и без gstatic
-    # в момент установки дыры не будет.
-    - name: Снимок списка сетей Google
-      ansible.builtin.copy:
-        src: "google-prefixes.json"
-        dest: /var/lib/anysda/google-prefixes.json
-        force: false
-        mode: '0644'
-
-    - name: Юниты блокировки QUIC
-      ansible.builtin.copy:
-        src: "{{ item }}"
-        dest: "{{ zapret_units }}/{{ item }}"
-        mode: '0644'
-      loop: [anysda-yt-quic.service, anysda-yt-quic-refresh.service, anysda-yt-quic-refresh.timer]
 
 - name: Блокировка QUIC снята
-  ansible.builtin.command:
-    argv: "{{ zapret_step + ['quic-off'] }}"
-  register: zapret_quic_off
-  changed_when: "'changed=1' in zapret_quic_off.stdout"
+  ansible.builtin.include_tasks: off.yml
+  vars:
+    zapret_off: "{{ zapret_quic_off }}"
   when: zapret_quic != 'block'
 
 - name: Предупреждение о снятой блокировке QUIC
@@ -177,42 +138,11 @@
     state: absent
   loop: [/usr/local/sbin/gen-yt-quic-nft.py, /usr/local/bin/anysda-yt-failover]
 
-# Проверка видео идёт напрямую с меткой при любом выбранном пути: иначе
-# успешный VPN означал бы восстановление прямого.
-- name: Юниты видеопробы
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ zapret_units }}/{{ item }}"
-    mode: '0644'
-  loop: [anysda-yt-failover.service, anysda-yt-failover.timer]
-
-- name: Библиотека ресурсов
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ zapret_tmp }}/"
-    mode: '0644'
-  loop: [install-yt-pot.sh]
-  changed_when: false
-
 - name: Ресурсы юнитов
   ansible.builtin.include_role:
     name: resources
   vars:
-    resources_units: [anysda-yt-nft, anysda-yt-nfqws, anysda-yt-failover]
-
-- name: Ресурсы юнита offload
-  ansible.builtin.include_role:
-    name: resources
-  vars:
-    resources_units: [anysda-yt-offload]
-  when: "'anysda-yt-offload' not in zapret_resource_skip"
-
-- name: Ресурсы юнитов QUIC
-  ansible.builtin.include_role:
-    name: resources
-  vars:
-    resources_units: [anysda-yt-quic, anysda-yt-quic-refresh]
-  when: "'anysda-yt-quic' not in zapret_resource_skip"
+    resources_units: "{{ zapret_resource_units }}"
 
 - name: Службы десинка включены
   ansible.builtin.systemd_service:
@@ -229,25 +159,16 @@
   failed_when: false
   when: zapret_v.offload == 'off'
 
-- name: Блокировка QUIC включена
+# Каждый прогон перечитывает список сетей и перезаливает таблицу QUIC.
+- name: Блокировка QUIC включена и перезалита
   ansible.builtin.systemd_service:
-    name: "{{ item }}"
+    name: "{{ item.name }}"
     enabled: true
-  loop: [anysda-yt-quic.service, anysda-yt-quic-refresh.timer]
-  when: zapret_quic == 'block'
-
-# Каждый прогон перечитывает список сетей и перезаливает таблицу.
-- name: Таблица QUIC перезалита
-  ansible.builtin.systemd_service:
-    name: anysda-yt-quic.service
-    state: restarted
+    state: "{{ item.state }}"
+  loop:
+    - {name: anysda-yt-quic.service, state: restarted}
+    - {name: anysda-yt-quic-refresh.timer, state: started}
   changed_when: false
-  when: zapret_quic == 'block'
-
-- name: Таймер обновления списка сетей Google запущен
-  ansible.builtin.systemd_service:
-    name: anysda-yt-quic-refresh.timer
-    state: started
   when: zapret_quic == 'block'
 
 - name: Цепочки и nfqws2 запущены с текущими входами
@@ -257,18 +178,8 @@
   register: zapret_restart
   changed_when: "'changed=1' in zapret_restart.stdout"
 
-- name: A/B-проверка десинка
-  ansible.builtin.template:
-    src: anysda-yt-check.j2
-    dest: /usr/local/bin/anysda-yt-check
-    mode: '0755'
-
-- name: Видеопроба - yt-dlp, Node и PO-токены
-  ansible.builtin.command:
-    argv: "{{ zapret_step + ['probe'] }}"
-  environment: "{{ zapret_env }}"
-  register: zapret_probe
-  changed_when: "'changed=1' in zapret_probe.stdout"
+- name: Видеопроба
+  ansible.builtin.include_tasks: probe.yml
 
 - name: Таймер видеопробы запущен
   ansible.builtin.systemd_service:
@@ -277,15 +188,12 @@
     state: started
     daemon_reload: true
 
-# Последний результат снят прежней версией пробы, а таймер придёт через 5
-# минут: проверка в конце установки увидела бы старое.
 - name: Видеопроба перемерена после смены её кода
   ansible.builtin.command:
     argv: "{{ zapret_step + ['remeasure'] }}"
   changed_when: false
 
-# Провал не останавливает установку: сторож меняет маршрут только по
-# измеренным загрузкам видео.
+# Провал не останавливает установку: сторож меняет маршрут только по измеренным загрузкам видео.
 - name: Тот же хост по помеченному пути и мимо него
   ansible.builtin.command:
     argv: [/usr/local/bin/anysda-yt-check]

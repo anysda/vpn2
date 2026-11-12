@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Вызывается стадией 19 после установки выделенного Node/npm. GPL-3.0-only,
-# исходники и LICENSE остаются рядом с собранным кодом; демона и порта нет.
+# PO-токены видеопробы (GPL-3.0-only, исходники и LICENSE рядом со сборкой); демона и порта нет.
 set -euo pipefail
 probe_venv=${1:?путь venv видеопробы}
 pot_version=2.0.2
@@ -11,7 +10,10 @@ if [[ -s "$probe_venv/bgutil/server/build/generate_once.js" && -f "$probe_venv/b
    && [[ "$(<"$probe_venv/bgutil/.installed")" == "$pot_version" ]]; then
   exit 0
 fi
-pot_tmp=$(mktemp -d "$probe_venv/.pot-install.XXXXXXXX")
+# Убитый установщик оставляет недокачанное: рабочий каталог один и чистится перед каждым заходом.
+pot_tmp=$probe_venv/.pot-install
+rm -rf "$pot_tmp" "$probe_venv"/.pot-install.*
+mkdir -p "$pot_tmp"
 trap 'rm -rf "$pot_tmp"' EXIT
 if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && "${VPN2_DEVELOPMENT:-false}" != true ]]; then
   release_src=$(dirname "$0")
@@ -39,3 +41,4 @@ if [[ -e "$probe_venv/bgutil" ]]; then
   mv "$probe_venv/bgutil" "$pot_tmp/previous"
 fi
 mv "$pot_source" "$probe_venv/bgutil"
+echo "PO-токены установлены: $pot_version"

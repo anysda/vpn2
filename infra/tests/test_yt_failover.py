@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import patch
 
 from router_support import exit_cert, render
-from zapret_support import role_file, stage, tasks
+import yaml
+
+from zapret_support import ROLE, role_file, tasks
 import watchdog_src
 
 
@@ -147,12 +149,8 @@ class YoutubeFailoverTests(unittest.TestCase):
         enabled = [task['ansible.builtin.systemd_service'] for task in tasks()
                    if task.get('ansible.builtin.systemd_service', {}).get('name') == 'anysda-yt-failover.timer']
         self.assertEqual([(unit['enabled'], unit['state']) for unit in enabled], [(True, 'started')])
-        with patch.object(stage, '_quiet', return_value=False) as quiet, patch.object(stage, '_remove'), \
-                patch.object(stage.subprocess, 'run'):
-            stage.teardown()
-        calls = [call.args for call in quiet.call_args_list]
-        self.assertIn(('systemctl', 'disable', '--now', 'anysda-yt-failover.timer'), calls)
-        self.assertIn(('systemctl', 'stop', 'anysda-yt-failover.service'), calls)
+        units = yaml.safe_load((ROLE / 'defaults/main.yml').read_text())['zapret_all_off']['units']
+        self.assertTrue(units.startswith("{{ ['anysda-yt-failover.timer', 'anysda-yt-failover.service']"))
         self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog yt\n', role_file('anysda-yt-failover.service'))
 
     def test_login_challenge_is_not_reported_as_successful_bypass(self):

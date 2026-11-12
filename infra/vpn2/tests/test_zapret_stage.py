@@ -1,18 +1,8 @@
-"""Шаги роли zapret: готовность очереди, выбор шага, значения для скрипта проверки."""
+"""Шаги роли zapret: выбор шага, значения для скрипта проверки."""
 
 import pytest
 
 from vpn2.zapret import stage
-
-
-def test_queue_is_bound_only_by_own_daemon(tmp_path):
-    table = tmp_path / 'queue'
-    table.write_text('200 123 0 2 65531 0 0 1 1\n')
-    assert stage.queue_bound('200', '123', table)
-    assert not stage.queue_bound('200', '456', table)
-    assert not stage.queue_bound('201', '123', table)
-    assert not stage.queue_bound('200', '', table)
-    assert not stage.queue_bound('200', '123', tmp_path / 'absent')
 
 
 def test_shell_values_stay_data():
@@ -32,10 +22,10 @@ def test_lua_modules_are_required(tmp_path):
 
 
 def test_step_prints_change_and_reports_bad_settings(monkeypatch, capsys):
-    monkeypatch.setattr(stage, 'quic_off', lambda: True)
+    monkeypatch.setattr(stage, 'source', lambda _environ, _cfg: True)
     monkeypatch.setattr(stage.os, 'environ', {})
-    assert stage.main(['quic-off']) == 0
+    assert stage.main(['source']) == 0
     assert capsys.readouterr().out == 'changed=1\n'
     monkeypatch.setattr(stage.os, 'environ', {'YT_QUIC': 'maybe'})
-    assert stage.main(['quic-off']) == 1
+    assert stage.main(['source']) == 1
     assert 'YT_QUIC' in capsys.readouterr().err

@@ -2,10 +2,7 @@ import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients, devices, events } from '../database/schema'
 
-/**
- * Начало завтрашнего дня (UTC) в миллисекундах — минимально допустимый
- * срок действия клиента. Дату раньше завтрашней ставить нельзя.
- */
+/** Самый ранний допустимый срок клиента: начало завтрашнего дня (UTC). */
 export function minExpiryMs(): number {
   const d = new Date()
   d.setUTCHours(0, 0, 0, 0)
@@ -47,11 +44,7 @@ export async function reportControlExpiry(): Promise<void> {
  * правки базы служба снимала бы по старому сроку или не сняла бы вовсе.
  * Расхождение по действующему устройству - полная пересинхронизация протокола.
  */
-export function syncControlExpiry(): Promise<void> {
-  return withAccessLock(syncControlExpiryOnce)
-}
-
-async function syncControlExpiryOnce(): Promise<void> {
+export const syncControlExpiry = () => withAccessLock(async () => {
   const cfg = useRuntimeConfig()
   const rows = await useDb().select({
     id: devices.id, wgPublicKey: devices.wgPublicKey, ovpnCert: devices.ovpnCert, ikev2Username: devices.ikev2Username,
@@ -69,4 +62,4 @@ async function syncControlExpiryOnce(): Promise<void> {
     if (!expires) continue
     if (active.some(r => id(r) && (expires[id(r)!] ?? null) !== expiryForControl(r.expiresAt))) await sync()
   }
-}
+})

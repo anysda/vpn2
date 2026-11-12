@@ -32,8 +32,7 @@ async function reconcileExits(): Promise<void> {
     if (saved?.value === value) return []
     // Пока карты в базе нет, её засевает NUXT_NODE_HOSTS.
     const previous: Record<string, string> = saved ? JSON.parse(saved.value) : exitHosts(String(cfg.previousNodeHosts || ''))
-    const rows = await tx.select({ id: clients.id, oldTag: clients.preferredExit })
-      .from(clients).where(isNotNull(clients.preferredExit))
+    const rows = await tx.select({ id: clients.id, oldTag: clients.preferredExit }).from(clients).where(isNotNull(clients.preferredExit))
     const changed = []
     for (const row of rows) {
       const oldTag = row.oldTag!
@@ -60,11 +59,8 @@ async function reconcileExits(): Promise<void> {
  */
 async function writePrefs(): Promise<void> {
   await reconcileExits()
-  const rows = await useDb()
-    .select({ node: clients.preferredExit, wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip })
-    .from(devices)
-    .innerJoin(clients, eq(clients.id, devices.clientId))
-    .where(isNotNull(clients.preferredExit))
+  const rows = await useDb().select({ node: clients.preferredExit, wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip })
+    .from(devices).innerJoin(clients, eq(clients.id, devices.clientId)).where(isNotNull(clients.preferredExit))
 
   const byNode: Record<string, Set<string>> = Object.create(null)
   for (const r of rows) {
@@ -79,10 +75,5 @@ async function writePrefs(): Promise<void> {
 }
 
 // По очереди: иначе запись по устаревшему снимку базы могла лечь последней.
-let queue: Promise<unknown> = Promise.resolve()
-
-export function syncClientPrefsFile(): Promise<void> {
-  const run = queue.then(writePrefs)
-  queue = run.catch(() => {})
-  return run
-}
+const prefsQueue = serialQueue()
+export const syncClientPrefsFile = () => prefsQueue(writePrefs)

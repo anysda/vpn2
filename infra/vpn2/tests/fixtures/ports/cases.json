@@ -1,0 +1,308 @@
+[
+ {
+  "name": "all_ok",
+  "foreign": "se nl",
+  "delay": {
+   "se:443": 31,
+   "nl:4443": 40
+  },
+  "open": {},
+  "ssh_fail": [],
+  "rerun_fail": [],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-se-direct    port=443   RTT=31ms ✓\n  hy2-nl-direct    port=4443  RTT=40ms ✓\n\n",
+   "stderr": "",
+   "events": [],
+   "excluded": null,
+   "stagelog": [],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": []
+  }
+ },
+ {
+  "name": "rotate_ok",
+  "foreign": "se nl",
+  "delay": {
+   "se:4443": 55,
+   "nl:4443": 40
+  },
+  "open": {
+   "se": [
+    33445
+   ]
+  },
+  "ssh_fail": [],
+  "rerun_fail": [],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-se-direct    port=443   ×\n    UDP-пробник: UDP проходит на :33445 — пробую hy2 rotation\n    → пробую hy2 :4443 RTT=55ms ✓\n  hy2-nl-direct    port=4443  RTT=40ms ✓\n\n",
+   "stderr": "",
+   "events": [
+    "ssh se allow 33445",
+    "ssh se delete allow 33445",
+    "set se 4443",
+    "rerun rotate-se-4443.log 10-foreign:se",
+    "rerun rotate-se-4443.log 20-ru-router:ru"
+   ],
+   "excluded": null,
+   "stagelog": [
+    "[port-rotate]\tforeign\tT"
+   ],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n    hy2_direct_port: 4443\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": [
+    "rotate-se-4443.log"
+   ]
+  }
+ },
+ {
+  "name": "rotate_fail_rollback_and_ssh_fail",
+  "foreign": "se nl",
+  "delay": {},
+  "open": {
+   "se": [
+    41001
+   ]
+  },
+  "ssh_fail": [
+   "nl"
+  ],
+  "rerun_fail": [
+   "rotate-se-4443.log"
+  ],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-se-direct    port=443   ×\n    UDP-пробник: UDP проходит на :41001 — пробую hy2 rotation\n    → пробую hy2 :4443     ✗ перекатка упала, полный вывод: <tmp>/state/rotate-se-4443.log\n      stage 10-foreign failed\n    → пробую hy2 :4444 ×\n  ⚠ hy2 rotation не подобрала рабочий порт для se (UDP-путь есть, но\n    hy2-кандидаты режутся). Откатываю порт на дефолт, оставляю как direct-dead.\n  hy2-nl-direct    port=4443  ×\n    UDP-пробник: сбой входа по ssh на экзит nl — не проверен, не исключаю, порт не меняю\n\n",
+   "stderr": "",
+   "events": [
+    "ssh se allow 33445",
+    "ssh se delete allow 33445",
+    "ssh se allow 39847",
+    "ssh se delete allow 39847",
+    "ssh se allow 41001",
+    "ssh se delete allow 41001",
+    "set se 4443",
+    "rerun rotate-se-4443.log 10-foreign:se",
+    "set se 4444",
+    "rerun rotate-se-4444.log 10-foreign:se",
+    "rerun rotate-se-4444.log 20-ru-router:ru",
+    "set se 443",
+    "rerun rotate-se-rollback.log 10-foreign:se",
+    "rerun rotate-se-rollback.log 20-ru-router:ru",
+    "ssh nl allow 33445"
+   ],
+   "excluded": null,
+   "stagelog": [],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n    hy2_direct_port: 443\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": [
+    "rotate-se-4443.log",
+    "rotate-se-4444.log",
+    "rotate-se-rollback.log"
+   ]
+  }
+ },
+ {
+  "name": "skip_current_port",
+  "foreign": "nl",
+  "delay": {
+   "nl:4444": 70
+  },
+  "open": {
+   "nl": [
+    33445,
+    60123
+   ]
+  },
+  "ssh_fail": [],
+  "rerun_fail": [
+   "rotate-nl-443.log"
+  ],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-nl-direct    port=4443  ×\n    UDP-пробник: UDP проходит на :33445 — пробую hy2 rotation\n    → пробую hy2 :443     ✗ перекатка упала, полный вывод: <tmp>/state/rotate-nl-443.log\n      stage 10-foreign failed\n    → пробую hy2 :4444 RTT=70ms ✓\n\n",
+   "stderr": "",
+   "events": [
+    "ssh nl allow 33445",
+    "ssh nl delete allow 33445",
+    "set nl 443",
+    "rerun rotate-nl-443.log 10-foreign:nl",
+    "set nl 4444",
+    "rerun rotate-nl-4444.log 10-foreign:nl",
+    "rerun rotate-nl-4444.log 20-ru-router:ru"
+   ],
+   "excluded": null,
+   "stagelog": [
+    "[port-rotate]\tforeign\tT"
+   ],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4444\nadmin:\n  user: anysda\n",
+   "logs": [
+    "rotate-nl-443.log",
+    "rotate-nl-4444.log"
+   ]
+  }
+ },
+ {
+  "name": "one_dead",
+  "foreign": "se nl",
+  "delay": {
+   "nl:4443": 40
+  },
+  "open": {},
+  "ssh_fail": [],
+  "rerun_fail": [],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-se-direct    port=443   ×\n    UDP-пробник: все 5 портов фильтруются → exit МЁРТВ, исключаю\n  hy2-nl-direct    port=4443  RTT=40ms ✓\n\n  ⚠ Полностью недостижимые экзиты исключены из деплоя: se\n    Записано в <tmp>/state/excluded-exits.txt\n\n",
+   "stderr": "",
+   "events": [
+    "ssh se allow 33445",
+    "ssh se delete allow 33445",
+    "ssh se allow 39847",
+    "ssh se delete allow 39847",
+    "ssh se allow 41001",
+    "ssh se delete allow 41001",
+    "ssh se allow 51234",
+    "ssh se delete allow 51234",
+    "ssh se allow 60123",
+    "ssh se delete allow 60123",
+    "rerun excluded-reroute.log 20-ru-router:ru"
+   ],
+   "excluded": [
+    "# Экзиты, исключённые проверкой после 20-ru-router: UDP с entry до них не доходит.\n# Чтобы попробовать снова - удалить тег (или весь файл) и перезапустить ./deploy.sh.\nse\n",
+    "0o644"
+   ],
+   "stagelog": [
+    "[excluded]\tse\tT"
+   ],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": [
+    "excluded-reroute.log"
+   ]
+  }
+ },
+ {
+  "name": "all_dead",
+  "foreign": "se nl",
+  "delay": {},
+  "open": {},
+  "ssh_fail": [],
+  "rerun_fail": [],
+  "expected": {
+   "rc": 1,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-se-direct    port=443   ×\n    UDP-пробник: все 5 портов фильтруются → exit МЁРТВ, исключаю\n  hy2-nl-direct    port=4443  ×\n    UDP-пробник: все 5 портов фильтруются → exit МЁРТВ, исключаю\n",
+   "stderr": "[deploy] FATAL: verify_and_rotate_ports: все экзиты недостижимы по UDP с RU направления\n",
+   "events": [
+    "ssh se allow 33445",
+    "ssh se delete allow 33445",
+    "ssh se allow 39847",
+    "ssh se delete allow 39847",
+    "ssh se allow 41001",
+    "ssh se delete allow 41001",
+    "ssh se allow 51234",
+    "ssh se delete allow 51234",
+    "ssh se allow 60123",
+    "ssh se delete allow 60123",
+    "ssh nl allow 33445",
+    "ssh nl delete allow 33445",
+    "ssh nl allow 39847",
+    "ssh nl delete allow 39847",
+    "ssh nl allow 41001",
+    "ssh nl delete allow 41001",
+    "ssh nl allow 51234",
+    "ssh nl delete allow 51234",
+    "ssh nl allow 60123",
+    "ssh nl delete allow 60123"
+   ],
+   "excluded": null,
+   "stagelog": [],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": []
+  }
+ },
+ {
+  "name": "dead_reroute_fails",
+  "foreign": "se nl",
+  "delay": {
+   "nl:4443": 40
+  },
+  "open": {},
+  "ssh_fail": [],
+  "rerun_fail": [
+   "excluded-reroute.log"
+  ],
+  "expected": {
+   "rc": 1,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-se-direct    port=443   ×\n    UDP-пробник: все 5 портов фильтруются → exit МЁРТВ, исключаю\n  hy2-nl-direct    port=4443  RTT=40ms ✓\n\n  ⚠ Полностью недостижимые экзиты исключены из деплоя: se\n    Записано в <tmp>/state/excluded-exits.txt\n    ✗ перекатка упала, полный вывод: <tmp>/state/excluded-reroute.log\n      stage 20-ru-router failed\n",
+   "stderr": "[deploy] FATAL: verify_and_rotate_ports: entry не пересобран после исключения экзитов\n",
+   "events": [
+    "ssh se allow 33445",
+    "ssh se delete allow 33445",
+    "ssh se allow 39847",
+    "ssh se delete allow 39847",
+    "ssh se allow 41001",
+    "ssh se delete allow 41001",
+    "ssh se allow 51234",
+    "ssh se delete allow 51234",
+    "ssh se allow 60123",
+    "ssh se delete allow 60123",
+    "rerun excluded-reroute.log 20-ru-router:ru"
+   ],
+   "excluded": [
+    "# Экзиты, исключённые проверкой после 20-ru-router: UDP с entry до них не доходит.\n# Чтобы попробовать снова - удалить тег (или весь файл) и перезапустить ./deploy.sh.\nse\n",
+    "0o644"
+   ],
+   "stagelog": [],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": [
+    "excluded-reroute.log"
+   ]
+  }
+ },
+ {
+  "name": "rollback_rerun_fails",
+  "foreign": "se",
+  "delay": {},
+  "open": {
+   "se": [
+    60123
+   ]
+  },
+  "ssh_fail": [],
+  "rerun_fail": [
+   "rotate-se-rollback.log"
+  ],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-se-direct    port=443   ×\n    UDP-пробник: UDP проходит на :60123 — пробую hy2 rotation\n    → пробую hy2 :4443 ×\n    → пробую hy2 :4444 ×\n  ⚠ hy2 rotation не подобрала рабочий порт для se (UDP-путь есть, но\n    hy2-кандидаты режутся). Откатываю порт на дефолт, оставляю как direct-dead.\n    ✗ перекатка упала, полный вывод: <tmp>/state/rotate-se-rollback.log\n      stage 10-foreign failed\n\n",
+   "stderr": "",
+   "events": [
+    "ssh se allow 33445",
+    "ssh se delete allow 33445",
+    "ssh se allow 39847",
+    "ssh se delete allow 39847",
+    "ssh se allow 41001",
+    "ssh se delete allow 41001",
+    "ssh se allow 51234",
+    "ssh se delete allow 51234",
+    "ssh se allow 60123",
+    "ssh se delete allow 60123",
+    "set se 4443",
+    "rerun rotate-se-4443.log 10-foreign:se",
+    "rerun rotate-se-4443.log 20-ru-router:ru",
+    "set se 4444",
+    "rerun rotate-se-4444.log 10-foreign:se",
+    "rerun rotate-se-4444.log 20-ru-router:ru",
+    "set se 443",
+    "rerun rotate-se-rollback.log 10-foreign:se"
+   ],
+   "excluded": null,
+   "stagelog": [],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n    hy2_direct_port: 443\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": [
+    "rotate-se-4443.log",
+    "rotate-se-4444.log",
+    "rotate-se-rollback.log"
+   ]
+  }
+ }
+]

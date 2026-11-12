@@ -6,11 +6,13 @@ import os
 import re
 from pathlib import Path
 import sys
+from unittest import mock
 
 import yaml
 
 ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2 import resources  # noqa: E402
 from vpn2.adguard import stage  # noqa: E402
 
 
@@ -31,13 +33,14 @@ class Hub:
     def deploy(self):
         """Сборка и публикация обоих конфигов; возвращает stderr шага."""
         log = io.StringIO()
-        with contextlib.redirect_stderr(log), contextlib.redirect_stdout(io.StringIO()):
-            staged = stage.build_configs(
-                self.env, self.user, 'pw', agh_dir=self.agh, plain_dir=self.plain, etc=self.etc,
-                pools_file=ROOT / 'app/shared/vpn-pools.json', work=self.work, hasher=lambda *_: 'hash',
-                profile=lambda _env: {'AGH_ADAWAY': 'false', 'AGH_QUERYLOG': '1000'}, patch=lambda *_: None)
-            published = [stage.publish(unit, path, directory / 'AdGuardHome.yaml',
-                                       active=lambda _unit: False, forget=lambda _unit: None)
+        with contextlib.redirect_stderr(log), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.object(stage, 'password_hash', lambda *_: 'hash'), \
+                mock.patch.object(resources, 'hardware', lambda: (8000, 8192)), \
+                mock.patch.object(stage.svc, 'active', lambda _unit: False), \
+                mock.patch.object(stage.svc, 'forget', lambda _unit: None):
+            staged = stage.build_configs(self.env, self.user, 'pw', self.work, agh_dir=self.agh, plain_dir=self.plain,
+                                         etc=self.etc, pools=ROOT / 'app/shared/vpn-pools.json')
+            published = [stage.publish(unit, path, directory / 'AdGuardHome.yaml')
                          for unit, path, directory in zip(stage.UNITS, staged, (self.agh, self.plain))]
         self.changed = published[0]
         return log.getvalue()

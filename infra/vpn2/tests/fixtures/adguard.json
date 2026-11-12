@@ -1,0 +1,90 @@
+{
+ "fresh": [
+  {
+   "err": "",
+   "files": {
+    "agh/AdGuardHome.yaml": "eba4f350d7b7f0c11eed504aba9e3dcd1230927e8ebc63aa04a0cb03b0afa18a",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "94437fde9b853c17934fa691efc4882678b5a82d9c12967d42d7df891ba01276",
+    "plain/AdGuardHome.yaml": "8a820f131e726d424b80a8151ce588f1b3572acc63e1f7f8ebb0de4932f1d3ae"
+   },
+   "out": "политика DNS приведена к настройкам; ratelimit_whitelist += 762\n"
+  },
+  {
+   "err": "",
+   "files": {
+    "agh/AdGuardHome.yaml": "eba4f350d7b7f0c11eed504aba9e3dcd1230927e8ebc63aa04a0cb03b0afa18a",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "94437fde9b853c17934fa691efc4882678b5a82d9c12967d42d7df891ba01276",
+    "plain/AdGuardHome.yaml": "8a820f131e726d424b80a8151ce588f1b3572acc63e1f7f8ebb0de4932f1d3ae"
+   },
+   "out": ""
+  }
+ ],
+ "fresh_overrides": [
+  {
+   "err": "",
+   "files": {
+    "agh/AdGuardHome.yaml": "63a61c673eaaf93d88add134e4f636cfe598f4528c7ab314dc7630e46911aa2a",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "ba9d140e89df0d5cd1d2ae5ba63f7bc521c0968981e7ff9fb38f6080272330fe",
+    "plain/AdGuardHome.yaml": "c21420619a12fe4a6d164fa0be4980994caf5ca1f39ba1905e7bc50f5e4b3f6a"
+   },
+   "out": "политика DNS приведена к настройкам; ratelimit_whitelist += 762\n"
+  },
+  {
+   "err": "",
+   "files": {
+    "agh/AdGuardHome.yaml": "63a61c673eaaf93d88add134e4f636cfe598f4528c7ab314dc7630e46911aa2a",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "ba9d140e89df0d5cd1d2ae5ba63f7bc521c0968981e7ff9fb38f6080272330fe",
+    "plain/AdGuardHome.yaml": "c21420619a12fe4a6d164fa0be4980994caf5ca1f39ba1905e7bc50f5e4b3f6a"
+   },
+   "out": ""
+  }
+ ],
+ "legacy": [
+  {
+   "err": "",
+   "files": {
+    "agh/AdGuardHome.yaml": "eba4f350d7b7f0c11eed504aba9e3dcd1230927e8ebc63aa04a0cb03b0afa18a",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "plain/AdGuardHome.yaml": "8a820f131e726d424b80a8151ce588f1b3572acc63e1f7f8ebb0de4932f1d3ae"
+   },
+   "out": "учётная запись и ECS приведены к настройкам\nполитика DNS приведена к настройкам; ratelimit_whitelist += 761\n"
+  },
+  {
+   "err": "",
+   "files": {
+    "agh/AdGuardHome.yaml": "eba4f350d7b7f0c11eed504aba9e3dcd1230927e8ebc63aa04a0cb03b0afa18a",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "plain/AdGuardHome.yaml": "8a820f131e726d424b80a8151ce588f1b3572acc63e1f7f8ebb0de4932f1d3ae"
+   },
+   "out": ""
+  }
+ ],
+ "panel": [
+  {
+   "err": "настройки из панели оставлены: upstream_dns, aaaa_disabled\n",
+   "files": {
+    "agh/AdGuardHome.yaml": "267db987505729ac73073380a8e9f684a2a7ed7608789044d82130fd860c4489",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "plain/AdGuardHome.yaml": "f86ef8436115b7668f7dcaf7a7574dadfb1c4c92951074eb0807a41933e8788a"
+   },
+   "out": "политика DNS приведена к настройкам; ratelimit_whitelist += 762\n"
+  },
+  {
+   "err": "настройки из панели оставлены: upstream_dns, aaaa_disabled\n",
+   "files": {
+    "agh/AdGuardHome.yaml": "267db987505729ac73073380a8e9f684a2a7ed7608789044d82130fd860c4489",
+    "etc/agh-dns.json": "7b27edfe886e60e391b0f470787b1fce49915b8baae5e69c7b424f91f80c3d75",
+    "etc/agh-resources.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "plain/AdGuardHome.yaml": "f86ef8436115b7668f7dcaf7a7574dadfb1c4c92951074eb0807a41933e8788a"
+   },
+   "out": ""
+  }
+ ]
+}

@@ -12,7 +12,7 @@ import yaml
 
 from play_stage import site_play
 
-from adguard_support import render_unit, stage
+from adguard_support import render_unit, resources
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 ROLE = ROOT / 'infra/ansible/roles/adguard'
@@ -42,8 +42,7 @@ class AdguardRoleTests(unittest.TestCase):
 
     def test_units_render_to_snapshot_on_stand_machine(self):
         # Эталон снят на машине стенда с 4 ГБ: лимиты памяти там сняты.
-        profile = stage.limits({'VPN2_ENTRY_RESOURCES': str(ROOT / 'infra/ansible/roles/resources/files/entry_resources.py')},
-                               '--ram-mib', '4096', '--free-mib', '8192')
+        profile = resources.adguard(resources.calculate(4096, 8192, {}))
         for reference, files in snapshots():
             for unit in UNITS:
                 with self.subTest(reference=reference, unit=unit):

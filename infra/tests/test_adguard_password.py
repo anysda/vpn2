@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from adguard_support import stage
 
@@ -14,10 +15,13 @@ class AdguardPasswordTests(unittest.TestCase):
             with self.subTest(length=len(password.encode())), tempfile.TemporaryDirectory() as directory:
                 work = Path(directory)
                 (work / 'anysda').mkdir()
-                user, backend, _ = stage.credentials({'ADMIN_PASSWORD': password}, work / 'anysda')
-                digest = stage.new_hash(backend)
+                with mock.patch.object(stage, 'ETC', str(work / 'anysda')), mock.patch.object(stage, 'UNITS', {}), \
+                        mock.patch.object(stage, 'build_configs', lambda *_a, **_k: ()):
+                    stage.configure({'ADMIN_PASSWORD': password, 'AGH_PORT': '3000'})
+                backend = (work / 'anysda/adguard-password.txt').read_text()
+                digest = stage.password_hash(None, 'anysda', backend)
                 panel = stage.agh_password(password)
-                self.assertTrue(stage.hash_matches(user, panel, digest))
+                self.assertEqual(stage.password_hash({'users': [{'name': 'anysda', 'password': digest}]}, 'anysda', panel), digest)
                 expected = password.encode()
                 if len(expected) > 72:
                     expected = hashlib.sha256(b'vpn2-adguard-v1\0' + expected).hexdigest().encode()

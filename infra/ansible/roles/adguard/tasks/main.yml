@@ -15,14 +15,6 @@
   register: adguard_binary
   changed_when: "'changed=1' in adguard_binary.stdout"
 
-- name: Библиотека ресурсов
-  ansible.builtin.copy:
-    src: "{{ role_path }}/../resources/files/{{ item }}"
-    dest: "{{ adguard_tmp }}/"
-    mode: '0644'
-  loop: [entry-resources.sh, entry_resources.py]
-  changed_when: false
-
 - name: Пулы адресов клиентов
   ansible.builtin.copy:
     src: "{{ adguard_infra }}/../app/shared/vpn-pools.json"
@@ -30,8 +22,6 @@
     mode: '0644'
   changed_when: false
 
-# Живой конфиг целиком не перезаписывается: его правят в панели и сам AdGuard.
-# Сменился - экземпляр останавливается до публикации и стартует шагом ниже.
 - name: Учётная запись и конфиги AdGuard
   ansible.builtin.command:
     argv: "{{ adguard_step + ['config'] }}"
@@ -82,7 +72,6 @@
     daemon_reload: true
   loop: [anysda-doh-routing, adguardhome, adguardhome-unfiltered]
 
-# Правила возвращаются и после внешнего сброса firewall.
 - name: Правила DoH применены
   ansible.builtin.command:
     argv: [/usr/local/sbin/anysda-doh-routing]

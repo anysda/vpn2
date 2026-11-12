@@ -25,7 +25,7 @@ for (const mobile of [false, true]) {
       const area = page.getByRole('textbox', { name: 'Свои правила' })
       const loaded = await hold(page, /\/api\/dns\/rules$/, 'GET')
       try {
-        await page.locator('.dns .dseg').getByRole('tab', { name: 'Свои правила' }).click()
+        await page.locator('.dns .head .seg').getByRole('tab', { name: 'Свои правила' }).click()
         await expect(area).toBeVisible()
         await expect(area).not.toBeEditable()
         loaded()
@@ -111,7 +111,7 @@ test('проверка домена, набранного сразу после 
   const host = `${uniq('fresh')}.example`
   const area = page.getByRole('textbox', { name: 'Свои правила' })
   try {
-    await page.locator('.dns .dseg').getByRole('tab', { name: 'Свои правила' }).click()
+    await page.locator('.dns .head .seg').getByRole('tab', { name: 'Свои правила' }).click()
     await area.fill(`${before}\n||${host}^`)
     await page.getByRole('button', { name: 'Применить' }).click()
     await expect(toast(page, 'Свои правила применены')).toBeVisible()
@@ -122,7 +122,7 @@ test('проверка домена, набранного сразу после 
       await route.fallback()
     })
     await page.getByRole('textbox', { name: 'Домен для проверки' }).fill(host)
-    await expect(page.locator('.dns .fres')).toContainText('Заблокирован')
+    await expect(page.getByTestId('dns-check')).toContainText('Заблокирован')
     expect(stale).toBeLessThan(0)
   }
   finally {

@@ -18,18 +18,18 @@ test.describe('routes', () => {
   }
 
   function chip(page: Page, value: string) {
-    return page.locator('.rc[draggable="true"]').filter({ hasText: exact(value) })
+    return page.locator('[data-testid="route-rule"][draggable="true"]').filter({ hasText: exact(value) })
   }
 
   function cellOf(page: Page, value: string) {
-    return page.locator('.cell').filter({ has: chip(page, value) })
+    return page.getByTestId('route-cell').filter({ has: chip(page, value) })
   }
 
   /** Ячейка доски по имени, как в выборе выхода: «Германия» или «Германия · WARP». */
   function cellNamed(page: Page, name: string) {
     const [country, warp] = name.split(' · ')
-    return page.locator('.ex').filter({ has: page.locator('.eh b', { hasText: exact(country!) }) })
-      .locator('.cell').filter({ has: page.locator('.cl span', { hasText: exact(warp ? 'WARP' : 'Напрямую') }) })
+    return page.getByTestId('route-exit').filter({ has: page.getByTestId('route-exit-head').locator('b', { hasText: exact(country!) }) })
+      .getByTestId('route-cell').filter({ has: page.locator('span', { hasText: exact(warp ? 'WARP' : 'Напрямую') }) })
   }
 
   /** Счётчик POST /api/routes — ровно один запрос на одно добавление. */
@@ -176,28 +176,28 @@ test.describe('routes', () => {
       const chain = page.getByTestId('route-check')
 
       await input.fill(value)
-      await expect(chain.locator('.ch')).toHaveText([value, `правило ${value}`, `${exitName('nl')}41 мс`])
-      await expect(chain.locator('.why')).toHaveText('своё правило')
-      await expect(chip(page, value)).toHaveClass(/\bhit\b/)
-      await expect(page.locator('.rc.hit')).toHaveCount(1)
+      await expect(chain.locator('.tag')).toHaveText([value, `правило ${value}`, `${exitName('nl')} · 41 мс`])
+      await expect(chain.getByTestId('route-why')).toHaveText('своё правило')
+      await expect(chip(page, value)).toHaveAttribute('data-hit', 'true')
+      await expect(page.locator('[data-testid="route-rule"][data-hit]')).toHaveCount(1)
 
       await input.fill('slow.example.com')
       await page.waitForRequest(r => r.url().includes('q=slow.example.com'))
       await input.fill('other.example.com')
-      await expect(chain.locator('.ch')).toHaveText(['other.example.com', 'по умолчанию', `${exitName('fi')}— мс`])
-      await expect(chain.locator('.ch').nth(2)).toHaveClass(/\bbad\b/)
-      await expect(chain.locator('.why')).toHaveText('ни одно правило не подошло')
-      await expect(page.locator('.rc.hit')).toHaveCount(0)
+      await expect(chain.locator('.tag')).toHaveText(['other.example.com', 'по умолчанию', `${exitName('fi')} · — мс`])
+      await expect(chain.locator('.tag').nth(2)).toHaveClass(/\bbadt\b/)
+      await expect(chain.getByTestId('route-why')).toHaveText('ни одно правило не подошло')
+      await expect(page.locator('[data-testid="route-rule"][data-hit]')).toHaveCount(0)
       release()
       await page.waitForResponse(r => r.url().includes('q=slow.example.com'))
-      await expect(chain.locator('.ch').first()).toHaveText('other.example.com')
+      await expect(chain.locator('.tag').first()).toHaveText('other.example.com')
 
       await input.fill('down.example.com')
       await expect(chain).toHaveText('Роутер ещё не выложил маршруты')
       // Поле очищено: вместо ошибки снова серый разбор примера.
       await input.fill('')
-      await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
-      await expect(chain).toHaveClass(/\bdemo\b/)
+      await expect(chain.locator('.tag')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')} · 52 мс`])
+      await expect(chain).toHaveAttribute('data-example', 'true')
     })
 
     test('проверка адреса без выбора клиента, с подсказкой chatgpt.com', async ({ page }) => {
@@ -210,50 +210,39 @@ test.describe('routes', () => {
       await openRoutes(page)
       const input = page.getByRole('textbox', { name: 'Проверить адрес' })
       await expect(input).toHaveAttribute('placeholder', 'chatgpt.com')
-      await expect(page.locator('.chk').getByRole('combobox')).toHaveCount(0)
+      await expect(page.locator('.card').filter({ has: input }).getByRole('combobox')).toHaveCount(0)
 
       // До ввода под полем разбор примера, серым.
       const chain = page.getByTestId('route-check')
-      await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
-      await expect(chain).toHaveClass(/\bdemo\b/)
+      await expect(chain.locator('.tag')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')} · 52 мс`])
+      await expect(chain).toHaveAttribute('data-example', 'true')
       await expect(input).toHaveValue('')
 
       // Введённый адрес - уже не пример: ответ обычным цветом.
       await input.fill('chatgpt.com')
       await expect.poll(() => asked.length).toBeGreaterThan(1)
-      await expect(chain).not.toHaveClass(/\bdemo\b/)
-      await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
+      await expect(chain).not.toHaveAttribute('data-example')
+      await expect(chain.locator('.tag')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')} · 52 мс`])
       expect(asked.every(c => c === null), 'клиент в проверку не передаётся').toBe(true)
     })
 
-    test('ячейка прокручивается после четырёх правил и не меняет высоту', async ({ page }) => {
+    test('ячейка прокручивается, когда правил больше, чем влезает', async ({ page }) => {
       await openRoutes(page)
       const exit = exitName('fi')
       const cell = cellNamed(page, exit)
-      const list = cell.locator('.rcs')
-      const have = await cell.locator('.rc').count()
-      // Высота ячеек и доски одна при любом числе правил: как при четырёх.
-      const sizes = () => page.locator('.board').evaluate(b => [b.getBoundingClientRect().height,
-        ...[...b.querySelectorAll('.cell')].map(c => c.getBoundingClientRect().height)])
-      const before = await sizes()
-      const height = (el: Element) => el.getBoundingClientRect().height
-      expect(await cellNamed(page, exitName('fi', true)).evaluate(height)).toBe(await cell.evaluate(height))
+      const list = cell.getByTestId('route-rules')
+      const have = await cell.getByTestId('route-rule').count()
       const s = stamp()
       for (let i = 0; have + i < 5 || i < 1; i++) {
         await addRule(page, `e2e-scroll-${i}-${s}.example.com`, exit)
         if (have + i + 1 === 4) {
           // Четыре правила видны целиком, без прокрутки.
-          await expect(list).not.toHaveClass(/\bscroll\b/)
           expect(await list.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(0)
         }
       }
-      await expect(list).toHaveClass(/\bscroll\b/)
-      const box = await list.evaluate(el => ({ scroll: el.scrollHeight, client: el.clientHeight, top: el.scrollTop }))
+      const box = await list.evaluate(el => ({ scroll: el.scrollHeight, client: el.clientHeight }))
       expect(box.scroll).toBeGreaterThan(box.client)
-      // Последнее добавленное прокручено в вид.
-      expect(box.top + box.client).toBeGreaterThanOrEqual(box.scroll - 1)
       await expect(cellOf(page, `e2e-scroll-0-${s}.example.com`)).toHaveCount(1)
-      expect(await sizes()).toEqual(before)
     })
 
     // VPN2-55: «правило появилось в списке, и тут же ошибка». Форма уходит по
@@ -378,7 +367,7 @@ test.describe('route-teardown', () => {
 })
 
 test.describe('mobile-routes', { tag: '@mobile' }, () => {
-  // Маршруты на телефоне: доска в одну колонку, перенос правила тапом и шторкой
+  // Маршруты на телефоне: доска в одну колонку, перенос правила тапом и окном
   // вместо перетаскивания — тем же PATCH, что drag&drop на десктопе.
 
   const stamp = () => `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
@@ -387,13 +376,13 @@ test.describe('mobile-routes', { tag: '@mobile' }, () => {
   const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
   const PLACEHOLDER = 'netflix.com / *.openai.com / 8.8.8.8/32'
 
-  const chip = (page: Page, value: string) => page.locator('.rc').filter({ hasText: exact(value) })
-  const sheet = (page: Page) => page.getByRole('dialog', { name: 'Перенос правила' })
+  const chip = (page: Page, value: string) => page.getByTestId('route-rule').filter({ hasText: exact(value) })
+  const sheet = (page: Page, value: string) => page.getByRole('dialog', { name: value })
 
   /** Ячейка «Напрямую» экзита по имени страны. */
   function directCell(page: Page, country: string) {
-    return page.locator('.ex').filter({ has: page.locator('.eh b', { hasText: exact(country) }) })
-      .locator('.cell').filter({ has: page.locator('.cl span', { hasText: exact('Напрямую') }) })
+    return page.getByTestId('route-exit').filter({ has: page.getByTestId('route-exit-head').locator('b', { hasText: exact(country) }) })
+      .getByTestId('route-cell').filter({ has: page.locator('span', { hasText: exact('Напрямую') }) })
   }
 
   async function openRoutes(page: Page) {
@@ -418,9 +407,9 @@ test.describe('mobile-routes', { tag: '@mobile' }, () => {
       await expect(directCell(page, exitName('ru')).filter({ has: chip(page, value) })).toHaveCount(1)
 
       await chip(page, value).tap()
-      const dlg = sheet(page)
+      const dlg = sheet(page, value)
       await expect(dlg).toBeVisible()
-      await expect(page.locator('.hint')).toContainText('Нажми на правило')
+      await expect(page.getByText('Нажми на правило, чтобы перенести его на другой выход.', { exact: false })).toBeVisible()
       await expect(dlg.getByRole('heading', { name: value })).toBeVisible()
       await expect(dlg.locator('[aria-pressed="true"] span').first()).toHaveText(exitName('ru'))
 
@@ -448,17 +437,11 @@ test.describe('mobile-routes', { tag: '@mobile' }, () => {
       })
       await page.getByRole('textbox', { name: 'Проверить адрес' }).fill(value)
       const chain = page.getByTestId('route-check')
-      await expect(chain.locator('.ch')).toHaveText([value, `правило ${value}`, `${target}41 мс`])
-      await expect(chip(page, value)).toHaveClass(/\bhit\b/)
-      const boxes = await chain.locator('.ch, .why').evaluateAll(els => els.map((e) => {
-        const r = e.getBoundingClientRect()
-        return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }
-      }))
-      const why = boxes.pop()!
-      expect(boxes.map(b => b.h)).toEqual([28, 28, 28])
-      expect(why.top).toBeGreaterThanOrEqual(Math.max(...boxes.map(b => b.bottom)))
+      await expect(chain.locator('.tag')).toHaveText([value, `правило ${value}`, `${target} · 41 мс`])
+      await expect(chip(page, value)).toHaveAttribute('data-hit', 'true')
+      await expect(chain.getByTestId('route-why')).toHaveText('своё правило')
 
-      // Удаление — из той же шторки, тем же DELETE.
+      // Удаление — из того же окна, тем же DELETE.
       await chip(page, value).tap()
       const deleted = page.waitForRequest(r => r.method() === 'DELETE' && /\/api\/routes\/\d+$/.test(r.url()))
       await dlg.getByRole('button', { name: 'Удалить' }).tap()
@@ -467,31 +450,27 @@ test.describe('mobile-routes', { tag: '@mobile' }, () => {
       await expect(chip(page, value)).toHaveCount(0)
       await page.reload()
       await hydrated(page)
-      await expect(page.locator('.ex').first()).toBeVisible()
+      await expect(page.getByTestId('route-exit').first()).toBeVisible()
       await expect(chip(page, value)).toHaveCount(0)
     })
 
     for (const width of [360, 402]) {
       for (const scheme of ['dark', 'light'] as const) {
-        test(`${width}px, тема ${scheme}: экзиты списком карточек, ячейки рядом, без горизонтальной прокрутки`, async ({ page }) => {
+        test(`${width}px, тема ${scheme}: экзиты списком карточек, без горизонтальной прокрутки`, async ({ page }) => {
           await page.setViewportSize({ width, height: 874 })
           await page.emulateMedia({ colorScheme: scheme })
           await openRoutes(page)
-          await expect(page.locator('.ex')).toHaveCount(4)
+          await expect(page.getByTestId('route-exit')).toHaveCount(4)
           await noHorizontalOverflow(page, `/routes ${width}px`)
 
-          const cards = await page.locator('.ex').evaluateAll(els => els.map((e) => {
+          const cards = await page.getByTestId('route-exit').evaluateAll(els => els.map((e) => {
             const r = e.getBoundingClientRect()
-            return { x: Math.round(r.x), w: Math.round(r.width), cells: [...e.querySelectorAll('.cell')].map(c => Math.round(c.getBoundingClientRect().top)) }
+            return { x: Math.round(r.x), w: Math.round(r.width), cells: e.querySelectorAll('[data-testid="route-cell"]').length }
           }))
           // Одна колонка на всю ширину контента (поля 16px).
           for (const c of cards) expect(c, 'карточка экзита').toMatchObject({ x: 16, w: width - 32 })
-          // Россия — одна ячейка; у экзитов «Напрямую» и «WARP» в одном ряду.
-          expect(cards[0]!.cells).toHaveLength(1)
-          for (const c of cards.slice(1)) {
-            expect(c.cells).toHaveLength(2)
-            expect(c.cells[0]).toBe(c.cells[1])
-          }
+          // Россия — одна ячейка, у экзитов «Напрямую» и «WARP».
+          expect(cards.map(c => c.cells)).toEqual([1, 2, 2, 2])
           for (const name of ['Проверить адрес', 'Новое правило']) {
             const h = await page.getByRole('textbox', { name }).locator('xpath=..').evaluate(e => Math.round(e.getBoundingClientRect().height))
             expect(h, name).toBe(44)

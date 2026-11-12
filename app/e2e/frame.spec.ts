@@ -1,5 +1,5 @@
 import { ADMIN_USER, expect, hydrated, loginApi, uniq, toast, test } from './support/fixtures'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { openHome, clientCard, clientName, addDevice, configDialog, createClientUi, deviceCard, openClient } from './support/clients'
 import { rects } from './support/geometry'
 import { noHorizontalOverflow } from './support/overflow'
@@ -127,12 +127,11 @@ test.describe('mobile', { tag: '@mobile' }, () => {
     return { head: head.y, bar: Math.round(bar.y + bar.height) }
   }
 
-  /** Шторка открыта и закрывается тапом по оверлею над ней. */
-  async function sheetClosesOnOverlay(page: Page, name: string) {
-    const sheet = page.getByRole('dialog', { name })
-    await expect(sheet).toBeVisible()
-    await page.locator('.bso.on').tap({ position: { x: 40, y: 40 } })
-    await expect(sheet).toBeHidden()
+  /** Всплывающее меню открыто и закрывается тапом мимо него. */
+  async function closesOnOutsideTap(page: Page, popup: Locator) {
+    await expect(popup).toBeVisible()
+    await page.touchscreen.tap(20, 400)
+    await expect(popup).toBeHidden()
   }
 
   for (const scheme of ['dark', 'light'] as const) {
@@ -155,9 +154,9 @@ test.describe('mobile', { tag: '@mobile' }, () => {
       }
 
       await page.getByRole('button', { name: /^Меню @/ }).tap()
-      await sheetClosesOnOverlay(page, 'Меню профиля')
+      await closesOnOutsideTap(page, page.getByRole('menu'))
       await page.getByRole('button', { name: /^Уведомления/ }).tap()
-      await sheetClosesOnOverlay(page, 'Доставка уведомлений')
+      await closesOnOutsideTap(page, page.getByRole('dialog').filter({ hasText: 'Доставка уведомлений' }))
     })
   }
 })
@@ -226,7 +225,7 @@ test.describe('mobile-order', { tag: '@mobile' }, () => {
     await page.locator('.mbar nav').getByRole('link', { name: 'DNS' }).tap()
     await expect(page).toHaveURL(u => u.pathname === '/dns')
     for (const tab of ['Журнал', 'Фильтры', 'Свои правила', 'Перезаписи', 'Сервисы']) {
-      const t = main.locator('.dseg').getByRole('tab', { name: tab, exact: true })
+      const t = main.locator('.head .seg').getByRole('tab', { name: tab, exact: true })
       await t.tap()
       await expect(t).toHaveAttribute('aria-selected', 'true')
       breaks[`/dns ${tab}`] = await orderBreaks(main, 'focusable')

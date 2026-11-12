@@ -64,7 +64,7 @@ const onlineCards = computed(() => {
       </button>
     </div>
     <section class="grid gap-3 lg:grid-cols-[1.2fr_1.6fr_1fr_1fr]">
-      <div class="card flex max-h-[290px] flex-col">
+      <div data-testid="ov-events" class="card flex max-h-[290px] flex-col">
         <h3>События</h3>
         <ul v-if="events.length" class="scroll mt-3 flex-1 space-y-3">
           <li v-for="e in events" :key="e.id" class="grid grid-cols-[44px_8px_1fr] gap-x-2.5 text-sm">
@@ -80,7 +80,7 @@ const onlineCards = computed(() => {
         </p>
       </div>
       <OverviewWave :period="period" />
-      <div class="card">
+      <div data-testid="ov-exits" class="card">
         <h3>Выходы</h3>
         <RingChart :segs="exits.rows">
           <b class="text-2xl font-light">{{ nodes.length ? ru(exits.total) : '—' }}</b><span class="text-xs text-(--t3)">Мбит/с сейчас</span>
@@ -89,7 +89,7 @@ const onlineCards = computed(() => {
           <span class="dot" :style="{ background: r.c }" /><span class="flex-1 truncate">{{ exitName(r.tag) }}</span><em class="not-italic">{{ ru(r.v, 1) }}</em><i class="w-9 text-right text-(--t3) not-italic">{{ r.pct }}%</i>
         </div>
       </div>
-      <div class="card">
+      <div data-testid="ov-dns" class="card">
         <h3>DNS сегодня</h3>
         <RingChart :segs="dns?.available ? [{ v: dns.blockedToday, c: 'var(--acc)' }, { v: dns.totalToday - dns.blockedToday, c: 'var(--g5)' }] : []">
           <b class="text-2xl font-light">{{ dns?.available ? `${ru(dns.blockRatePct, 1)}%` : '—' }}</b><span class="text-xs text-(--t3)">заблокировано</span>
@@ -102,7 +102,7 @@ const onlineCards = computed(() => {
     <OverviewNodes :nodes="nodes" :pings="pings" :refresh="refreshNodes" />
     <section class="grid gap-3 lg:grid-cols-[2fr_1.2fr_1fr]">
       <OverviewActivity />
-      <div class="card flex max-h-[272px] flex-col">
+      <div data-testid="ov-top" class="card flex max-h-[272px] flex-col">
         <h3>Топ клиентов</h3>
         <div class="scroll mt-2 flex-1">
           <NuxtLink v-for="(c, i) in topRows" :key="c.id" :to="{ path: '/clients', query: { id: c.id } }" class="grid grid-cols-[18px_minmax(0,1fr)_auto] gap-x-2 gap-y-1 rounded-lg p-2 text-sm hover:bg-(--chip)">
@@ -115,7 +115,7 @@ const onlineCards = computed(() => {
           </p>
         </div>
       </div>
-      <div class="flex flex-col gap-3">
+      <div data-testid="ov-clients" class="flex flex-col gap-3">
         <div v-for="c in onlineCards" :key="c.title" class="card">
           <h3>{{ c.title }}</h3>
           <div class="my-2 flex items-end justify-between">

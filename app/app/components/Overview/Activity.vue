@@ -41,7 +41,7 @@ const read = computed(() => {
 </script>
 
 <template>
-  <div class="card flex flex-col">
+  <div data-testid="ov-activity" class="card flex flex-col">
     <div class="fhead">
       <h3>Активность</h3>
       <SegTabs v-model="mode" :options="MODES" small />
@@ -50,12 +50,12 @@ const read = computed(() => {
       <span v-for="m in grid.months" :key="`m${m.w}`" class="h-3.5 whitespace-nowrap" :style="{ gridRow: 1, gridColumn: `${m.w + 2}/span 4` }">{{ m.m }}</span>
       <span v-for="d in [0, 2, 4]" :key="`d${d}`" :style="{ gridRow: d + 2, gridColumn: 1 }">{{ WD_MON[d] }}</span>
       <i
-        v-for="c in grid.cells" :key="c.day" class="aspect-square cursor-pointer rounded" :class="{ 'ring-2 ring-(--acc)': c.day === (sel ?? grid.peak) }"
+        v-for="c in grid.cells" :key="c.day" data-testid="ov-day" :data-day="c.day" :aria-current="c.day === (sel ?? grid.peak) || undefined" class="aspect-square cursor-pointer rounded" :class="{ 'ring-2 ring-(--acc)': c.day === (sel ?? grid.peak) }"
         :style="{ background: `rgba(var(--fg),${c.a})`, gridRow: c.d + 2, gridColumn: c.w + 2 }" @mouseenter="sel = c.day" @click="sel = c.day" />
     </div>
     <div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2.5 text-xs text-(--t3)">
       <span class="flex items-center gap-1">меньше<i v-for="a in SHADE" :key="a" class="size-2.5 rounded-[3px]" :style="{ background: `rgba(var(--fg),${a})` }" />больше</span>
-      <span v-if="read">{{ read.when }} · <b class="font-medium text-(--t1)">{{ read.v }}</b> {{ read.unit }}</span>
+      <span v-if="read" data-testid="ov-read">{{ read.when }} · <b class="font-medium text-(--t1)">{{ read.v }}</b> {{ read.unit }}</span>
     </div>
   </div>
 </template>

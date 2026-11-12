@@ -51,7 +51,7 @@ async function save() {
     <div v-if="cols.length" class="grid items-center gap-3 px-1 py-2 text-xs text-(--t3) max-md:hidden" :class="grid">
       <span v-for="(c, i) in cols" :key="i">{{ c }}</span>
     </div>
-    <div v-for="r in rows" :key="rowKey(r)" class="grid items-center gap-3 border-t border-(--line) px-1 py-2.5 text-sm" :class="[grid, { 'opacity-50': !r.enabled }]">
+    <div v-for="r in rows" :key="rowKey(r)" data-testid="dns-list-row" class="grid items-center gap-3 border-t border-(--line) px-1 py-2.5 text-sm" :class="[grid, { 'opacity-50': !r.enabled }]">
       <PanelSwitch :model-value="r.enabled" :label="rowKey(r)" :disabled="busy.has(rowKey(r))" @update:model-value="flip(r)" />
       <slot :row="r" />
       <button type="button" class="xb" aria-label="Удалить" @click="askRemove(r)">

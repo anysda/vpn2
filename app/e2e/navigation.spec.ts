@@ -123,17 +123,17 @@ test.describe('mobile-history', { tag: '@mobile' }, () => {
   test('шторка ноды на Обзоре закрывается «назад», страница остаётся', async ({ page }) => {
     await openHome(page, '/')
     const sh = page.getByRole('dialog', { name: 'Entry' })
-    await openSheet(page, sh, () => page.locator('.ov-nodes .node[data-tag="ru"]').tap())
+    await openSheet(page, sh, () => page.getByTestId('ov-nodes').locator('[data-tag="ru"]').tap())
     await page.goBack()
     await expect(sh).toBeHidden()
     await expect(page).toHaveURL(/\/$/)
-    await expect(page.locator('.ov-nodes')).toBeVisible()
+    await expect(page.getByTestId('ov-nodes')).toBeVisible()
   })
 
   test('пункт меню профиля в шторке: переход без лишнего шага назад', async ({ page }) => {
     await openHome(page, '/')
     await page.getByRole('button', { name: /^Меню @/ }).tap()
-    const menu = page.getByRole('dialog', { name: 'Меню профиля' })
+    const menu = page.getByRole('menu')
     await expect(menu).toBeVisible()
     await menu.getByRole('menuitem', { name: 'Мой профиль' }).tap()
     await expect(page).toHaveURL(/\/settings$/)
@@ -167,16 +167,14 @@ test.describe('mobile-focus', { tag: '@mobile' }, () => {
     return menu.locator('[role="menuitem"]').evaluateAll(els => els.map(e => `${e.textContent?.trim()} ${e.getAttribute('href') ?? ''}`.trim()))
   }
 
-  test('шторка профиля: те же пункты, что в меню на ПК, без «Настроить экран»; /screen - 404', async ({ page, guard }) => {
+  test('меню профиля: «Мой профиль» и «Выйти», без «Настроить экран»; /screen - 404', async ({ page, guard }) => {
     guard.allow(404, /\/screen$/, 'GET')
     guard.allow(404, /\/api\/me\/layout$/, 'GET')
     await openHome(page)
-    const desktop = await menuItems(page.locator('.wrap>header .pop.menu'))
-    expect(desktop, 'меню профиля на ПК').toEqual(['Мой профиль /settings', 'Выйти'])
     await page.getByRole('button', { name: /^Меню @/ }).tap()
-    const sheet = page.locator('.bsh.on')
-    await expect(sheet).toBeVisible()
-    expect(await menuItems(sheet), 'пункты шторки = пункты меню ПК').toEqual(desktop)
+    const menu = page.getByRole('menu')
+    await expect(menu).toBeVisible()
+    expect(await menuItems(menu), 'пункты меню профиля').toEqual(['Мой профиль /settings', 'Выйти'])
     expect((await page.goto('/screen'))?.status()).toBe(404)
     await expect(page.locator('.errp').getByText('404', { exact: true })).toBeVisible()
     expect((await page.request.get('/api/me/layout')).status()).toBe(404)
@@ -302,7 +300,7 @@ test.describe('mobile-inputs', { tag: '@mobile' }, () => {
         }
 
         await openHome(page, '/dns')
-        const seg = page.locator('.dns .dseg')
+        const seg = page.locator('.dns .head .seg')
         for (const name of DNS_SUBS) {
           const tab = seg.getByRole('tab', { name, exact: true })
           await tab.tap()

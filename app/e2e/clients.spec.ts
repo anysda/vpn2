@@ -131,13 +131,13 @@ test.describe('clients', () => {
   test.describe('рассылка под списком клиентов', () => {
     test('карточка рассылки стоит под списком клиентов', async ({ page }) => {
       await openHome(page, '/clients')
-      const card = page.locator('.ov-broadcast')
+      const card = page.getByTestId('ov-broadcast')
       await expect(card.getByRole('heading', { name: 'Рассылка от бота', exact: true })).toBeVisible()
       // В колонке списка ниже самого списка, не в карточке клиента.
-      const [listBox, cardBox] = await rects(page, '.ccol .clist', '.ccol .ov-broadcast')
+      const [listBox, cardBox] = await rects(page, '.ccol .clist', '.ccol [data-testid="ov-broadcast"]')
       expect(cardBox.y).toBeGreaterThanOrEqual(listBox.y + listBox.height)
-      await expect(page.locator('.ccol .ov-broadcast')).toHaveCount(1)
-      await expect(page.getByTestId('client-detail').locator('.ov-broadcast')).toHaveCount(0)
+      await expect(page.locator('.ccol [data-testid="ov-broadcast"]')).toHaveCount(1)
+      await expect(page.getByTestId('client-detail').getByTestId('ov-broadcast')).toHaveCount(0)
     })
 
     test('без настроенного бота рассылку не отправить, видна подсказка', async ({ page }) => {
@@ -146,7 +146,7 @@ test.describe('clients', () => {
         await route.fulfill({ response: res, json: { ...await res.json(), configured: false } })
       })
       await openHome(page, '/clients')
-      const card = page.locator('.ov-broadcast')
+      const card = page.getByTestId('ov-broadcast')
       await card.getByLabel('Сообщение юзерам').fill('e2e без бота')
       await expect(card.getByRole('button', { name: 'Отправить', exact: true })).toBeDisabled()
       await expect(card.getByText('Сначала настройте Telegram-бота', { exact: true })).toBeVisible()
@@ -161,7 +161,7 @@ test.describe('clients', () => {
         await route.fulfill({ response: res, json: { ...await res.json(), configured: true, running: Boolean(username), username } })
       })
       await openHome(page, '/clients')
-      const card = page.locator('.ov-broadcast')
+      const card = page.getByTestId('ov-broadcast')
       await expect(card.locator('.sh .tag')).toHaveText('@e2e_named_bot')
       username = ''
       await page.reload()
@@ -173,7 +173,7 @@ test.describe('clients', () => {
     test('рассылка из-под списка клиентов уходит боту', async ({ page }) => {
       await openHome(page, '/clients')
       test.skip(!(await (await page.request.get('/api/admin/telegram')).json()).configured, 'нужна панель с ботом')
-      const card = page.locator('.ov-broadcast')
+      const card = page.getByTestId('ov-broadcast')
       await expect(card.getByText('Сначала настройте Telegram-бота')).toHaveCount(0)
       const send = card.getByRole('button', { name: 'Отправить', exact: true })
       await expect(send).toBeDisabled()

@@ -69,7 +69,7 @@ const SYNTAX = [
           <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg>
           <input v-model="q" spellcheck="false" aria-label="Домен для проверки">
         </label>
-        <div v-if="res" class="mt-4">
+        <div v-if="res" data-testid="dns-check" class="mt-4">
           <span class="big" :class="COLOR[res.kind]">{{ res.label }}</span>
           <p class="mt-2 text-sm text-(--t2)">
             {{ res.why[0] }}<code v-if="res.why[1]" class="mono">{{ res.why[1] }}</code>{{ res.why[2] }}

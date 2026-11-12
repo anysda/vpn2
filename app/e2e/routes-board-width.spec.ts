@@ -40,12 +40,12 @@ function rules(columns: number) {
 
 /** Всё, что вылезло за колонку или срезано без многоточия. */
 function overflows(page: Page) {
-  return page.locator('.board').evaluate((board) => {
+  return page.locator('[data-testid="route-board"]').evaluate((board) => {
     const bad: string[] = []
     const name = (el: Element) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')}`
-    for (const ex of board.querySelectorAll<HTMLElement>('.ex')) {
-      const col = ex.querySelector('.eh b')?.textContent ?? '?'
-      if (ex.scrollWidth > ex.clientWidth) bad.push(`${col}: .ex sw=${ex.scrollWidth} cw=${ex.clientWidth}`)
+    for (const ex of board.querySelectorAll<HTMLElement>('[data-testid="route-exit"]')) {
+      const col = ex.querySelector('[data-testid="route-exit-head"] b')?.textContent ?? '?'
+      if (ex.scrollWidth > ex.clientWidth) bad.push(`${col}: колонка sw=${ex.scrollWidth} cw=${ex.clientWidth}`)
       const box = ex.getBoundingClientRect()
       for (const el of ex.querySelectorAll<HTMLElement>('*')) {
         const r = el.getBoundingClientRect()
@@ -67,9 +67,9 @@ function overflows(page: Page) {
 
 /** Чипы, текст правила в которых не виден: прозрачен, сдвинут или пуст. */
 function hiddenRuleText(page: Page) {
-  return page.locator('.board').evaluate((board) => {
+  return page.locator('[data-testid="route-board"]').evaluate((board) => {
     const bad: string[] = []
-    for (const rc of board.querySelectorAll<HTMLElement>('.rc')) {
+    for (const rc of board.querySelectorAll<HTMLElement>('[data-testid="route-rule"]')) {
       const value = rc.dataset.value ?? ''
       const text = [...rc.querySelectorAll<HTMLElement>('*')].find(el => el.textContent?.trim() === value && !el.children.length)
       if (!value || !text) {
@@ -102,9 +102,9 @@ test.describe('доска маршрутов: текст правил виден
     await loginApi(page)
     await page.goto('/routes')
     await hydrated(page)
-    await expect(page.locator('.board .rc')).toHaveCount(list.length)
+    await expect(page.locator('[data-testid="route-board"] [data-testid="route-rule"]')).toHaveCount(list.length)
     // Значение правила кладём в data-value, чтобы тест искал текст, а не класс.
-    await page.locator('.board .rc').evaluateAll((els, values) => els.forEach((el) => {
+    await page.locator('[data-testid="route-board"] [data-testid="route-rule"]').evaluateAll((els, values) => els.forEach((el) => {
       (el as HTMLElement).dataset.value = values[Number((el as HTMLElement).dataset.id)]!
     }), Object.fromEntries(list.map(r => [r.id, r.value])))
 
@@ -126,8 +126,8 @@ test.describe('доска маршрутов: ширина колонок', () =
       await loginApi(page)
       await page.goto('/routes')
       await hydrated(page)
-      await expect(page.locator('.board .ex')).toHaveCount(columns)
-      await expect(page.locator('.board .rc')).toHaveCount(columns === 1 ? 6 : 6 + (columns - 1) * 12)
+      await expect(page.locator('[data-testid="route-board"] [data-testid="route-exit"]')).toHaveCount(columns)
+      await expect(page.locator('[data-testid="route-board"] [data-testid="route-rule"]')).toHaveCount(columns === 1 ? 6 : 6 + (columns - 1) * 12)
 
       for (const width of WIDTHS) {
         await page.setViewportSize({ width, height: 900 })
@@ -143,15 +143,15 @@ test('имена стран: ни одного разрыва внутри сл�
   await loginApi(page)
   await page.goto('/routes')
   await hydrated(page)
-  await expect(page.locator('.board .ex')).toHaveCount(NODES.length)
+  await expect(page.locator('[data-testid="route-board"] [data-testid="route-exit"]')).toHaveCount(NODES.length)
   for (const width of [721, 800, 900, 1024]) {
     await page.setViewportSize({ width, height: 900 })
-    for (const b of await page.locator('.board .ex .eh b').all()) {
+    for (const b of await page.locator('[data-testid="route-board"] [data-testid="route-exit"] [data-testid="route-exit-head"] b').all()) {
       expect.soft(await b.evaluate(wordBreaks), `окно ${width}: «${await b.textContent()}»`).toEqual([])
     }
     expect.soft(await overflows(page), `окно ${width}`).toEqual([])
     // доска не шире своего места и окна: колонки по самому длинному слову влезают
-    const [extra, out] = await page.locator('.board').evaluate(b => [b.scrollWidth - b.clientWidth, b.getBoundingClientRect().right - innerWidth])
+    const [extra, out] = await page.locator('[data-testid="route-board"]').evaluate(b => [b.scrollWidth - b.clientWidth, b.getBoundingClientRect().right - innerWidth])
     expect.soft(extra, `окно ${width}: доска шире своего места`).toBeLessThanOrEqual(0)
     expect.soft(out, `окно ${width}: доска за краем окна`).toBeLessThanOrEqual(0)
   }

@@ -6,8 +6,8 @@ import { expect } from './fixtures'
  * Селектор ставится на сам прокручиваемый блок.
  */
 const SCROLL_STRIPS = [
-  '.dns .dseg', // подразделы DNS на телефоне
-  '.dns .tbar .seg', // фильтр журнала DNS на телефоне
+  '.dns .head .seg', // подразделы DNS на телефоне
+  '.dns .seg.sm', // фильтр журнала DNS на телефоне
 ]
 
 /**

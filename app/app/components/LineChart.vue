@@ -55,7 +55,7 @@ function pick(e: PointerEvent) {
     <template v-if="tip && at >= 0">
       <span class="pointer-events-none absolute inset-y-0 w-px bg-(--line2)" :style="{ left: `${X(at) / W * 100}%` }" />
       <span
-        class="pointer-events-none absolute top-0 z-10 rounded-lg border border-(--line) bg-(--tip) px-2 py-1 text-xs whitespace-nowrap"
+        data-testid="chart-tip" class="pointer-events-none absolute top-0 z-10 rounded-lg border border-(--line) bg-(--tip) px-2 py-1 text-xs whitespace-nowrap"
         :class="at < n / 2 ? 'ml-2' : '-ml-2 -translate-x-full'" :style="{ left: `${X(at) / W * 100}%` }">{{ tip(at) }}</span>
     </template>
   </div>

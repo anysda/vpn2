@@ -25,7 +25,7 @@ watch(sub, v => seen.add(v))
     <div class="head">
       <SegTabs v-model="sub" :options="SUBS" class="max-w-full" />
     </div>
-    <section v-for="s in SUBS.filter(x => seen.has(x.value))" v-show="sub === s.value" :key="s.value">
+    <section v-for="s in SUBS.filter(x => seen.has(x.value))" v-show="sub === s.value" :key="s.value" data-testid="dns-panel">
       <component :is="s.view" />
     </section>
   </main>

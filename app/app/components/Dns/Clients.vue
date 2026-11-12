@@ -23,7 +23,7 @@ const COLS = 'grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_100px_130px_minmax(0
         <div class="py-2 text-xs text-(--t3)" :class="COLS">
           <span>Клиент</span><span>Адреса</span><span>Фильтры</span><span>Безопасный поиск</span><span>Сервисы</span><span>Запросов</span>
         </div>
-        <div v-for="c in data ?? []" :key="c.name" class="border-t border-(--line) py-2.5 text-sm" :class="COLS">
+        <div v-for="c in data ?? []" :key="c.name" data-testid="dns-client-row" class="border-t border-(--line) py-2.5 text-sm" :class="COLS">
           <div class="who">
             <span class="av">{{ initials(c.name) }}</span>
             <div class="min-w-0">

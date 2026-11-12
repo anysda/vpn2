@@ -115,11 +115,11 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
         </h3>
         <label class="inp big2"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg><input
           v-model="query" :placeholder="EXAMPLE" spellcheck="false" aria-label="Проверить адрес"></label>
-        <div class="mt-4 flex min-h-10 flex-wrap items-center gap-2 text-sm" :class="{ 'opacity-45': !query.trim() }" data-testid="route-check">
+        <div class="mt-4 flex min-h-10 flex-wrap items-center gap-2 text-sm" :class="{ 'opacity-45': !query.trim() }" data-testid="route-check" :data-example="!query.trim() || undefined">
           <template v-if="checked">
             <span class="tag">{{ checked.query }}</span>→<span class="tag">{{ checkRule }}</span>→
             <span class="tag" :class="{ badt: checked.delay === null }">{{ checkOut }} · {{ checked.delay ?? '—' }} мс</span>
-            <span class="text-xs text-(--t3)">{{ WHY[checked.reason] }}</span>
+            <span data-testid="route-why" class="text-xs text-(--t3)">{{ WHY[checked.reason] }}</span>
           </template>
           <span v-else-if="checkError" class="text-xs text-(--t3)">{{ checkError }}</span>
         </div>
@@ -138,22 +138,22 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
       </form>
     </section>
 
-    <section class="grid gap-3" :style="mobile ? undefined : { gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(0,1fr))` }">
-      <div v-for="col in columns" :key="col.tag" class="card flex flex-col gap-2.5">
-        <div class="flex items-start justify-between gap-2">
+    <section data-testid="route-board" class="grid gap-3" :style="mobile ? undefined : { gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(0,1fr))` }">
+      <div v-for="col in columns" :key="col.tag" data-testid="route-exit" :data-tag="col.tag" class="card flex flex-col gap-2.5">
+        <div data-testid="route-exit-head" class="flex items-start justify-between gap-2">
           <div><b class="block font-medium">{{ col.name }}</b><small class="text-xs text-(--t3)">{{ col.sub }}</small></div>
           <span class="text-2xl font-extralight" :class="col.delay === null ? 'text-(--red-t)' : rtc(col.delay)">{{ col.delay ?? '—' }}<small class="text-xs">мс</small></span>
         </div>
         <div
-          v-for="cell in col.cells" :key="cell.outbound" class="flex flex-col gap-1.5 rounded-xl border border-dashed p-2.5"
+          v-for="cell in col.cells" :key="cell.outbound" data-testid="route-cell" :data-outbound="cell.outbound" class="flex flex-col gap-1.5 rounded-xl border border-dashed p-2.5"
           :class="over === cell.outbound ? 'border-(--line2) bg-(--sunk2)' : 'border-(--line) bg-(--sunk)'"
           @dragover.prevent="over = cell.outbound" @drop.prevent="drop(cell.outbound)">
           <div class="flex justify-between gap-2 text-xs text-(--t3)">
             <span :class="{ 'text-(--orange)': cell.warp }">{{ cell.label }}</span><i class="not-italic" :class="rtc(cell.delay)">{{ cell.delay ?? '—' }} мс</i>
           </div>
-          <div class="flex max-h-[146px] flex-col gap-1.5 overflow-y-auto max-md:max-h-none">
+          <div data-testid="route-rules" class="flex max-h-[146px] flex-col gap-1.5 overflow-y-auto max-md:max-h-none">
             <div
-              v-for="rule in rulesFor(cell.outbound)" :key="rule.id" :draggable="!mobile" :role="mobile ? 'button' : undefined"
+              v-for="rule in rulesFor(cell.outbound)" :key="rule.id" data-testid="route-rule" :data-id="rule.id" :data-hit="checked?.routeId === rule.id || undefined" :draggable="!mobile" :role="mobile ? 'button' : undefined"
               class="group flex h-8 flex-none cursor-grab items-center gap-2 rounded-lg border bg-(--chip) px-2.5 text-xs"
               :class="[checked?.routeId === rule.id ? 'border-(--acc)' : 'border-(--line)', { 'opacity-35': dragging?.id === rule.id }]"
               @dragstart="dragging = rule" @dragend="dragging = over = null" @click="mobile && (picked = rule)">

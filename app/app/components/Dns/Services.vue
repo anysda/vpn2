@@ -24,13 +24,13 @@ function toggle(id: string) {
     <DnsLoadError :of="load" />
     <DnsHead title="Блокировка сервисов" sub="Для всех клиентов. Для одного клиента — во вкладке «Клиенты»">
       <div class="ha">
-        <span v-if="data" class="tag">Заблокировано {{ blocked.size }} из {{ data.all.length }}</span>
+        <span v-if="data" data-testid="dns-services-count" class="tag">Заблокировано {{ blocked.size }} из {{ data.all.length }}</span>
         <button type="button" class="pill" :disabled="!data" @click="save(new Set(), 'Все сервисы разблокированы')">
           Разблокировать все
         </button>
       </div>
     </DnsHead>
-    <div class="mt-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+    <div data-testid="dns-services" class="mt-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
       <button
         v-for="s in data?.all ?? []" :key="s.id" type="button" role="switch" class="card text-left" :class="{ lit: blocked.has(s.id) }"
         :aria-checked="blocked.has(s.id)" :aria-label="s.name" @click="toggle(s.id)">

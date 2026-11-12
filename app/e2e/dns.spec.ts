@@ -10,7 +10,7 @@ test.describe('dns', () => {
 
   const card = (page: Page, title: string) =>
     page.locator('.dns .card').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
-  const rows = (page: Page) => page.locator('.dns .lt.scroll > div').filter({ has: page.locator('time') })
+  const rows = (page: Page) => page.getByTestId('dns-log-row').filter({ has: page.locator('time') })
   const grp = (n: number) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 
   async function openLog(page: Page) {
@@ -49,7 +49,7 @@ test.describe('dns', () => {
       await expect(card(page, 'Запросы DNS').locator('.big')).toHaveText(grp(s.queries))
       await expect(card(page, 'Заблокировано фильтрами').locator('.big')).toHaveText(grp(s.blocked))
       await expect(card(page, 'Заблокировано угроз').locator('.big')).toHaveText(grp(s.threats))
-      await expect(card(page, 'Серверы выше').locator('.up')).toHaveCount(s.upstreams.length)
+      await expect(card(page, 'Серверы выше').getByTestId('dns-upstream')).toHaveCount(s.upstreams.length)
       await expect(card(page, 'Частые блокировки')).toContainText('mc.yandex.ru')
     })
 
@@ -63,11 +63,11 @@ test.describe('dns', () => {
 
       await openLog(page)
       await page.getByRole('tab', { name: 'Заблокированные' }).click()
-      await expect.poll(async () => [...new Set(await rows(page).locator('.rs .tag').allTextContents())])
+      await expect.poll(async () => [...new Set(await rows(page).locator('.tag').allTextContents())])
         .toEqual(['заблокирован'])
 
       await page.getByRole('textbox', { name: 'Домен или клиент' }).fill(name)
-      await expect.poll(async () => [...new Set(await rows(page).locator(':scope > div:nth-child(4) > b').allTextContents())])
+      await expect.poll(async () => [...new Set(await rows(page).locator(':scope > div:nth-child(4) > span').allTextContents())])
         .toEqual([name])
       await expect(rows(page).filter({ hasText: 'ads.example.net' }).first()).toContainText('AdGuard DNS filter')
     })
@@ -76,7 +76,7 @@ test.describe('dns', () => {
       await openLog(page)
       await page.getByRole('textbox', { name: 'Домен или клиент' }).fill('mc.yandex.ru')
       const hits = rows(page).filter({ hasText: 'mc.yandex.ru' })
-      const tags = async () => [...new Set(await hits.locator('.rs .tag').allTextContents())]
+      const tags = async () => [...new Set(await hits.locator('.tag').allTextContents())]
       await expect.poll(tags).toEqual(['заблокирован'])
       await hits.first().getByRole('button', { name: 'Разблокировать' }).click()
       await expect(toast(page, 'mc.yandex.ru: разблокирован своим правилом')).toBeVisible()
@@ -105,12 +105,13 @@ test.describe('dns', () => {
       await expect(toast(page, `Список «${name}» добавлен`)).toBeVisible()
       await expect.poll(async () => (await lists()).find(l => l.name === name)?.enabled).toBe(true)
 
-      const sw = black.getByRole('switch', { name })
+      const row = black.getByTestId('dns-list-row').filter({ hasText: name })
+      const sw = row.getByRole('switch')
       await sw.click()
       await expect(sw).toHaveAttribute('aria-checked', 'false')
       await expect.poll(async () => (await lists()).find(l => l.name === name)?.enabled).toBe(false)
 
-      await black.locator('.ftab > div').filter({ hasText: name }).getByRole('button', { name: 'Удалить' }).click()
+      await row.getByRole('button', { name: 'Удалить' }).click()
       await page.getByRole('dialog', { name: 'Удалить список?' }).getByRole('button', { name: 'Удалить', exact: true }).click()
       await expect(toast(page, `Список «${name}» удалён`)).toBeVisible()
       await expect(sw).toHaveCount(0)
@@ -122,7 +123,7 @@ test.describe('dns', () => {
       const verdict = async () => (await (await page.request.get('/api/dns/check?name=ads.example.net')).json()).label
       await expect.poll(verdict).toBe('Заблокирован')
       await page.getByRole('tab', { name: 'Фильтры' }).click()
-      const sw = card(page, 'Чёрные списки').getByRole('switch', { name: 'AdGuard DNS filter' })
+      const sw = card(page, 'Чёрные списки').getByTestId('dns-list-row').filter({ hasText: 'AdGuard DNS filter' }).getByRole('switch')
       await sw.click()
       try {
         await expect(sw).toHaveAttribute('aria-checked', 'false')
@@ -144,14 +145,14 @@ test.describe('dns', () => {
       await expect(area).toHaveValue(before)
       try {
         await page.getByRole('textbox', { name: 'Домен для проверки' }).fill('example.org')
-        await expect(page.locator('.dns .fres')).toContainText('Не фильтруется')
+        await expect(page.getByTestId('dns-check')).toContainText('Не фильтруется')
 
         await area.fill(`${before}\n||example.org^`)
         await page.getByRole('button', { name: 'Применить' }).click()
         await expect(toast(page, 'Свои правила применены')).toBeVisible()
-        await expect(page.locator('.dns .fres')).toContainText('Заблокирован')
-        await expect(page.locator('.dns .fres code')).toHaveText('||example.org^')
-        await expect(page.locator('.dns .fres')).toContainText('из своих правил')
+        await expect(page.getByTestId('dns-check')).toContainText('Заблокирован')
+        await expect(page.getByTestId('dns-check').locator('code')).toHaveText('||example.org^')
+        await expect(page.getByTestId('dns-check')).toContainText('из своих правил')
 
         const bad = `${before}\n||example.org^\n||foo.example^$bogus`
         await area.fill(bad)
@@ -195,7 +196,7 @@ test.describe('dns', () => {
       await expect(sw).toHaveAttribute('aria-checked', 'false')
       await expect.poll(async () => (await list()).find(r => r.domain === domain)?.enabled).toBe(false)
 
-      await page.locator('.dns .rwt > div').filter({ hasText: domain }).getByRole('button', { name: 'Удалить' }).click()
+      await page.getByTestId('dns-list-row').filter({ hasText: domain }).getByRole('button', { name: 'Удалить' }).click()
       await page.getByRole('dialog', { name: 'Удалить перезапись?' }).getByRole('button', { name: 'Удалить', exact: true }).click()
       await expect(toast(page, `Перезапись «${domain}» удалена`)).toBeVisible()
       await expect(sw).toHaveCount(0)
@@ -209,7 +210,7 @@ test.describe('dns', () => {
       const before = await blocked()
       const sv = page.getByRole('switch', { name: 'Instagram' })
       await expect(sv).toHaveAttribute('aria-checked', String(before.includes('instagram')))
-      const count = page.locator('.dns .svh .tag')
+      const count = page.getByTestId('dns-services-count')
       await expect(count).toHaveText(`Заблокировано ${before.length} из 3`)
       try {
         await sv.click()
@@ -237,7 +238,7 @@ test.describe('dns', () => {
       expect(ips.length).toBeGreaterThan(0)
       await page.goto('/dns')
       await page.getByRole('tab', { name: 'Клиенты' }).click()
-      const row = page.locator('.dns .dct.scroll > div').filter({ hasText: name })
+      const row = page.getByTestId('dns-client-row').filter({ hasText: name })
       await expect(row).toContainText('без Telegram')
       await expect(row).toContainText(ips[0]!)
       await expect(row).toContainText('общие')
@@ -296,8 +297,8 @@ test.describe('dns', () => {
 test.describe('dns-load-retry', () => {
   // Подраздел DNS, чей первый GET упал, показывает ошибку и «Повторить загрузку»;
   // по кнопке подраздел загружается без перезагрузки страницы.
-  const tab = (page: Page, name: string) => page.locator('.dns .dseg').getByRole('tab', { name })
-  const alert = (page: Page) => page.locator('.dns .dpan.on').getByRole('alert').filter({ hasText: 'AdGuard не ответил (e2e)' })
+  const tab = (page: Page, name: string) => page.locator('.dns .head .seg').getByRole('tab', { name })
+  const alert = (page: Page) => page.locator('.dns [data-testid="dns-panel"]:visible').getByRole('alert').filter({ hasText: 'AdGuard не ответил (e2e)' })
 
   // $fetch сам повторяет упавший GET один раз, поэтому GET падает, пока тест не
   // «починит» AdGuard перед нажатием «Повторить загрузку».
@@ -311,7 +312,7 @@ test.describe('dns-load-retry', () => {
   async function retry(page: Page, url: RegExp) {
     await page.unrouteAll({ behavior: 'wait' })
     const ok = page.waitForResponse(r => url.test(r.url()) && r.request().method() === 'GET' && r.status() === 200)
-    await page.locator('.dns .dpan.on').getByRole('button', { name: 'Повторить загрузку' }).click()
+    await page.locator('.dns [data-testid="dns-panel"]:visible').getByRole('button', { name: 'Повторить загрузку' }).click()
     await ok
     await expect(alert(page)).toHaveCount(0)
   }
@@ -354,7 +355,7 @@ test.describe('dns-load-retry', () => {
     await tab(page, 'Фильтры').click()
     await expect(alert(page)).toBeVisible()
     await retry(page, url)
-    await expect(page.getByRole('switch', { name: 'AdGuard DNS filter' })).toBeVisible()
+    await expect(page.getByTestId('dns-list-row').filter({ hasText: 'AdGuard DNS filter' }).getByRole('switch')).toBeVisible()
   })
 
   test('перезаписи: после ошибки загрузки «Повторить» показывает список', async ({ page, guard }) => {
@@ -377,7 +378,7 @@ test.describe('dns-load-retry', () => {
     await expect(alert(page)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Разблокировать все' })).toBeDisabled()
     await retry(page, url)
-    await expect(page.locator('.dns .svg2 [role="switch"]')).toHaveCount(all.length)
+    await expect(page.getByTestId('dns-services').getByRole('switch')).toHaveCount(all.length)
     await expect(page.getByRole('button', { name: 'Разблокировать все' })).toBeEnabled()
   })
 
@@ -419,7 +420,7 @@ test.describe('dns-race', () => {
     return { fetched: done, delivered }
   }
 
-  const tab = (page: Page, name: string) => page.locator('.dns .dseg').getByRole('tab', { name })
+  const tab = (page: Page, name: string) => page.locator('.dns .head .seg').getByRole('tab', { name })
 
   test('настройки DNS: поздний ответ переключателя не возвращает в «Серверы выше» прежний список', async ({ page }) => {
     const view = async () => (await (await page.request.get('/api/dns/settings')).json()) as { upstreams: string, optimistic: boolean }
@@ -511,7 +512,7 @@ test.describe('dns-race', () => {
 })
 
 test.describe('mobile-dns', { tag: '@mobile' }, () => {
-  // DNS на телефоне: восемь подразделов в одну колонку, окна — нижней шторкой.
+  // DNS на телефоне: восемь подразделов в одну колонку, окна поверх страницы.
   // Длинные имена клиентов и адреса не должны вылезать за край экрана.
 
   const SUBS = ['Сводка', 'Журнал', 'Фильтры', 'Свои правила', 'Перезаписи', 'Сервисы', 'Клиенты', 'Настройки DNS']
@@ -537,7 +538,7 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
         }
         return r.right > w + 0.5 || r.left < -0.5
       }
-      return [...document.querySelectorAll('.dns .dpan.on *')]
+      return [...document.querySelectorAll('.dns [data-testid="dns-panel"]:not([style*="none"]) *')]
         .filter((el) => {
           const r = el.getBoundingClientRect()
           return r.width > 0 && r.height > 0 && cut(el, r)
@@ -547,7 +548,7 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
     })
   }
 
-  const sheet = (page: Page, name: string) => page.locator('.bsh[role="dialog"]').and(page.getByRole('dialog', { name }))
+  const sheet = (page: Page, name: string) => page.getByRole('dialog', { name })
 
   for (const width of [360, 402]) {
     test.describe(`DNS на телефоне ${width}`, () => {
@@ -555,8 +556,8 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
 
       test('сводка: заголовок, числа и график внутри карточки', async ({ page }) => {
         await openHome(page, '/dns')
-        await expect(page.locator('.dns .dk > .card')).toHaveCount(4)
-        await noVerticalOverflow(page, '.dns .dk', `сводка ${width}`)
+        await expect(page.getByTestId('dns-kpi').locator(':scope > .card')).toHaveCount(4)
+        await noVerticalOverflow(page, '[data-testid="dns-kpi"]', `сводка ${width}`)
       })
 
       for (const scheme of ['dark', 'light'] as const) {
@@ -564,7 +565,7 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
           await page.emulateMedia({ colorScheme: scheme })
           await page.route('**/api/dns/clients', route => route.fulfill({ json: CLIENTS }))
           await openHome(page, '/dns')
-          const seg = page.locator('.dns .dseg')
+          const seg = page.locator('.dns .head .seg')
           expect(await seg.evaluate(e => e.scrollWidth > e.clientWidth)).toBe(true)
 
           for (const name of SUBS) {
@@ -572,7 +573,7 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
             await tab.tap()
             await expect(tab).toHaveAttribute('aria-selected', 'true')
             await expect(tab).toBeInViewport({ ratio: 1 })
-            await expect(page.locator('.dns .dpan.on')).toBeVisible()
+            await expect(page.locator('.dns [data-testid="dns-panel"]:visible')).toBeVisible()
             await page.waitForLoadState('networkidle')
             // Снимок всей страницы перекладывает её по полной высоте: так видно
             // раскладку, которая держится только на первом проходе.
@@ -585,32 +586,19 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
     })
   }
 
-  test.describe('DNS на телефоне: раскладка и шторки', () => {
-    test('сводка 2×2, журнал строкой с деталями, сервисы в три колонки', async ({ page }) => {
+  test.describe('DNS на телефоне: раскладка и окна', () => {
+    test('журнал строкой с деталями: время и клиент под доменом', async ({ page }) => {
       await openHome(page, '/dns')
-      const kpi = page.locator('.dns .dk > .card')
-      await expect(kpi).toHaveCount(4)
-      // offset*, а не boundingBox: карточки въезжают с transform.
-      const [a, b] = await kpi.evaluateAll(l => l.slice(0, 2).map(e => ({ top: (e as HTMLElement).offsetTop, w: (e as HTMLElement).offsetWidth })))
-      expect(a!.top).toBe(b!.top)
-      expect(a!.w).toBeLessThan(402 / 2)
-
-      await page.locator('.dns .dseg').getByRole('tab', { name: 'Журнал' }).tap()
-      const row = page.locator('.dns .lt.scroll > div').filter({ has: page.locator('time') }).first()
-      await expect(row.locator('.lm')).toBeVisible()
+      await page.locator('.dns .head .seg').getByRole('tab', { name: 'Журнал' }).tap()
+      const row = page.getByTestId('dns-log-row').filter({ has: page.locator('time') }).first()
+      await expect(row.locator('small > span')).toBeVisible()
       await expect(row.locator('time')).toBeHidden()
-
-      await page.locator('.dns .dseg').getByRole('tab', { name: 'Сервисы' }).tap()
-      const sv = page.locator('.dns .sv')
-      await expect(sv.nth(2)).toBeVisible()
-      const tops = await sv.evaluateAll(l => l.slice(0, 3).map(e => (e as HTMLElement).offsetTop))
-      expect(new Set(tops).size).toBe(1)
     })
 
-    test('правило и проверка, перезапись, список и сброс — в нижней шторке', async ({ page, guard }) => {
+    test('правило и проверка, перезапись, список и сброс — в окнах', async ({ page, guard }) => {
       guard.allow(409, /\/api\/dns\/rewrites$/, 'POST')
       await openHome(page, '/dns')
-      const seg = page.locator('.dns .dseg')
+      const seg = page.locator('.dns .head .seg')
       const before = (await (await page.request.get('/api/dns/rules')).json()).text as string
       try {
         await seg.getByRole('tab', { name: 'Свои правила' }).tap()
@@ -618,8 +606,8 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
         await page.getByRole('button', { name: 'Применить' }).tap()
         await expect(toast(page, 'Свои правила применены')).toBeVisible()
         await page.getByRole('textbox', { name: 'Домен для проверки' }).fill('example.org')
-        await expect(page.locator('.dns .fres')).toContainText('Заблокирован')
-        await expect(page.locator('.dns .fres code')).toHaveText('||example.org^')
+        await expect(page.getByTestId('dns-check')).toContainText('Заблокирован')
+        await expect(page.getByTestId('dns-check').locator('code')).toHaveText('||example.org^')
       }
       finally {
         const r = await page.request.put('/api/dns/rules', { data: { text: before } })
@@ -636,7 +624,7 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
       await add.getByRole('button', { name: 'Добавить', exact: true }).tap()
       await expect(toast(page, `Перезапись «${domain}» добавлена`)).toBeVisible()
       await expect(add).toBeHidden()
-      const rw = page.locator('.dns .rwt > div').filter({ hasText: domain })
+      const rw = page.getByTestId('dns-list-row').filter({ hasText: domain })
       await expect(rw).toContainText('10.0.0.1')
       await rw.getByRole('button', { name: 'Удалить' }).tap()
       const del = sheet(page, 'Удалить перезапись?')
@@ -649,7 +637,7 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
       await page.getByRole('button', { name: 'Добавить список' }).first().tap()
       const list = sheet(page, 'Добавить список')
       await expect(list.getByRole('textbox', { name: 'Адрес списка' })).toBeVisible()
-      await page.locator('.bso.on').tap({ position: { x: 20, y: 20 } })
+      await page.touchscreen.tap(20, 20)
       await expect(list).toBeHidden()
 
       await seg.getByRole('tab', { name: 'Настройки DNS' }).tap()

@@ -118,7 +118,7 @@ test.describe('bots', () => {
         for (const key of ['clients_total', 'clients_subscribed', 'queued', 'delivered_day']) expect(st[key]).toEqual(expect.any(Number))
         await expect(card.getByText(`${st.clients_subscribed} из ${st.clients_total}`, { exact: true })).toBeVisible()
         await openHome(page, '/clients')
-        await expect(page.locator('.ov-broadcast .sh .tag')).toHaveText('@demo_vpn_bot')
+        await expect(page.getByTestId('ov-broadcast').locator('.sh .tag')).toHaveText('@demo_vpn_bot')
         await openHome(page, '/settings')
 
         await setToken('123456789:E2E_REJECTED_bbbbbbbbbbbbbbbbbbbbbbbbbb', '123456789')
@@ -155,7 +155,7 @@ test.describe('bots', () => {
 
         // Рассылка живёт под списком клиентов.
         await openHome(page, '/clients')
-        const bc = page.locator('.ov-broadcast')
+        const bc = page.getByTestId('ov-broadcast')
         await bc.getByLabel('Сообщение юзерам').fill('e2e без бота')
         await expect(bc.getByRole('button', { name: 'Отправить', exact: true })).toBeDisabled()
         await expect(bc.getByText('Сначала настройте Telegram-бота', { exact: true })).toBeVisible()
@@ -218,12 +218,12 @@ test.describe('bot-delivery-ui', () => {
       ] }))
       await openHome(page)
       await page.getByRole('button', { name: 'Уведомления: 3', exact: true }).click()
-      const dialog = page.getByRole('dialog', { name: 'Доставка уведомлений' })
-      const row = (text: string) => dialog.locator('.bi').filter({ hasText: text })
+      const dialog = page.getByRole('dialog').filter({ hasText: 'Доставка уведомлений' })
+      const row = (text: string) => dialog.getByTestId('bell-row').filter({ hasText: text })
       await expect(row('Рассылка: доставка не удалась').locator('small')).toHaveText('вчера 23:30')
       await expect(row('«Ночь»').locator('small')).toHaveText('сегодня 00:05')
       await expect(row('«День»: не отправлено. Ещё попыток: 2.').locator('small')).toHaveText('сегодня 14:31')
-      console.log('Колокольчик:', (await dialog.locator('.bi small').allTextContents()).join(' | '))
+      console.log('Колокольчик:', (await dialog.getByTestId('bell-row').locator('small').allTextContents()).join(' | '))
       expect((await page.request.delete(`/api/clients/${id}`)).status()).toBe(202)
     })
   })

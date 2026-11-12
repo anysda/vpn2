@@ -261,7 +261,7 @@ async function walk(page: Page, mobile: boolean, onShot: (name: string) => Promi
   await loginApi(page)
 
   await page.goto('/')
-  await expect(page.locator('.ov-nodes')).toBeVisible()
+  await expect(page.getByTestId('ov-nodes')).toBeVisible()
   await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
   // Журнал событий первый раз приходит с сервера (живые данные); подмена встаёт на его 30-секундном опросе.
   await page.clock.runFor(30_500)
@@ -285,7 +285,7 @@ async function walk(page: Page, mobile: boolean, onShot: (name: string) => Promi
   await expect(page.getByRole('tab', { name: 'Сводка' })).toBeVisible()
   for (const [id, label] of DNS_TABS) {
     if (id !== 'sum') await press(page.getByRole('tab', { name: label, exact: true }))
-    await expect(page.locator('.dns .dpan.on')).toBeVisible()
+    await expect(page.locator('.dns [data-testid="dns-panel"]:visible')).toBeVisible()
     await snap(`dns-${id}`)
   }
 

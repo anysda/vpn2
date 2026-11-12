@@ -23,7 +23,7 @@ function send() {
 </script>
 
 <template>
-  <div class="card sc bc flex min-h-[270px] flex-col max-[720px]:min-h-0">
+  <div data-testid="ov-broadcast" class="card sc bc flex min-h-[270px] flex-col max-[720px]:min-h-0">
     <div class="sh">
       <h3>Рассылка от бота</h3><span v-if="status?.username" class="tag">@{{ status.username }}</span>
     </div>

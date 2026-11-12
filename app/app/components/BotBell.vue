@@ -33,7 +33,7 @@ onUnmounted(() => sync([], false))
       <p v-if="queued" class="flex gap-2.5 px-2 py-1 text-sm">
         <span class="dot mt-1.5" style="background:var(--amber)" />{{ botQueueText(queued) }}
       </p>
-      <div v-for="r in pending" :key="r.id" class="flex gap-2.5 px-2 py-1 text-sm">
+      <div v-for="r in pending" :key="r.id" data-testid="bell-row" class="flex gap-2.5 px-2 py-1 text-sm">
         <span class="dot mt-1.5" :style="{ background: r.status === 'failed' ? 'var(--red)' : 'var(--amber)' }" />
         <div>
           <b class="font-medium">{{ r.label }}</b>{{ botDeliveryText(r).slice(r.label.length) }}

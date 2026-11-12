@@ -21,7 +21,7 @@ function tip(i: number) {
 </script>
 
 <template>
-  <div class="card">
+  <div data-testid="ov-wave" class="card">
     <h3>Трафик за {{ period === 'day' ? 'сутки' : 'неделю' }}</h3>
     <div class="my-3 flex items-end justify-between gap-2">
       <span class="big">{{ data ? gbDecNumRu(data.sum) : '—' }}<small class="text-lg text-(--t3)"> ГБ</small></span>

@@ -678,7 +678,7 @@ test.describe('mobile-login', { tag: '@mobile' }, () => {
 })
 
 test.describe('mobile-settings', { tag: '@mobile' }, () => {
-  // Настройки на телефоне: одна колонка, подпись над полем, «Выключить 2FA?» — шторкой.
+  // Настройки на телефоне: одна колонка, подпись над полем, «Выключить 2FA?» — окном.
 
   async function openSettings(page: Page) {
     await page.goto('/settings')
@@ -733,7 +733,7 @@ test.describe('mobile-settings', { tag: '@mobile' }, () => {
       }
     }
 
-    test('2FA: включить, войти с кодом, выключить в шторке, войти без кода', async ({ page }) => {
+    test('2FA: включить, войти с кодом, выключить в окне, войти без кода', async ({ page }) => {
       test.setTimeout(150_000)
       await loginApi(page)
       await openSettings(page)
@@ -773,8 +773,7 @@ test.describe('mobile-settings', { tag: '@mobile' }, () => {
         await page.getByRole('button', { name: 'Выключить 2FA' }).tap()
         const sheet = page.getByRole('dialog', { name: 'Выключить 2FA?' })
         await expect(sheet).toBeVisible()
-        await expect(sheet, 'окно — нижней шторкой').toHaveClass(/\bbsh\b/)
-        await noHorizontalOverflow(page, 'шторка «Выключить 2FA?»')
+        await noHorizontalOverflow(page, 'окно «Выключить 2FA?»')
         // «Отмена» ничего не меняет.
         await sheet.getByRole('button', { name: 'Отмена' }).tap()
         await expect(sheet).toBeHidden()

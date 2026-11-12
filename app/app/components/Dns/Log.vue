@@ -79,7 +79,7 @@ function rule(r: Row) {
     </div>
     <div ref="list" class="card scroll max-h-[70vh] max-md:max-h-none" @scroll.passive="onScroll">
       <div
-        v-for="(r, i) in rows" :key="`${r.time}|${r.domain}|${r.ip}|${i}`"
+        v-for="(r, i) in rows" :key="`${r.time}|${r.domain}|${r.ip}|${i}`" data-testid="dns-log-row"
         class="grid grid-cols-[80px_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_130px] items-center gap-3 border-b border-(--line) py-2 text-sm max-md:grid-cols-[minmax(0,1fr)_auto]">
         <time class="mono text-xs text-(--t3) max-md:hidden" :datetime="r.time">{{ hmsOrDdmmHmLocal(r.time, today) }}</time>
         <div class="min-w-0">

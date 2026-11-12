@@ -4,7 +4,7 @@ import { openHome } from './support/clients'
 
 /** Карточка узла на Обзоре. */
 function nodeCard(page: Page, tag: string) {
-  return page.locator(`.ov-nodes .node[data-tag="${tag}"]`)
+  return page.getByTestId('ov-nodes').locator(`[data-tag="${tag}"]`)
 }
 
 test.describe('мониторинг нод', () => {
@@ -13,12 +13,12 @@ test.describe('мониторинг нод', () => {
     for (const tag of NODES) {
       const node = nodeCard(page, tag)
       await expect(node, `нода ${tag}`).toHaveCount(1)
-      await expect(node.locator('.ft .tag')).not.toHaveText('Офлайн')
-      await expect(node.locator('.cpu .big')).toHaveText(/^\d+%$/)
-      await expect(node.locator('.ft .m')).toContainText(/RAM \d+%/)
+      await expect(node.locator('.tag')).not.toHaveText('Офлайн')
+      await expect(node.locator('.big')).toHaveText(/^\d+%$/)
+      await expect(node).toContainText(/RAM \d+%/)
     }
     // Спарклайн CPU: начало из VM, дальше точка на каждый опрос.
-    const spark = nodeCard(page, NODES[0]!).locator('.sp svg path').last()
+    const spark = nodeCard(page, NODES[0]!).locator('svg path').last()
     await expect(spark).toHaveAttribute('d', /^M-?[\d.]+[ ,]-?[\d.]+\s*[LC]/, { timeout: 30_000 })
   })
 
@@ -32,7 +32,7 @@ test.describe('мониторинг нод', () => {
       await nodeCard(page, tag).click()
       const cell = page.getByRole('dialog').locator('.mgrid > div', { hasText: 'Полос' })
       await expect(cell.locator('b'), `нода ${tag}`).toHaveText(String(lanes.length))
-      await expect(cell.locator('small')).toHaveText(`warp ${warp}`)
+      await expect(cell.locator('em')).toHaveText(`warp ${warp}`)
       await page.keyboard.press('Escape')
       await expect(page.getByRole('dialog')).toHaveCount(0)
     }

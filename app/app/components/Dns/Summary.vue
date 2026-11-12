@@ -32,7 +32,7 @@ function when(i: number) {
       <h3>{{ errText(error, 'AdGuard недоступен') }}</h3>
     </div>
     <template v-else-if="data">
-      <div class="grid gap-3 md:grid-cols-4">
+      <div data-testid="dns-kpi" class="grid gap-3 md:grid-cols-4">
         <div v-for="c in cards" :key="c.title" class="card" :class="{ lit: c.lit }">
           <h3>{{ c.title }}</h3>
           <div class="my-3 flex items-end justify-between gap-2">
@@ -53,7 +53,7 @@ function when(i: number) {
           <div class="fhead">
             <h3>Серверы выше</h3><span class="tag">{{ data.mode }}</span>
           </div>
-          <div v-for="u in data.upstreams" :key="u.url" class="mt-3 text-sm">
+          <div v-for="u in data.upstreams" :key="u.url" data-testid="dns-upstream" class="mt-3 text-sm">
             <div class="flex gap-2">
               <b class="mono min-w-0 flex-1 truncate font-normal">{{ u.url }}</b><span>{{ u.pct }}%</span><em class="not-italic text-(--t2)">{{ ms(u.ms) }} мс</em>
             </div>

@@ -126,7 +126,7 @@ def panel_environment(environ, facts):
         'NUXT_WG_MTU': get('WG_MTU') or '1420', 'NUXT_WG_SPLIT_LOCAL': get('WG_SPLIT_LOCAL') or 'true',
         'NUXT_OVPN_ENABLED': 'true', 'NUXT_OVPN_PORT': get('OVPN_PORT') or '1194',
         'NUXT_OVPN_PROTO': get('OVPN_PROTO') or 'udp', 'NUXT_OVPN_PUBLIC_HOST': get('OVPN_PUBLIC_HOST') or entry,
-        'NUXT_ROUTES_FILE_PATH': '/etc/anysda/manual-routes.json', 'NUXT_CLASH_SECRET': facts['clash'],
+        'NUXT_CLASH_SECRET': facts['clash'],
         'NUXT_CLASH_API_URL': f'http://{get("MGMT_IP") or ""}:9090',
         'NUXT_AGH_URL': f'http://127.0.0.1:{environ["AGH_PORT"]}', 'NUXT_AGH_USER': facts['admin_user'],
         'NUXT_AGH_PASSWORD': facts['agh_password'], 'NUXT_EXIT_TAGS': get('EXIT_TAGS') or '',

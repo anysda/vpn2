@@ -32,9 +32,11 @@ esac
 exit 0
 '''
 STAGE = '''#!/bin/sh
-n=$(basename "$0" .sh)
+case "$1 $2" in
+  'adguard config') n=22-adguard ;; 'adguard restart') exit 0 ;; 'containers panel') n=30-frontend ;; *) n=35-telegram ;;
+esac
 echo "stage $n" >> "$T/calls.log"
-cp "$1" "$T/$n.env"
+echo "AGH_PORT=$AGH_PORT HOST=$HOST ADMIN_PASSWORD=${ADMIN_PASSWORD-unset} VPN2_DEVELOPMENT=$VPN2_DEVELOPMENT" > "$T/$n.env"
 echo "вывод $n"
 [ ! -f "$T/rc-$n" ] || exit "$(cat "$T/rc-$n")"
 '''
@@ -67,8 +69,6 @@ def node(tmp_path, monkeypatch, capsys):
     put(src / 'infra/configs/anysda-config.yaml.tpl', 'tpl\n')
     put(src / 'infra/envs/all.env', 'AGH_PORT=3000')
     put(src / 'infra/envs/ru.env', 'SSH_PASS=x\nHOST=ru\n')
-    for name in ('22-adguard', '30-frontend', '35-telegram'):
-        put(src / f'infra/scripts/{name}.sh', STAGE, 0o755)
     for name, body in (('__init__.py', ''), ('cli/__init__.py', ''), ('verify/stage.py', ''),
                        ('cli/__main__.py', VERIFY)):
         put(src / 'infra/vpn2/src/vpn2' / name, body)
@@ -79,6 +79,8 @@ def node(tmp_path, monkeypatch, capsys):
     for name in ('systemctl', 'docker', 'chown', 'install', 'id'):
         put(bin_dir / name, STUB.replace('@INSTALL@', shutil.which('install')), 0o755)
     put(bin_dir / 'wg', WG, 0o755)
+    put(bin_dir / 'vpn2', STAGE, 0o755)
+    monkeypatch.setenv('VPN2_BIN', str(bin_dir / 'vpn2'))
     for key, value in (('PATH', f'{bin_dir}:/usr/bin:/bin'), ('STUB_LOG', str(root / 'log')), ('T', str(tmp_path)),
                        ('FAIL_ON', ''), ('IDS', 'caddy vpn2-panel'), ('UNITS', UNITS), ('ACTIVE', '')):
         monkeypatch.setenv(key, value)
@@ -125,8 +127,7 @@ def test_restore_returns_archived_state(node):
                                             'stage 22-adguard', 'stage 30-frontend', 'stage 35-telegram',
                                             'stage 99-verify')]
     assert order == sorted(order)
-    assert (tmp / '30-frontend.env').read_text() == (
-        'AGH_PORT=3000\nHOST=ru\nunset ADMIN_PASSWORD\nVPN2_DEVELOPMENT=false\n')
+    assert (tmp / '30-frontend.env').read_text() == 'AGH_PORT=3000 HOST=ru ADMIN_PASSWORD=unset VPN2_DEVELOPMENT=false\n'
     assert (root / 'tmp/anysda/anysda-config.yaml.tpl').read_text() == 'tpl\n'
     assert not leftovers(root)
 

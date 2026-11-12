@@ -54,7 +54,14 @@ STOP_UNITS = ('anysda-failover-watchdog', 'sing-box', 'openvpn-server@server',
               'anysda-ikev2-routing', 'strongswan-starter')
 START_UNITS = ('openvpn-server@server', 'anysda-failover-watchdog', 'strongswan-starter', 'anysda-ikev2-routing')
 ROLLBACK_UNITS = ('sing-box', *START_UNITS)
-STAGES = ('22-adguard', '30-frontend', '35-telegram')
+# Шаги стадий 22, 30, 35, что читают восстановленные пароли; установку ведут их роли.
+STAGES = {'22-adguard': ('adguard config', 'adguard restart'), '30-frontend': ('containers panel',),
+          '35-telegram': ('containers telegram',)}
+RESYNC = ('set -a; source "$1"; set +a; r=$2/infra; shift 2; '
+          'export VPN2_ENTRY_RESOURCES=$r/ansible/roles/resources/files/entry_resources.py '
+          'VPN2_POOLS=$r/../app/shared/vpn-pools.json VPN2_PANEL_CONFIG_TPL=$r/configs/anysda-config.yaml.tpl '
+          'VPN2_DEPLOY_STATE=$r/lib/deploy_state.py; '
+          'for step in "$@"; do ${VPN2_BIN:-/opt/vpn2/venv/bin/vpn2} $step || exit; done')
 # Проверка узла: окружение стадий целиком, пакет из дерева, интерпретатор тот же, что у restore.
 VERIFY = 'set -a; source "$1"; set +a; PYTHONPATH=$2 exec "$3" -B -m vpn2.cli verify'
 QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
@@ -832,17 +839,15 @@ def resync(source_root, env_file, work):
     Первая неудача останавливает цепочку; вывод стадии - в work/<стадия>.log, его хвост - в причине.
     """
     envs = Path(source_root) / 'infra/envs'
-    for stage in STAGES:
-        script = Path(source_root) / 'infra/scripts' / f'{stage}.sh'
-        if not os.access(script, os.X_OK):
-            fail = f'нет {script}'
-        elif not _filled(env_file):
+    for stage, steps in STAGES.items():
+        if not _filled(env_file):
             fail = f'нет {envs}/all.env или {envs}/ru.env (их пишет ./deploy.sh из config.yaml)'
         else:
             _say(f'{stage} с восстановленными паролями…')
             log = Path(work) / f'{stage}.log'
             with open(log, 'wb') as handle:
-                code = archive.code([str(script), str(env_file)], stdout=handle, stderr=subprocess.STDOUT)
+                code = archive.code(['bash', '-c', RESYNC, 'anysda-restore', str(env_file), str(source_root), *steps],
+                                    stdout=handle, stderr=subprocess.STDOUT)
             if code == 0:
                 _say(f'{stage} re-synced')
                 continue

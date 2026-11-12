@@ -106,7 +106,7 @@ test.describe('dns', () => {
       await expect.poll(async () => (await lists()).find(l => l.name === name)?.enabled).toBe(true)
 
       const row = black.getByTestId('dns-list-row').filter({ hasText: name })
-      const sw = row.getByRole('switch')
+      const sw = black.getByRole('switch', { name })
       await sw.click()
       await expect(sw).toHaveAttribute('aria-checked', 'false')
       await expect.poll(async () => (await lists()).find(l => l.name === name)?.enabled).toBe(false)
@@ -123,7 +123,7 @@ test.describe('dns', () => {
       const verdict = async () => (await (await page.request.get('/api/dns/check?name=ads.example.net')).json()).label
       await expect.poll(verdict).toBe('Заблокирован')
       await page.getByRole('tab', { name: 'Фильтры' }).click()
-      const sw = card(page, 'Чёрные списки').getByTestId('dns-list-row').filter({ hasText: 'AdGuard DNS filter' }).getByRole('switch')
+      const sw = card(page, 'Чёрные списки').getByRole('switch', { name: 'AdGuard DNS filter' })
       await sw.click()
       try {
         await expect(sw).toHaveAttribute('aria-checked', 'false')
@@ -355,7 +355,7 @@ test.describe('dns-load-retry', () => {
     await tab(page, 'Фильтры').click()
     await expect(alert(page)).toBeVisible()
     await retry(page, url)
-    await expect(page.getByTestId('dns-list-row').filter({ hasText: 'AdGuard DNS filter' }).getByRole('switch')).toBeVisible()
+    await expect(page.getByRole('switch', { name: 'AdGuard DNS filter' })).toBeVisible()
   })
 
   test('перезаписи: после ошибки загрузки «Повторить» показывает список', async ({ page, guard }) => {

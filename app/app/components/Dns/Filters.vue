@@ -33,7 +33,7 @@ const check = () => change<View & { updated: number }>('check', 'POST', undefine
     <DnsList
       v-for="s in sections" :key="s.title" :title="s.title" :sub="s.sub" :rows="s.rows" add-label="Добавить список" :fields="FIELDS"
       :cols="s.white ? [] : ['', 'Список', 'Правил', 'Обновлён', '']" grid="grid-cols-[42px_minmax(0,1fr)_90px_130px_30px] max-md:grid-cols-[42px_minmax(0,1fr)_30px]"
-      :row-key="l => `${s.white}|${l.url}`" :ask="l => ({ title: 'Удалить список?', text: `Удалить список «${l.name}»? Его правила перестанут применяться.` })"
+      :row-key="l => `${s.white}|${l.url}`" :row-name="l => l.name" :ask="l => ({ title: 'Удалить список?', text: `Удалить список «${l.name}»? Его правила перестанут применяться.` })"
       :toggle="l => change(`${s.white}|${l.url}`, 'PATCH', { url: l.url, white: s.white, enabled: l.enabled })"
       :remove="l => change('del', 'DELETE', { url: l.url, white: s.white }, `Список «${l.name}» удалён`)"
       :add="v => change('add', 'POST', { name: v.name!.trim(), url: v.url!.trim(), white: s.white }, `Список «${v.name!.trim()}» добавлен`)">

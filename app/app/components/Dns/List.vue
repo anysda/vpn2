@@ -8,6 +8,7 @@ const props = defineProps<{
   addLabel: string
   fields: { k: string, label: string, placeholder: string, mono?: boolean }[]
   rowKey: (r: R) => string
+  rowName: (r: R) => string
   ask: (r: R) => { title: string, text: string }
   toggle: (r: R) => Promise<boolean>
   remove: (r: R) => Promise<boolean>
@@ -52,7 +53,7 @@ async function save() {
       <span v-for="(c, i) in cols" :key="i">{{ c }}</span>
     </div>
     <div v-for="r in rows" :key="rowKey(r)" data-testid="dns-list-row" class="grid items-center gap-3 border-t border-(--line) px-1 py-2.5 text-sm" :class="[grid, { 'opacity-50': !r.enabled }]">
-      <PanelSwitch :model-value="r.enabled" :label="rowKey(r)" :disabled="busy.has(rowKey(r))" @update:model-value="flip(r)" />
+      <PanelSwitch :model-value="r.enabled" :label="rowName(r)" :disabled="busy.has(rowKey(r))" @update:model-value="flip(r)" />
       <slot :row="r" />
       <button type="button" class="xb" aria-label="Удалить" @click="askRemove(r)">
         <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>

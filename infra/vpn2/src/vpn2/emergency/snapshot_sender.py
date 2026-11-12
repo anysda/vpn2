@@ -14,7 +14,6 @@
 import argparse
 from contextlib import closing
 import json
-import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -46,15 +45,6 @@ def _enabled(payload):
         return json.loads(payload).get('enabled') is True
     except (ValueError, TypeError, AttributeError):
         return False
-
-
-def _read_limited(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    with os.fdopen(fd, 'rb') as stream:
-        raw = stream.read(65537)
-    if len(raw) > 65536:
-        raise ValueError('telegram settings too large')
-    return json.loads(raw)
 
 
 def collect(database, telegram_file, now):
@@ -91,7 +81,7 @@ def collect(database, telegram_file, now):
                 'access_version': version if type(version) is int else -1,
             })
     try:
-        telegram = _read_limited(telegram_file)
+        telegram = json.loads(Path(telegram_file).read_text())
     except FileNotFoundError:
         telegram = {}
     token = telegram.get('bot_token') if isinstance(telegram, dict) else None

@@ -146,3 +146,19 @@ export function coalesceRuns(fn: () => Promise<void>): () => Promise<void> {
     return next
   }
 }
+
+/** Фоновая работа раз в `ms` после готовности панели: прогоны не накладываются, закрытие Nitro ждёт идущий. */
+type NitroApp = Parameters<Parameters<typeof defineNitroPlugin>[0]>[0]
+export function every(nitro: NitroApp, ms: number, job: () => Promise<void>, firstAfterMs?: number) {
+  let running: Promise<void> | null = null
+  const tick = () => {
+    if (!running && isPanelReady()) running = job().finally(() => { running = null })
+  }
+  const interval = setInterval(tick, ms)
+  const first = firstAfterMs === undefined ? undefined : setTimeout(tick, firstAfterMs)
+  nitro.hooks.hook('close', async () => {
+    clearTimeout(first)
+    clearInterval(interval)
+    await running
+  })
+}

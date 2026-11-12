@@ -115,7 +115,6 @@
     force: "{{ item.force | default(true) }}"
   loop:
     - {src: anysda-yt-quic-refresh.sh, dest: /usr/local/sbin/anysda-yt-quic-refresh.sh, mode: '0755'}
-    - {src: google-prefixes.json, dest: /var/lib/anysda/google-prefixes.json, force: false}
     - {src: anysda-yt-quic.service, dest: "{{ zapret_units }}/anysda-yt-quic.service"}
     - {src: anysda-yt-quic-refresh.service, dest: "{{ zapret_units }}/anysda-yt-quic-refresh.service"}
     - {src: anysda-yt-quic-refresh.timer, dest: "{{ zapret_units }}/anysda-yt-quic-refresh.timer"}

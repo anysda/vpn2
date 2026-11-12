@@ -60,11 +60,16 @@ def test_nft_table_is_printed_with_collapsed_prefixes(tmp_path, capsys):
     assert capsys.readouterr().out == first
 
 
-@pytest.mark.parametrize('argv', [[], ['yt-quic'], ['other', 'x'], ['yt-quic', 'a', 'b']])
+def test_nft_without_file_uses_package_list(capsys):
+    assert cli.main(['nft', 'yt-quic']) == 0
+    assert capsys.readouterr().out.startswith('#!/usr/sbin/nft -f\n')
+
+
+@pytest.mark.parametrize('argv', [[], ['other', 'x'], ['yt-quic', 'a', 'b']])
 def test_nft_wrong_call_shows_usage(argv, capsys):
     assert cli.main(['nft', *argv]) == 2
     out, err = capsys.readouterr()
-    assert out == '' and err == 'Использование: vpn2 nft yt-quic <goog.json>\n'
+    assert out == '' and err == 'Использование: vpn2 nft yt-quic [goog.json]\n'
 
 
 @pytest.mark.parametrize(('data', 'reason'), [

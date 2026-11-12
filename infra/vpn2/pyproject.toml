@@ -14,5 +14,8 @@ vpn2 = "vpn2.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+vpn2 = ["google-prefixes.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

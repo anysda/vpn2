@@ -9,7 +9,7 @@ import pytest
 from vpn2 import firewall
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'firewall'
-GOOG = Path(__file__).parents[2] / 'ansible/roles/zapret/files/google-prefixes.json'
+GOOG = firewall.GOOGLE_PREFIXES
 HY2HOP = Path(__file__).parents[2] / 'ansible/roles/exit/templates/nftables-hy2hop.conf.j2'
 
 

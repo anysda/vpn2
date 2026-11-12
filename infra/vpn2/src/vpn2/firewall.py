@@ -192,7 +192,11 @@ table inet anysda_ytquic {
 '''
 
 
-def load_google_prefixes(path):
+# Список Google из пакета: им таблица живёт до первого обновления с gstatic.
+GOOGLE_PREFIXES = Path(__file__).with_name('google-prefixes.json')
+
+
+def load_google_prefixes(path=GOOGLE_PREFIXES):
     """Read goog.json and return (v4, v6): collapsed prefix strings, both non-empty.
 
     Exactly one prefix per row, strict network bits, no /0. ValueError always

@@ -675,8 +675,7 @@ class ControlTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 2)
 
     def test_deploy_installs_service_in_pipeline(self):
-        deploy = (ROOT / 'infra/deploy.sh').read_text()
-        self.assertIn('run_stage 29-control', deploy)
+        self.assertIn('tags: [29-control]', (ROOT / 'infra/ansible/site.yml').read_text())
         tasks = (CONTROL / 'tasks/service.yml').read_text()
         self.assertIn('name: vpn2-control.socket\n    enabled: true\n    state: started', tasks)
         service = (CONTROL / 'templates/vpn2-control.service.j2').read_text()

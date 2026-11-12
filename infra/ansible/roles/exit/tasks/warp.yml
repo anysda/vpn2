@@ -8,10 +8,6 @@
   changed_when: false
   failed_when: false
 
-- name: Признак сторожа WARP
-  ansible.builtin.set_fact:
-    exit_warp_enabled: "{{ exit_warp.rc == 0 }}"
-
 - name: Сторож WARP и его таймер
   ansible.builtin.copy:
     src: "{{ item }}"

@@ -205,10 +205,6 @@ def _clean(row):
     return re.sub(rb'[ \t\n\v\f\r]', b'', row.split(b'#', 1)[0])
 
 
-def _said(done):
-    return done.stderr.decode(errors='replace').strip().replace('\n', '; ')
-
-
 def _refusal(stderr, lines):
     """Первый отказ wg и индекс его строки в `lines` (или None).
 
@@ -259,7 +255,8 @@ def dump(data, *, run=run, timeout=TIMEOUT, which=shutil.which):
         if done.returncode != 121 or not done.stderr.rstrip().endswith(
                 (b'Configuration parsing error', b'Invalid configuration')):
             step = STEPS.get(done.returncode, 'unshare --net')
-            raise WgUnchecked(f'wg0.conf: проверить нечем - {step}: {_said(done)}')
+            said = done.stderr.decode(errors='replace').strip().replace('\n', '; ')
+            raise WgUnchecked(f'wg0.conf: проверить нечем - {step}: {said}')
         refusal, found = _refusal(done.stderr, lines)
         refusals.append(refusal)
         if found is None:

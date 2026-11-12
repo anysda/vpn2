@@ -36,6 +36,8 @@ exit_wgcf_url: >-
 # Без ports.hy2_hop в config.yaml окружение диапазонов не несёт: умолчания те
 # же, что у entry (router_hop_defaults роли router).
 exit_hop_enabled: "{{ vpn2_env.HY2_HOP_ENABLED | default('1', true) == '1' }}"
+# Шаг warp --enabled: 0 - в конфиге sing-box настоящий пир WARP.
+exit_warp_enabled: "{{ exit_warp.rc == 0 }}"
 exit_hop_direct: "{{ vpn2_env.HY2_HOP_DIRECT | default('20000-24999', true) }}"
 exit_hop_warp: "{{ vpn2_env.HY2_HOP_WARP | default('25000-29999', true) }}"
 exit_hop_mgmt: "{{ vpn2_env.HY2_HOP_MGMT | default('30000-30999', true) }}"

@@ -23,6 +23,7 @@ CONTROL = ROOT / 'infra/ansible/roles/control'
 
 
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2 import resources  # noqa: E402
 from vpn2.containers import compose  # noqa: E402
 
 
@@ -773,11 +774,11 @@ class ControlTests(unittest.TestCase):
                       (role / 'templates/server.conf.j2').read_text())
         self.assertIn('path: /etc/vpn2-control/api-managed', (role / 'tasks/main.yml').read_text())
         self.assertIn("OVPN_USER = 'management-client-user vpn2-control'", panel)
-        body = panel[panel.index('def _stage('):]
-        guard, switch = body.index('host_tls(environ, say, tx)'), body.index('openvpn.switch()')
+        body = panel[panel.index('def stage('):]
+        guard, switch = body.index('host_tls(environ, tx)'), body.index('openvpn.switch()')
         self.assertLess(body.index('tx.begin(image)'), guard)
         self.assertLess(guard, switch)
-        self.assertIn('OVPN_CONF)])', panel[panel.index('tx.guard_files('):panel.index("'--prepare'")])
+        self.assertIn('OVPN_CONF])', panel[panel.index('tx.guard_files('):panel.index("'--prepare'")])
         self.assertIn("['systemctl', 'try-restart', 'openvpn-server@server']", panel)
         self.assertIn('pwd.getpwnam(\'vpn2-control\').pw_uid',
                       (ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py').read_text())
@@ -788,8 +789,9 @@ class ControlTests(unittest.TestCase):
         environ = {'HOST_TAG': 'ru', 'ENTRY_HOST': '192.0.2.1', 'AGH_PORT': '3000'}
         facts = dict.fromkeys(('session', 'clash', 'tgbot', 'admin_user', 'agh_password', 'sso_enabled',
                                'sso_auto_redirect', 'sso_password_login', 'sso_redirect_url'), '')
-        panel = compose.panel_service(environ, 'image', '', facts, user='10001:10001', control_gid=10003)
-        bot = compose.bot_service(environ, 'image', '', secret='s', user='10002:10002', panel_gid=10001)
+        values = resources.calculate(2048, 8192, {})
+        panel = compose.panel_service(environ, 'image', values, facts, user='10001:10001', control_gid=10003)
+        bot = compose.bot_service(environ, 'image', values, secret='s', user='10002:10002', panel_gid=10001)
         for service in (panel, bot):
             self.assertRegex(service['user'], r'^[1-9]\d*:[1-9]\d*$')
             self.assertEqual(service['cap_drop'], ['ALL'])

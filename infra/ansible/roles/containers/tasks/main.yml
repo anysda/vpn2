@@ -1,7 +1,5 @@
 ---
-# Контейнеры entry под одним compose.yaml: VictoriaMetrics, панель и бот. Плей
-# ставит одну службу; описание службы, замену контейнера и отметку стадии ведёт
-# пакет vpn2 (vpn2.containers), роль готовит ему хост.
+# Контейнеры entry под одним compose.yaml: плей ставит одну службу через vpn2.containers.
 - name: Служба названа
   ansible.builtin.assert:
     that: containers_service in containers_tools
@@ -13,7 +11,6 @@
   register: containers_vpn2_stat
   failed_when: not (containers_vpn2_stat.stat.executable | default(false))
 
-# Docker ставит базовая роль без плагина compose: экзитам он не нужен.
 - name: Плагин docker compose
   ansible.builtin.command:
     argv: "{{ containers_bash + [containers_compose_step, containers_tmp] }}"
@@ -29,14 +26,6 @@
       echo changed=1
   register: containers_compose
   changed_when: "'changed=1' in containers_compose.stdout"
-
-- name: Библиотека ресурсов
-  ansible.builtin.copy:
-    src: "{{ role_path }}/../resources/files/{{ item }}"
-    dest: "{{ containers_tmp }}/"
-    mode: '0644'
-  loop: [entry-resources.sh, entry_resources.py]
-  changed_when: false
 
 - name: Инструменты шага
   ansible.builtin.copy:

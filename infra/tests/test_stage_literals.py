@@ -7,11 +7,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
 from adguard_support import Hub
-from containers_support import compose, telegram
+from containers_support import compose
+from vpn2 import containers
 from zapret_support import render
 
 
@@ -129,8 +131,9 @@ class TelegramLiteralTests(unittest.TestCase):
         for value in VALUES:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
                 path = Path(work) / 'telegram-runtime.json'
-                telegram.sync_runtime({'TELEGRAM_BOT_TOKEN': value, 'TELEGRAM_CHAT_ID': value,
-                                       'TELEGRAM_ADMIN_USERNAME': value}, [], work)
+                with mock.patch.object(containers, 'ETC', work):
+                    containers.sync_runtime({'TELEGRAM_BOT_TOKEN': value, 'TELEGRAM_CHAT_ID': value,
+                                             'TELEGRAM_ADMIN_USERNAME': value}, [])
                 self.assertEqual(json.loads(path.read_text()),
                                  dict(bot_token=value, chat_id=value, admin_username=value))
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)

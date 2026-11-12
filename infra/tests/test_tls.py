@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 from containers_support import FACTS, compose, panel_tls
+from vpn2 import resources
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -107,13 +108,14 @@ class TlsStageTests(unittest.TestCase):
         stage = PANEL.read_text()
         tls = stage[stage.index('def host_tls('):stage.index('def caddy(')]
         self.assertLess(tls.index('tx.guard_files('), tls.index("'--prepare'"))
-        body = stage[stage.index('def _stage('):]
+        body = stage[stage.index('def stage('):]
         self.assertLess(body.index('tx.finish()'), body.index("'--initial'"))
         self.assertLess(body.index('tx.finish()'), body.index("'enable', '--now', 'vpn2-tls.timer'"))
 
     def test_panel_reads_secure_flag_from_file_on_every_start(self):
         service = compose.panel_service({'HOST_TAG': 'ru', 'ENTRY_HOST': '192.0.2.1', 'AGH_PORT': '3000'},
-                                        'image', '', FACTS, user='1:1', control_gid=2)
+                                        'image', resources.calculate(2048, 8192, {}), FACTS,
+                                        user='1:1', control_gid=2)
         self.assertIn('NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure)', ' '.join(service['command']))
         self.assertIn('/etc/vpn2/tls/panel:/run/vpn2-tls:ro', service['volumes'])
         self.assertNotIn('NUXT_SESSION_COOKIE_SECURE', service['environment'])

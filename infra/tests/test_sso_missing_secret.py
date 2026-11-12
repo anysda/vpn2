@@ -2,6 +2,7 @@ from pathlib import Path
 import shlex
 import tempfile
 import unittest
+from unittest import mock
 
 from containers_support import FACTS, compose, panel
 from play_stage import real_site_tree
@@ -22,7 +23,9 @@ SEED = {'HOST_TAG': 'ru', 'ENTRY_HOST': '192.0.2.1', 'AGH_PORT': '3000', 'SSO_EN
 def panel_env(environ, runtime):
     """Решение стадии панели о SSO и окружение контейнера, которое из него выходит."""
     said = []
-    facts = panel.sso(environ, runtime, said.append)
+    with mock.patch.object(panel, 'say', said.append), \
+            mock.patch.object(panel, 'SSO_RUNTIME', __file__ if runtime else '/nonexistent/sso-runtime.json'):
+        facts = panel.sso(environ)
     return facts, compose.panel_environment(environ, {**FACTS, **facts}), '\n'.join(said)
 
 

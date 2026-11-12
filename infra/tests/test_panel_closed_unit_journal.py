@@ -65,7 +65,7 @@ class PanelClosedUnitJournalTests(unittest.TestCase):
 
     def test_installation_starts_the_service_after_the_initial_run(self):
         stage = (ROOT / 'infra/vpn2/src/vpn2/containers/panel.py').read_text()
-        tail = stage[stage.index("'--initial'"):stage.rindex('_summary(environ, say, admin_user')]
+        tail = stage[stage.index("'--initial'"):stage.rindex('summary(environ, admin_user')]
         start = re.search(r"\['systemctl', 'start', 'vpn2-tls\.service'\]", tail)
         self.assertIsNotNone(start, tail)
 

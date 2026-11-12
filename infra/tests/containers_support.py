@@ -7,7 +7,7 @@ import sys
 
 ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
-from vpn2.containers import compose, panel, telegram  # noqa: E402,F401
+from vpn2.containers import compose, panel  # noqa: E402,F401
 
 # Секреты и решения стадии, которых нет в файлах окружения.
 FACTS = {'session': 's', 'clash': 'c', 'tgbot': 't', 'admin_user': 'admin', 'agh_password': 'p',
@@ -16,15 +16,32 @@ FACTS = {'session': 's', 'clash': 'c', 'tgbot': 't', 'admin_user': 'admin', 'agh
 
 PANEL_TLS = '''
 import os, sys
+from pathlib import Path
 from vpn2.containers import panel
-from vpn2.containers.transaction import Transaction
 root, lib, fail = sys.argv[1:4]
-tx = Transaction(None, root + '/panel-state')
+for name in ('TLS_DIR', 'TLS_CONFIG', 'SECURE', 'MANAGED', 'OVPN_CONF'):
+    setattr(panel, name, root + getattr(panel, name))
+panel.CADDY = [root + path for path in panel.CADDY]
+panel.TLS, panel.STATE = lib, Path(root, 'panel-state')
+run = panel.subprocess.run
+
+
+def tls_in_root(argv, **kwargs):
+    if argv[1:2] == [lib]:
+        argv = [*argv, '--caddy-dir', root + '/etc/caddy', '--storage', root + '/var/lib/caddy/.local/share/caddy',
+                '--bot-secret', root + '/etc/anysda/tgbot-secret.txt']
+    return run(argv, **kwargs)
+
+
+panel.subprocess.run = tls_in_root
+tx = panel.Transaction(None)
 tx.lock()
 tx.changed = True
-tx.files_restored = panel.Openvpn(print, root + panel.OVPN_CONF).restored
+tx.files_restored = panel.Openvpn().restored
 try:
-    panel.host_tls(os.environ, print, tx, root, lib)
+    panel.host_tls(os.environ, tx)
+    caddyfile = Path(panel.CADDY[0])
+    caddyfile.write_text(caddyfile.read_text().replace('import /etc/caddy/', f'import {root}/etc/caddy/'))
     if fail:
         raise SystemExit(1)
 except BaseException:

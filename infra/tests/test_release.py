@@ -80,13 +80,14 @@ do_all
                                                      'digest': 'sha256:' + 'a' * 64,
                                                      'config': 'sha256:' + 'a' * 64}}}, 'binaries': {}}
             (work / 'release.json').write_text(json.dumps(manifest))
-            code = ("import os\nfrom vpn2.containers import engine\n"
-                    "engine.release_image(os.environ, 'panel', os.environ['PANEL_IMAGE'], False)")
+            code = ("import os\nfrom vpn2.containers import compose\n"
+                    "compose.release_image(os.environ, 'panel', compose.Docker())")
             run = subprocess.run([sys.executable, '-c', code],
                                  env=dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'],
                                           PYTHONPATH=str(ROOT / 'infra/vpn2/src'),
                                           VPN2_RELEASE_MANIFEST=str(work / 'release.json'),
-                                          VPN2_DEVELOPMENT='false', PANEL_IMAGE='example/panel:1.0.1'),
+                                          VPN2_DEVELOPMENT='false', PANEL_IMAGE='example/panel:1.0.1',
+                                          PANEL_IMAGE_PULL='false'),
                                  capture_output=True, text=True, timeout=15)
             self.assertNotEqual(run.returncode, 0, 'deploy accepted retagged foreign image')
             self.assertIn('digest', run.stderr)

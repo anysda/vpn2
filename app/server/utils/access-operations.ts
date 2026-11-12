@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { and, desc, eq, exists, getTableColumns, lte, ne, notExists, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import type { H3Event } from 'h3'
@@ -6,7 +6,6 @@ import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS } from '../../shar
 import type { AccessKind, AccessOperation } from '../../shared/access-operation'
 import { useDb } from '../database/client'
 import { accessOperations, botOutbox, clients, devices, events } from '../database/schema'
-import type { Client } from '../database/schema'
 import { isClientActive } from './client-status'
 import { accessAdapter } from './access-adapter'
 import type { AccessAdapter } from './access-adapter'
@@ -15,35 +14,38 @@ import { withAccessLock } from './access-lock'
 import { carried, retire } from './access-payload'
 import type { AccessPayload, StoredOperation } from './access-payload'
 import { ControlUnavailable } from './control'
+import { wgKeypair } from './wireguard'
 
 const RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 300_000]
+type ClientPatch = Partial<typeof clients.$inferInsert>
+interface AccessRequest { clientId: number, deviceId?: number, kind?: AccessKind, patch?: ClientPatch }
 
-interface AccessRequest {
-  clientId: number
-  deviceId?: number
-  kind?: AccessKind
-  patch?: Partial<typeof clients.$inferInsert>
-}
-
-/** История не нужна очереди: у вытесненной операции остаётся только целевое состояние. */
+/** У вытесненной операции остаётся только целевое состояние. */
 const supersededPayload = sql`json_set(${accessOperations.payload}, '$.retired', json('[]'), '$.rotateOvpn', json('[]'))`
+const conflict = (message: string) => createError({ statusCode: 409, message })
+const keyReused = () => conflict('Ключ идемпотентности уже использован для другого запроса')
+const notFound = () => createError({ statusCode: 404, statusMessage: 'not_found' })
+const notSuperseded = ne(accessOperations.status, 'superseded')
 
-function requestFingerprint(input: AccessRequest) {
-  const patch = input.patch && Object.fromEntries(Object.entries(input.patch)
-    .filter(([key]) => key !== 'updatedAt').sort(([a], [b]) => a.localeCompare(b)))
-  return createHash('sha256').update(JSON.stringify({ clientId: input.clientId, deviceId: input.deviceId, kind: input.kind, patch })).digest('hex')
-}
-
-export async function replayAccess(key: string, input: AccessRequest) {
-  const [existing] = await useDb().select().from(accessOperations).where(eq(accessOperations.idempotencyKey, key))
-  if (!existing) return null
-  if (existing.requestHash !== requestFingerprint(input)) throw createError({ statusCode: 409, message: 'Ключ идемпотентности уже использован для другого запроса' })
-  return { id: existing.clientId, operation: operationView(existing) }
+function requestFingerprint({ clientId, deviceId, kind, patch }: AccessRequest) {
+  const fields = patch && Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'updatedAt').sort(([a], [b]) => a.localeCompare(b)))
+  return createHash('sha256').update(JSON.stringify({ clientId, deviceId, kind, patch: fields })).digest('hex')
 }
 
 function operationView(row: StoredOperation): AccessOperation {
   const { id, clientId, deviceId, kind, version, status, protocols, nextRetry, createdAt } = row
   return { id, clientId, deviceId, kind, version, status, protocols, nextRetry, createdAt }
+}
+
+const operationById = async (id: string) => (await useDb().select().from(accessOperations).where(eq(accessOperations.id, id)))[0]
+const latestRow = async (clientId: number) => (await useDb().select().from(accessOperations)
+  .where(eq(accessOperations.clientId, clientId)).orderBy(desc(accessOperations.version)).limit(1))[0]
+
+export async function replayAccess(key: string, input: AccessRequest) {
+  const [existing] = await useDb().select().from(accessOperations).where(eq(accessOperations.idempotencyKey, key))
+  if (!existing) return null
+  if (existing.requestHash !== requestFingerprint(input)) throw keyReused()
+  return { id: existing.clientId, operation: operationView(existing) }
 }
 
 export function accessRequestKey(event: H3Event): string {
@@ -53,52 +55,43 @@ export function accessRequestKey(event: H3Event): string {
 }
 
 /** Версия охватывает клиента целиком: заморозка конфликтует с любым его устройством. */
-export async function enqueueAccess(input: {
-  clientId: number
-  deviceId?: number
-  kind?: AccessKind
+export async function enqueueAccess(input: AccessRequest & {
   actor: string
   key?: string
-  patch?: Partial<typeof clients.$inferInsert>
   condition?: SQL
   initialize?: boolean
   /** Запрос бота: привязка чата перепроверяется в транзакции записи. */
   chatId?: number
 }) {
-  const db = useDb()
   const key = input.key ?? randomUUID()
   const requestHash = requestFingerprint(input)
   const enabled = await accessAdapter.enabled()
-  return db.transaction(async (tx) => {
+  return useDb().transaction(async (tx) => {
     if (input.chatId !== undefined) {
-      // Чат искали до транзакции: пока шли await, администратор мог отозвать бота.
       const [linked] = await tx.select({ id: clients.id }).from(clients)
         .where(and(eq(clients.id, input.clientId), eq(clients.tgChatId, input.chatId)))
       if (!linked) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
     }
     const [existing] = await tx.select().from(accessOperations).where(eq(accessOperations.idempotencyKey, key))
-    if (existing) {
-      if (existing.requestHash !== requestHash) throw createError({ statusCode: 409, message: 'Ключ идемпотентности уже использован для другого запроса' })
-      const [client] = await tx.select().from(clients).where(eq(clients.id, input.clientId))
-      return { client, operation: operationView(existing) }
-    }
     const [before] = await tx.select().from(clients).where(eq(clients.id, input.clientId))
-    if (!before) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-    if (before.deleting && input.kind !== 'delete') throw createError({ statusCode: 409, message: 'Клиент удаляется' })
-    const allDevices = await tx.select().from(devices).where(eq(devices.clientId, before.id))
-    const targets = allDevices.filter(d => input.deviceId === undefined || d.id === input.deviceId)
-    if (input.deviceId !== undefined && !targets.length) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-    if (input.kind === 'reissue' && targets.some(d => d.deleting)) throw createError({ statusCode: 409, message: 'Устройство удаляется' })
+    if (existing) {
+      if (existing.requestHash !== requestHash) throw keyReused()
+      return { client: before, operation: operationView(existing) }
+    }
+    if (!before) throw notFound()
+    if (before.deleting && input.kind !== 'delete') throw conflict('Клиент удаляется')
+    const targets = (await tx.select().from(devices).where(eq(devices.clientId, before.id)))
+      .filter(d => input.deviceId === undefined || d.id === input.deviceId)
+    if (input.deviceId !== undefined && !targets.length) throw notFound()
+    if (input.kind === 'reissue' && targets.some(d => d.deleting)) throw conflict('Устройство удаляется')
     const version = before.accessVersion + (input.initialize ? 0 : 1)
-    const patch = { ...input.patch, accessVersion: version, updatedAt: new Date() }
+    const patch: ClientPatch = { ...input.patch, accessVersion: version, updatedAt: new Date() }
     if (input.kind === 'delete' && input.deviceId === undefined) Object.assign(patch, { deleting: true, frozenManual: true })
-    const [client] = await tx.update(clients).set(patch)
-      .where(and(eq(clients.id, before.id), input.condition)).returning()
-    if (!client) throw createError({ statusCode: 409, message: 'Клиент изменён параллельным запросом; повторите изменение' })
+    const [client] = await tx.update(clients).set(patch).where(and(eq(clients.id, before.id), input.condition)).returning()
+    if (!client) throw conflict('Клиент изменён параллельным запросом; повторите изменение')
     const kind = input.kind ?? (isClientActive(client) ? 'unfreeze' : 'freeze')
     const [previous] = await tx.select().from(accessOperations)
-      .where(and(eq(accessOperations.clientId, before.id), ne(accessOperations.status, 'superseded')))
-      .orderBy(desc(accessOperations.version)).limit(1)
+      .where(and(eq(accessOperations.clientId, before.id), notSuperseded)).orderBy(desc(accessOperations.version)).limit(1)
     const inherited = previous?.status === 'pending' ? carried(previous) : undefined
     const payload: AccessPayload = {
       enabled: !client.deleting && isClientActive(client),
@@ -113,30 +106,23 @@ export async function enqueueAccess(input: {
     if (kind === 'delete' || kind === 'reissue') {
       for (const d of targets) {
         payload.retired = retire(payload.retired, { id: d.id, wgPublicKey: d.wgPublicKey, ovpnCert: d.ovpnCert })
+        const unrotated = payload.rotateOvpn.filter(r => r.id !== d.id)
         if (kind === 'delete') {
           await tx.update(devices).set({ deleting: true }).where(eq(devices.id, d.id))
-          payload.rotateOvpn = payload.rotateOvpn.filter(r => r.id !== d.id)
+          payload.rotateOvpn = unrotated
+          continue
         }
-        else {
-          const kp = generateKeyPairSync('x25519')
-          await tx.update(devices).set({
-            ...(enabled.wg ? {
-              wgPrivateKey: (kp.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer).subarray(-32).toString('base64'),
-              wgPublicKey: (kp.publicKey.export({ format: 'der', type: 'spki' }) as Buffer).subarray(-32).toString('base64'),
-              wgPresharedKey: randomBytes(32).toString('base64'),
-            } : {}),
-            ...(enabled.ikev2 ? { ikev2Password: randomBytes(20).toString('hex') } : {}),
-            updatedAt: new Date(),
-          }).where(eq(devices.id, d.id))
-          if (enabled.openvpn) {
-            payload.rotateOvpn = payload.rotateOvpn.filter(r => r.id !== d.id)
-            payload.rotateOvpn.push({ id: d.id, cert: d.ovpnCert })
-          }
-        }
+        const wg = wgKeypair()
+        await tx.update(devices).set({
+          ...(enabled.wg ? { wgPrivateKey: wg.privateKey, wgPublicKey: wg.publicKey, wgPresharedKey: randomBytes(32).toString('base64') } : {}),
+          ...(enabled.ikev2 ? { ikev2Password: randomBytes(20).toString('hex') } : {}),
+          updatedAt: new Date(),
+        }).where(eq(devices.id, d.id))
+        if (enabled.openvpn) payload.rotateOvpn = [...unrotated, { id: d.id, cert: d.ovpnCert }]
       }
     }
     await tx.update(accessOperations).set({ status: 'superseded', payload: supersededPayload })
-      .where(and(eq(accessOperations.clientId, before.id), ne(accessOperations.status, 'superseded')))
+      .where(and(eq(accessOperations.clientId, before.id), notSuperseded))
     const now = Date.now()
     const protocols = Object.fromEntries(accessProtocols.map(p => [p, {
       state: enabled[p] ? 'pending' : 'not_required', confirmedVersion: null, checkedAt: null,
@@ -153,42 +139,21 @@ export async function enqueueAccess(input: {
 }
 
 /**
- * Базы, где перевыпуски копили retired в каждой строке: история вытесненных
- * операций очищается, у живых убираются повторы устройств. Освободилось
- * много - файл ужимается, чтобы бэкапы не копировали пустые страницы.
+ * Освободилось от 16 МБ - файл ужимается, чтобы бэкапы не копировали пустые
+ * страницы. В WAL файл укорачивает только полный checkpoint, поэтому каждый старт.
  */
-export async function compactAccessOperations(): Promise<{ rows: number, vacuumed: boolean }> {
+export async function compactDatabase(): Promise<boolean> {
   const db = useDb()
-  let rows = 0
-  await db.transaction(async (tx) => {
-    const stale = await tx.update(accessOperations).set({ payload: supersededPayload })
-      .where(and(eq(accessOperations.status, 'superseded'), sql`(json_array_length(${accessOperations.payload}, '$.retired') > 0
-        OR json_array_length(${accessOperations.payload}, '$.rotateOvpn') > 0)`))
-    rows += stale.rowsAffected
-    for (const row of await tx.select().from(accessOperations).where(ne(accessOperations.status, 'superseded'))) {
-      const payload: AccessPayload = JSON.parse(row.payload)
-      const retired = payload.retired.reduce(retire, [])
-      if (retired.length === payload.retired.length) continue
-      await tx.update(accessOperations).set({ payload: JSON.stringify({ ...payload, retired }) }).where(eq(accessOperations.id, row.id))
-      rows++
-    }
-  }, { behavior: 'immediate' })
-  // Место освобождается и тогда, когда прошлый запуск почистил строки, но VACUUM не прошёл.
   const [pages] = await db.all<{ free: number, size: number }>(sql`SELECT freelist_count AS free, page_size AS size FROM pragma_freelist_count(), pragma_page_size()`)
   const vacuumed = !!pages && pages.free * pages.size >= 16 * 1024 * 1024
   if (vacuumed) await db.run(sql`VACUUM`)
-  // В WAL сжатая база лежит в журнале, а файл укорачивает только полный
-  // checkpoint. Автоматический до него не доходит, процесс гасят без close:
-  // файл оставался прежнего размера и после перезапусков. Поэтому каждый
-  // старт, в том числе после VACUUM прошлого запуска.
   const [checkpoint] = await db.all<{ busy: number }>(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
   if (checkpoint?.busy) throw new Error('database checkpoint busy, file not truncated')
-  return { rows, vacuumed }
+  return vacuumed
 }
 
 export async function latestAccess(clientId: number) {
-  const [row] = await useDb().select().from(accessOperations).where(eq(accessOperations.clientId, clientId))
-    .orderBy(desc(accessOperations.version)).limit(1)
+  const row = await latestRow(clientId)
   return row ? operationView(row) : null
 }
 
@@ -200,16 +165,15 @@ export async function currentAccessByClient() {
 }
 
 export async function getAccess(id: string) {
-  const [row] = await useDb().select().from(accessOperations).where(eq(accessOperations.id, id))
-  if (!row) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+  const row = await operationById(id)
+  if (!row) throw notFound()
   return operationView(row)
 }
 
 export async function retryAccess(id: string) {
-  const db = useDb()
-  return db.transaction(async (tx) => {
+  return useDb().transaction(async (tx) => {
     const [row] = await tx.select().from(accessOperations).where(eq(accessOperations.id, id))
-    if (!row) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+    if (!row) throw notFound()
     const operation = operationView(row)
     if (operation.status === 'superseded' || (operation.status === 'confirmed' && operation.kind === 'delete' && operation.deviceId === null)) return operation
     const lastAttempt = Math.max(0, ...accessProtocols.map(p => operation.protocols[p].lastAttempt ?? 0))
@@ -223,71 +187,58 @@ export async function retryAccess(id: string) {
   }, { behavior: 'immediate' })
 }
 
-/** Истечение срока также получает долговечную операцию, без изменения ручного флага. */
+/** Параллельный запрос успел первым: его операция и нужна. */
+const unlessConflict = (error: unknown) => {
+  if ((error as { statusCode?: number }).statusCode !== 409) throw error
+}
+
+/** Клиенты без операций получают первичную сверку, истёкшие - операцию отзыва; ручной флаг не меняется. */
 export async function enqueueExpiredAccess() {
   const db = useDb()
-  // Первичная сверка прежней базы сохраняет самовосстановление cron.
-  // Она не меняет желаемое состояние/версию и не отменяет выдачу в процессе.
-  const untracked = await db.select().from(clients).where(notExists(
-    db.select({ id: accessOperations.id }).from(accessOperations).where(eq(accessOperations.clientId, clients.id)),
-  ))
-  for (const client of untracked) {
-    try {
-      await enqueueAccess({ clientId: client.id, actor: 'reconcile', initialize: true,
-        key: `initialize:${client.id}:${client.accessVersion}`,
-        condition: and(eq(clients.accessVersion, client.accessVersion), notExists(
-          db.select({ id: accessOperations.id }).from(accessOperations).where(eq(accessOperations.clientId, client.id)),
-        )) })
-    }
-    catch (error) {
-      if ((error as { statusCode?: number }).statusCode !== 409) throw error
-    }
+  const noOperation = (id: typeof clients.id | number) =>
+    notExists(db.select({ id: accessOperations.id }).from(accessOperations).where(eq(accessOperations.clientId, id)))
+  for (const client of await db.select().from(clients).where(noOperation(clients.id))) {
+    await enqueueAccess({
+      clientId: client.id, actor: 'reconcile', initialize: true, key: `initialize:${client.id}:${client.accessVersion}`,
+      condition: and(eq(clients.accessVersion, client.accessVersion), noOperation(client.id)),
+    }).catch(unlessConflict)
   }
-  const expired = await db.select().from(clients).where(and(
-    eq(clients.frozenManual, false), eq(clients.deleting, false), lte(clients.expiresAt, new Date()),
-  ))
+  const expired = await db.select().from(clients)
+    .where(and(eq(clients.frozenManual, false), eq(clients.deleting, false), lte(clients.expiresAt, new Date())))
   for (const client of expired) {
-    const [latest] = await db.select().from(accessOperations).where(eq(accessOperations.clientId, client.id))
-      .orderBy(desc(accessOperations.version)).limit(1)
+    const latest = await latestRow(client.id)
     if (latest && !(JSON.parse(latest.payload) as AccessPayload).enabled) continue
-    try {
-      await enqueueAccess({ clientId: client.id, actor: 'expiry', key: `expiry:${client.id}:${client.expiresAt!.getTime()}:${client.accessVersion}`,
-        condition: eq(clients.accessVersion, client.accessVersion) })
-    }
-    catch (error) {
-      if ((error as { statusCode?: number }).statusCode !== 409) throw error
-    }
+    await enqueueAccess({
+      clientId: client.id, actor: 'expiry', key: `expiry:${client.id}:${client.expiresAt!.getTime()}:${client.accessVersion}`,
+      condition: eq(clients.accessVersion, client.accessVersion),
+    }).catch(unlessConflict)
   }
 }
 
 let running: Promise<void> | null = null
 /** Единственный исполнитель процесса; cron и ручные повторы используют ту же очередь. */
 export function runAccessOperations(adapter: AccessAdapter = accessAdapter): Promise<void> {
-  if (running) return running
-  running = withAccessLock(() => runOnce(adapter)).finally(() => { running = null })
+  running ??= withAccessLock(() => runOnce(adapter)).finally(() => { running = null })
   return running
 }
 
-async function current(row: StoredOperation): Promise<Client | undefined> {
-  const [client] = await useDb().select().from(clients)
-    .where(and(eq(clients.id, row.clientId), eq(clients.accessVersion, row.version)))
-  return client
+const isCurrent = (row: StoredOperation) => and(eq(clients.id, row.clientId), eq(clients.accessVersion, row.version))
+async function current(row: StoredOperation) {
+  return (await useDb().select().from(clients).where(isCurrent(row)))[0]
 }
+const wanted = (client: typeof clients.$inferSelect) => !client.deleting && isClientActive(client)
 
 async function runOnce(adapter: AccessAdapter) {
   const db = useDb()
   const rows = await db.select().from(accessOperations)
-    .where(and(ne(accessOperations.status, 'superseded'), lte(accessOperations.nextRetry, Date.now()),
-      exists(db.select({ id: clients.id }).from(clients).where(and(
-        eq(clients.id, accessOperations.clientId), eq(clients.accessVersion, accessOperations.version),
-      )))))
+    .where(and(notSuperseded, lte(accessOperations.nextRetry, Date.now()), exists(db.select({ id: clients.id }).from(clients)
+      .where(and(eq(clients.id, accessOperations.clientId), eq(clients.accessVersion, accessOperations.version))))))
     .orderBy(accessOperations.createdAt).limit(16)
   for (const row of rows) {
     const client = await current(row)
-    // Удалённая цель уже подтверждена; её историческое подтверждение не обновляется.
     if (!client) continue
     const payload: AccessPayload = JSON.parse(row.payload)
-    if (payload.enabled !== (!client.deleting && isClientActive(client))) {
+    if (payload.enabled !== wanted(client)) {
       await enqueueExpiredAccess()
       continue
     }
@@ -297,63 +248,65 @@ async function runOnce(adapter: AccessAdapter) {
     for (const p of accessProtocols) {
       if (protocols[p].state !== 'not_required') Object.assign(protocols[p], { lastAttempt: Date.now(), nextRetry })
     }
-    // Записываем попытку ДО команды. SIGKILL оставляет всё необходимое для повтора.
-    await db.update(accessOperations).set({ attempts, nextRetry, protocols }).where(and(eq(accessOperations.id, row.id), ne(accessOperations.status, 'superseded')))
+    // Попытка записана до команды: SIGKILL оставляет всё необходимое для повтора.
+    await db.update(accessOperations).set({ attempts, nextRetry, protocols }).where(and(eq(accessOperations.id, row.id), notSuperseded))
     for (const protocol of accessProtocols) {
       if (!await current(row)) break
       const state = protocols[protocol]
       if (state.state === 'not_required') continue
-      state.lastAttempt = Date.now()
-      state.nextRetry = nextRetry
+      Object.assign(state, { lastAttempt: Date.now(), nextRetry })
+      const unconfirmed = (error: unknown, fallback: string) => Object.assign(state, {
+        confirmedVersion: null, checkedAt: null, error: error instanceof ControlUnavailable ? error.message : fallback,
+      })
       try {
-        // После потерянного ответа никогда не повторяем изменение вслепую.
+        // После потерянного ответа изменение вслепую не повторяется.
         let unreadable = false
         let matches = await adapter.read(protocol, row, payload).catch(() => { unreadable = true; return false })
         if (!matches && await current(row)) {
           try { await adapter.apply(protocol, row, payload) }
           catch (error) {
             state.state = unreadable ? 'unknown' : 'failed'
-            state.confirmedVersion = null
-            state.checkedAt = null
-            state.error = error instanceof ControlUnavailable ? error.message : unreadable ? 'Состояние не подтверждено' : 'Не удалось применить изменение'
+            unconfirmed(error, unreadable ? 'Состояние не подтверждено' : 'Не удалось применить изменение')
             continue
           }
           if (!await current(row)) break
           matches = await adapter.read(protocol, row, payload)
         }
-        state.state = matches ? 'confirmed' : 'failed'
-        state.confirmedVersion = matches ? row.version : null
-        state.checkedAt = Date.now()
-        state.error = matches ? null : 'Изменение не подтверждено VPN-службой'
+        Object.assign(state, {
+          state: matches ? 'confirmed' : 'failed', confirmedVersion: matches ? row.version : null,
+          checkedAt: Date.now(), error: matches ? null : 'Изменение не подтверждено VPN-службой',
+        })
       }
       catch (error) {
-        // Ни stdout команд, ни пути, ни ключи не выходят в статус/журнал.
+        // Ни stdout команд, ни пути, ни ключи не выходят в статус и журнал.
         state.state = 'unknown'
-        state.confirmedVersion = null
-        state.checkedAt = null
-        state.error = error instanceof ControlUnavailable ? error.message : 'Состояние не подтверждено'
+        unconfirmed(error, 'Состояние не подтверждено')
       }
     }
-    await db.transaction(async (tx) => {
-      const [fresh] = await tx.select().from(clients).where(and(eq(clients.id, row.clientId), eq(clients.accessVersion, row.version)))
-      if (!fresh) return
-      // Срок мог истечь во время команды без изменения версии в базе.
-      // Следующий проход поставит отзыв; включение подтверждать уже нельзя.
-      if (payload.enabled !== (!fresh.deleting && isClientActive(fresh))) return
-      const confirmed = accessProtocols.every(p => protocols[p].state === 'not_required' || protocols[p].confirmedVersion === row.version)
-      const status = confirmed ? 'confirmed' : 'pending'
-      await tx.update(accessOperations).set({ protocols, status, completionRecorded: confirmed || row.completionRecorded, nextRetry: confirmed ? Date.now() + CONFIRMATION_FRESH_MS / 2 : nextRetry })
-        .where(and(eq(accessOperations.id, row.id), ne(accessOperations.status, 'superseded')))
-      if (!confirmed) return
-      const title = accessStatus({ ...operationView(row), protocols, status })
-      // Событие + доставка + удаление цели фиксируются вместе с подтверждением.
-      // Уникальные ID не допускают повторной рассылки после рестарта.
-      const eventKey = `access:${row.id}`
-      if (!row.completionRecorded) await tx.insert(events).values({
+    await recordOutcome(row, payload, protocols, nextRetry)
+  }
+}
+
+/** Подтверждение, событие, уведомление и удаление цели - одной транзакцией; уникальные ID не дают повторной рассылки. */
+async function recordOutcome(row: StoredOperation, payload: AccessPayload, protocols: AccessOperation['protocols'], nextRetry: number) {
+  await useDb().transaction(async (tx) => {
+    const [fresh] = await tx.select().from(clients).where(isCurrent(row))
+    // Срок мог истечь во время команды: следующий проход поставит отзыв.
+    if (!fresh || payload.enabled !== wanted(fresh)) return
+    const confirmed = accessProtocols.every(p => protocols[p].state === 'not_required' || protocols[p].confirmedVersion === row.version)
+    const status = confirmed ? 'confirmed' : 'pending'
+    await tx.update(accessOperations).set({
+      protocols, status, completionRecorded: confirmed || row.completionRecorded,
+      nextRetry: confirmed ? Date.now() + CONFIRMATION_FRESH_MS / 2 : nextRetry,
+    }).where(and(eq(accessOperations.id, row.id), notSuperseded))
+    if (!confirmed) return
+    const title = accessStatus({ ...operationView(row), protocols, status })
+    if (!row.completionRecorded) {
+      await tx.insert(events).values({
         at: Date.now(), type: 'access_confirmed', level: 'info', object: `client:${row.clientId}`,
-        actor: row.actor, title: `${title} · ${payload.name}`, detail: row.actor, key: eventKey,
+        actor: row.actor, title: `${title} · ${payload.name}`, detail: row.actor, key: `access:${row.id}`,
       }).onConflictDoNothing()
-      if (!row.completionRecorded && payload.chatId && botConfigured()) {
+      if (payload.chatId && botConfigured()) {
         const now = Date.now()
         await tx.insert(botOutbox).values({
           id: row.id, label: `Уведомление клиенту «${payload.name}»`,
@@ -361,8 +314,8 @@ async function runOnce(adapter: AccessAdapter) {
           status: 'queued', due: now, expires: now + 3_600_000, created: now,
         }).onConflictDoNothing()
       }
-      await tx.delete(devices).where(and(eq(devices.clientId, row.clientId), eq(devices.deleting, true)))
-      if (fresh.deleting) await tx.delete(clients).where(eq(clients.id, fresh.id))
-    }, { behavior: 'immediate' })
-  }
+    }
+    await tx.delete(devices).where(and(eq(devices.clientId, row.clientId), eq(devices.deleting, true)))
+    if (fresh.deleting) await tx.delete(clients).where(eq(clients.id, fresh.id))
+  }, { behavior: 'immediate' })
 }

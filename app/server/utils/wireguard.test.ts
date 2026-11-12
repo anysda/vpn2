@@ -5,7 +5,7 @@ import { control, controlApply } from './control'
 
 vi.mock('../database/client', async () => ({
   ...(await import('../test/stubs')).databaseModule,
-  IP_CLAIM_ATTEMPTS: 50,
+  claimUnique: (await vi.importActual<typeof import('../database/client')>('../database/client')).claimUnique,
   isUniqueViolation: (err: { code?: string }) => err?.code === 'SQLITE_CONSTRAINT_UNIQUE',
 }))
 vi.mock('./control', () => ({ control: vi.fn(), controlApply: vi.fn() }))
@@ -123,7 +123,7 @@ describe('ensureDeviceWg', () => {
   })
 
   it('частично заполненное устройство сохраняет уже выданные значения', async () => {
-    dbResults.push([{ id: 4, wgPrivateKey: 'test-key-a', wgPublicKey: 'test-key-b', wgPresharedKey: null, wgIp: '10.66.66.8' }], [], [{ id: 4 }])
+    dbResults.push([{ id: 4, wgPrivateKey: 'test-key-a', wgPublicKey: 'test-key-b', wgPresharedKey: null, wgIp: '10.66.66.8' }], [{ id: 4 }])
     await ensureDeviceWg(4)
     const set = dbOps.find(o => o.op === 'set')!.args[0] as Record<string, string>
     expect([set.wgPrivateKey, set.wgPublicKey, set.wgIp]).toEqual(['test-key-a', 'test-key-b', '10.66.66.8'])

@@ -310,33 +310,7 @@ test.describe('access-operations', () => {
     expect(JSON.parse(row!.payload).retired).toEqual([{ id: device!.id, wgPublicKey: current!.wgPublicKey, ovpnCert: 'cert-0' }])
   })
 
-  test('VPN2-510: раздутая прежней версией база чистится при старте и ужимается', async () => {
-    const c = await client()
-    const created = await threeDevices(c)
-    const entry = (i: number) => ({ id: created[i % 3]!.id, wgPublicKey: `key-${i}`, ovpnCert: 'x'.repeat(1500) })
-    const bloated = (n: number) => JSON.stringify({ enabled: true, retired: Array.from({ length: n }, (_, i) => entry(i)), rotateOvpn: [], name: 'operation test', chatId: null })
-    const protocols = { wg: { state: 'pending' }, openvpn: { state: 'pending' }, ikev2: { state: 'not_required' } } as never
-    for (let v = 1; v <= 30; v++) {
-      await db.insert(schema.accessOperations).values({
-        id: `op-${v}`, clientId: c.id, kind: 'reissue', version: v, idempotencyKey: `k-${v}`, requestHash: 'h', protocols,
-        status: v === 30 ? 'pending' : 'superseded', payload: bloated(v * 25), actor: 'panel', nextRetry: 0, createdAt: v,
-      })
-    }
-    await db.update(schema.clients).set({ accessVersion: 30 }).where(eq(schema.clients.id, c.id))
-    const size = async () => (await db.all<{ bytes: number }>(sql`SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()`))[0]!.bytes
-    const before = await size()
-    expect(before).toBeGreaterThan(16 * 1024 * 1024)
-    expect(await ops.compactAccessOperations()).toEqual({ rows: 30, vacuumed: true })
-    const [live] = await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.id, 'op-30'))
-    expect(JSON.parse(live!.payload).retired.map((r: { wgPublicKey: string }) => r.wgPublicKey)).toEqual(['key-0', 'key-1', 'key-2'])
-    for (const row of await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.status, 'superseded'))) {
-      expect(JSON.parse(row.payload)).toMatchObject({ enabled: true, retired: [], rotateOvpn: [] })
-    }
-    expect(await size()).toBeLessThan(before / 10)
-    expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: false })
-  })
-
-  test('VPN2-510: место, не освобождённое прошлым запуском, освобождается при следующем', async () => {
+  test('свободное место от 16 МБ освобождается при старте', async () => {
     const c = await client()
     await threeDevices(c)
     const size = async () => (await db.all<{ bytes: number }>(sql`SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()`))[0]!.bytes
@@ -346,7 +320,7 @@ test.describe('access-operations', () => {
     await db.run(sql`DROP TABLE filler`)
     const before = await size()
     expect(before).toBeGreaterThan(16 * 1024 * 1024)
-    expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: true })
+    expect(await ops.compactDatabase()).toBe(true)
     expect(await size()).toBeLessThan(before / 10)
     // VPN2-523: сжата не только логическая база, но и файл на диске; журнал пуст.
     const file = path.join(directory, 'db.sqlite')
@@ -354,7 +328,7 @@ test.describe('access-operations', () => {
     expect(statSync(`${file}-wal`).size).toBe(0)
   })
 
-  test('VPN2-523: VACUUM прошлого запуска остался в журнале - следующий старт укорачивает файл', async () => {
+  test('сжатая база в журнале - старт укорачивает файл', async () => {
     const c = await client()
     await threeDevices(c)
     const size = async () => (await db.all<{ bytes: number }>(sql`SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()`))[0]!.bytes
@@ -366,7 +340,7 @@ test.describe('access-operations', () => {
     await db.run(sql`VACUUM`)
     expect(statSync(file).size).toBeGreaterThan(16 * 1024 * 1024)
     expect(await size()).toBeLessThan(1024 * 1024)
-    expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: false })
+    expect(await ops.compactDatabase()).toBe(false)
     expect(statSync(file).size).toBe(await size())
     expect(statSync(`${file}-wal`).size).toBe(0)
   })

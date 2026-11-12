@@ -79,5 +79,16 @@ export function isUniqueViolation(err: unknown): boolean {
   return false
 }
 
-/** Сколько раз пробовать занять адрес из пула: конфликт значит, что параллельный запрос занял свой. */
-export const IP_CLAIM_ATTEMPTS = 50
+/** Занимает уникальный адрес или логин: конфликт значит, что параллельный запрос занял свой, берём следующий. */
+export async function claimUnique<T>(what: string, attempt: () => Promise<T | undefined>): Promise<T> {
+  for (let tries = 1; ; tries++) {
+    try {
+      const row = await attempt()
+      if (row) return row
+    }
+    catch (err) {
+      if (!isUniqueViolation(err)) throw err
+    }
+    if (tries >= 50) throw new Error(what)
+  }
+}

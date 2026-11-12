@@ -7,7 +7,7 @@ import { control, controlApply } from './control'
 
 vi.mock('../database/client', async () => ({
   ...(await import('../test/stubs')).databaseModule,
-  IP_CLAIM_ATTEMPTS: 50,
+  claimUnique: (await vi.importActual<typeof import('../database/client')>('../database/client')).claimUnique,
   isUniqueViolation: (err: { code?: string }) => err?.code === 'SQLITE_CONSTRAINT_UNIQUE',
 }))
 vi.mock('./control', () => ({ control: vi.fn(), controlApply: vi.fn() }))
@@ -181,7 +181,7 @@ describe('syncIkev2', () => {
 
   it('в ikev2.apply идут только активные устройства с полными данными; dns и срок - по клиенту', async () => {
     runtimeConfig.ikev2Enabled = true
-    dbResults.push([], [
+    dbResults.push([
       row(1),
       row(2, { filterTraffic: false, expiresAt: future }),
       row(3, { frozenManual: true }),
@@ -199,35 +199,5 @@ describe('syncIkev2', () => {
         { device_id: 2, username: 'user-2', password: 'test-pass-2', ip: '10.68.68.3', dns: ['8.8.8.8', '1.1.1.1'], expires_at: future.toISOString() },
       ],
     })
-  })
-
-  it('сирот нет - транзакции восстановления нет, запросов ровно два', async () => {
-    runtimeConfig.ikev2Enabled = true
-    await syncIkev2()
-    expect(calls).toEqual(['db:select', 'db:select'])
-  })
-
-  it('сироты: недостающий адрес и логин выдаются, существующие и пароль сохраняются, полные не трогаются', async () => {
-    runtimeConfig.ikev2Enabled = true
-    const all = [
-      { id: 1, name: 'phone', clientName: 'Anna', username: 'anna-phone', password: 'test-pass', ip: null },
-      { id: 2, name: 'laptop', clientName: 'Anna', username: null, password: null, ip: '10.68.68.2' },
-      { id: 3, name: 'tv', clientName: 'Boris', username: 'boris-tv', password: 'test-pass-3', ip: '10.68.68.5' },
-    ]
-    dbResults.push([{ id: 1 }, { id: 2 }], all, [], [], [])
-    await syncIkev2()
-    const sets = dbOps.filter(o => o.op === 'set').map(o => o.args[0] as Record<string, string>)
-    expect(sets).toHaveLength(2)
-    expect([sets[0]!.ikev2Username, sets[0]!.ikev2Ip, sets[0]!.ikev2Password]).toEqual(['anna-phone', '10.68.68.3', 'test-pass'])
-    expect([sets[1]!.ikev2Username, sets[1]!.ikev2Ip]).toEqual(['anna-laptop', '10.68.68.2'])
-    expect(sets[1]!.ikev2Password).toMatch(/^[A-Za-z0-9]{20}$/)
-  })
-
-  it('восстановление идёт до чтения устройств для apply', async () => {
-    runtimeConfig.ikev2Enabled = true
-    dbResults.push([{ id: 2 }], [{ id: 2, name: 'laptop', clientName: 'Anna', username: null, password: null, ip: '10.68.68.2' }], [])
-    await syncIkev2()
-    expect(calls.indexOf('db:update')).toBeLessThan(calls.lastIndexOf('db:select'))
-    expect(calls.at(-1)).toBe('db:select')
   })
 })

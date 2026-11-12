@@ -32,7 +32,7 @@ const routeCheck = routes['GET /routes/check']
 
 vi.mock('../database/client', async () => ({
   ...(await import('../test/stubs')).databaseModule,
-  IP_CLAIM_ATTEMPTS: 50,
+  claimUnique: (await vi.importActual<typeof import('../database/client')>('../database/client')).claimUnique,
   isUniqueViolation: () => false,
 }))
 vi.mock('./auth', async () => (await import('../test/stubs')).authModule)
@@ -207,7 +207,7 @@ describe('контракт control: живые вызовы панели шлю�
     const clients = example('ikev2.apply').params.clients as {
       device_id: number, username: string, password: string, ip: string, dns: string[], expires_at: string | null,
     }[]
-    dbResults.push([], clients.map(c => ({
+    dbResults.push(clients.map(c => ({
       id: c.device_id, username: c.username, password: c.password, ip: c.ip, deleting: false,
       frozenManual: false, expiresAt: date(c.expires_at), filterTraffic: c.dns.length === 1,
     })))

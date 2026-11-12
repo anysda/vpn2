@@ -1,16 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
-import { accounts, adminConfigPassword, sessions, twoFactors, users } from '../database/schema'
-import { hashPassword, revokeDisallowedSsoSessions, useAuth, verifyPassword } from '../utils/auth'
+import { accounts, adminConfigPassword, sessions, users } from '../database/schema'
+import { hashPassword, revokeDisallowedSsoSessions, verifyPassword } from '../utils/auth'
 import { loadAnysdaConfig } from '../utils/anysda-config'
 import { syncClientPrefsFile } from '../utils/client-prefs'
 import { markPanelReady } from '../utils/panel-ready'
 import { ControlUnavailable } from '../utils/control'
-import { compactAccessOperations } from '../utils/access-operations'
+import { compactDatabase } from '../utils/access-operations'
 
 export default defineNitroPlugin((nitroApp) => {
   // Nitro не ждёт async-плагин: без миграций или админа падаем процессом.
@@ -45,11 +44,10 @@ async function initPanel() {
   })) throw new Error('Database schema incompatible. Run the deploy migration executor before starting the panel.')
   log.info('migrations applied by deploy executor; schema verified')
 
-  // Базы, раздутые историей перевыпусков: чистка один раз, дальше строки не растут.
   // Не вышло (занято, нет места под VACUUM) - панель работает, база прежняя.
-  await compactAccessOperations().then(({ rows, vacuumed }) => {
-    if (rows || vacuumed) log.info({ rows, vacuumed }, 'access operations history compacted')
-  }, err => log.warn({ err }, 'access operations history not compacted'))
+  await compactDatabase().then((vacuumed) => {
+    if (vacuumed) log.info('database compacted')
+  }, err => log.warn({ err }, 'database not compacted'))
 
   if (cfg.exitTags) await syncClientPrefsFile().catch((error) => {
     if (!(error instanceof ControlUnavailable)) throw error
@@ -139,23 +137,4 @@ async function initPanel() {
   // 3. Список SSO мог смениться, пока панель стояла.
   const revoked = await revokeDisallowedSsoSessions()
   if (revoked > 0) log.info({ count: revoked }, 'sso sessions revoked: sub no longer allowed')
-
-  // 4. 2FA, включённая до better-auth: библиотеке нужна своя строка со случайным
-  // секретом, чтобы она спрашивала код; сам код проверяет хук в utils/auth.ts.
-  const legacy = await localDb.select({ id: users.id }).from(users)
-    .leftJoin(twoFactors, eq(twoFactors.userId, users.id))
-    .where(and(isNotNull(users.legacyTotpSecret), isNull(twoFactors.id)))
-  if (legacy.length > 0) {
-    const { secretConfig } = await useAuth().$context
-    for (const { id } of legacy) {
-      await localDb.insert(twoFactors).values({
-        userId: id,
-        secret: await symmetricEncrypt({ key: secretConfig, data: generateRandomString(32) }),
-        backupCodes: await symmetricEncrypt({ key: secretConfig, data: '[]' }),
-        verified: true,
-      })
-      await localDb.update(users).set({ twoFactorEnabled: true }).where(eq(users.id, id))
-    }
-    log.info({ count: legacy.length }, '2FA migrated to better-auth')
-  }
 }

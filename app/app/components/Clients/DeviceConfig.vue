@@ -9,10 +9,12 @@ const open = defineModel<boolean>('open', { default: false })
 const { canSend, reason: tgReason } = useTelegramStatus()
 const { toast, busy, act } = useAct()
 
-const NAME = { wg: 'WireGuard', ovpn: 'OpenVPN', ike: 'IKEv2' }
-const PATH = { wg: ['wg-config', 'send-wg-to-tg'], ovpn: ['ovpn-config', 'send-ovpn-to-tg'], ike: ['ikev2-credentials', 'send-ikev2-to-tg'] }
-const SENT = { wg: 'WireGuard-конфиг отправлен в Telegram', ovpn: 'OpenVPN-конфиг отправлен в Telegram', ike: 'IKEv2 отправлен в Telegram' }
-const FAIL = { wg: 'Не удалось получить .conf', ovpn: 'Не удалось получить .ovpn', ike: 'Не удалось получить IKEv2-креды' }
+const KINDS = {
+  wg: { name: 'WireGuard', get: 'wg-config', send: 'send-wg-to-tg', sent: 'WireGuard-конфиг отправлен в Telegram', fail: 'Не удалось получить .conf' },
+  ovpn: { name: 'OpenVPN', get: 'ovpn-config', send: 'send-ovpn-to-tg', sent: 'OpenVPN-конфиг отправлен в Telegram', fail: 'Не удалось получить .ovpn' },
+  ike: { name: 'IKEv2', get: 'ikev2-credentials', send: 'send-ikev2-to-tg', sent: 'IKEv2 отправлен в Telegram', fail: 'Не удалось получить IKEv2-креды' },
+}
+const k = computed(() => KINDS[props.kind])
 const base = computed(() => `/api/clients/${props.clientId}/devices/${props.device.id}`)
 const ext = computed(() => props.kind === 'wg' ? 'conf' : 'ovpn')
 const fileName = computed(() => `${props.device.configName}.${ext.value}`)
@@ -31,7 +33,7 @@ async function load() {
   conf.value = ''
   creds.value = null
   hasAAAA.value = showPass.value = qrWide.value = false
-  const url = `${base.value}/${PATH[props.kind][0]}`
+  const url = `${base.value}/${k.value.get}`
   if (props.kind === 'wg') {
     // Без метки браузер показал бы из кэша QR старого ключа после перевыпуска.
     qr.value = `${base.value}/wg-qrcode.svg?t=${Date.now()}`
@@ -42,7 +44,7 @@ async function load() {
     if (r !== request) return
     if (typeof res === 'string') conf.value = res
     else creds.value = res
-  }, undefined, FAIL[props.kind])
+  }, undefined, k.value.fail)
 }
 watch(open, now => now ? void load() : request++, { immediate: true })
 
@@ -57,7 +59,7 @@ function download() {
   URL.revokeObjectURL(a.href)
   toast.add({ title: `Скачивается ${fileName.value}`, color: 'success' })
 }
-const sendTg = () => act('tg', () => $fetch<unknown>(`${base.value}/${PATH[props.kind][1]}`, { method: 'POST' }), { title: SENT[props.kind], color: 'success' }, 'Ошибка отправки')
+const sendTg = () => act('tg', () => $fetch<unknown>(`${base.value}/${k.value.send}`, { method: 'POST' }), { title: k.value.sent, color: 'success' }, 'Ошибка отправки')
 
 const ikeRows = computed(() => creds.value
   ? [
@@ -71,7 +73,7 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
 </script>
 
 <template>
-  <PanelDialog v-model:open="open" :title="`${NAME[kind]} · ${device.name}`" :wide="kind === 'ike' || qrWide">
+  <PanelDialog v-model:open="open" :title="`${KINDS[kind].name} · ${device.name}`" :wide="kind === 'ike' || qrWide">
     <template v-if="kind === 'wg'">
       <p class="mt">
         Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.

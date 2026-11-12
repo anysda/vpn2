@@ -2,12 +2,8 @@
 const { busy, act } = useAct()
 const { load: loadPublic } = useSsoPublic()
 
-interface SsoForm {
-  enabled: boolean, authentikUrl: string, appSlug: string, clientId: string, clientSecret: string
-  allowedSubs: string, label: string, autoRedirect: boolean, passwordLogin: boolean, redirectUrl: string
-}
 type TextKey = 'authentikUrl' | 'appSlug' | 'clientId' | 'clientSecret' | 'allowedSubs' | 'redirectUrl' | 'label'
-const form = reactive<SsoForm>({
+const form = reactive({
   enabled: false, authentikUrl: '', appSlug: '', clientId: '', clientSecret: '',
   allowedSubs: '', label: 'Authentik', autoRedirect: true, passwordLogin: true, redirectUrl: '',
 })

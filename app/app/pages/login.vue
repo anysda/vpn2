@@ -7,17 +7,13 @@ const route = useRoute()
 const { sso, load: loadSso } = useSsoPublic()
 await loadSso()
 
-if (loggedIn.value) {
-  await navigateTo('/')
-}
+if (loggedIn.value) await navigateTo('/')
 
 // /login?direct=1 и ошибка входа через Authentik показывают форму даже при авторедиректе.
 const ssoError = computed(() => (route.query.error as string | undefined) ?? null)
 const showForm = computed(() => !sso.value.enabled || !sso.value.autoRedirect || route.query.direct !== undefined || !!ssoError.value)
 
-if (sso.value.enabled && !showForm.value) {
-  await navigateTo('/auth/authentik', { external: true })
-}
+if (sso.value.enabled && !showForm.value) await navigateTo('/auth/authentik', { external: true })
 
 const SSO_ERRORS: Record<string, string> = {
   sso_off: 'SSO выключен или не настроен — вход по паролю',
@@ -36,36 +32,30 @@ const needsTotp = ref(false)
 const error = ref<string | null>(null)
 const loading = ref(false)
 
-// Вход в два шага: логин и пароль, затем код 2FA по cookie первого шага.
+// Вход в два шага: логин и пароль, затем код 2FA по cookie первого шага; true - вход завершён.
+async function signIn() {
+  if (needsTotp.value) {
+    await $fetch('/api/auth/two-factor/verify-totp', { method: 'POST', body: { code: state.totpCode.replace(/\s/g, '') } })
+    return true
+  }
+  const body = { username: state.username, password: state.password }
+  const res = await $fetch<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/username', { method: 'POST', body })
+  needsTotp.value = !!res?.twoFactorRedirect
+  return !needsTotp.value
+}
+
 async function submit() {
   error.value = null
   loading.value = true
-  try {
-    if (needsTotp.value) {
-      await $fetch('/api/auth/two-factor/verify-totp', {
-        method: 'POST',
-        body: { code: state.totpCode.replace(/\s/g, '') },
-      })
-    }
-    else {
-      const res = await $fetch<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/username', {
-        method: 'POST',
-        body: { username: state.username, password: state.password },
-      })
-      if (res?.twoFactorRedirect) {
-        needsTotp.value = true
-        return
-      }
-    }
+  const done = await signIn().catch((e: unknown) => {
+    error.value = errText(e)
+    return false
+  })
+  if (done) {
     await refreshSession()
     await navigateTo('/')
   }
-  catch (e) {
-    error.value = errText(e)
-  }
-  finally {
-    loading.value = false
-  }
+  loading.value = false
 }
 
 function reset() {

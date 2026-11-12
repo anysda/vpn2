@@ -6,7 +6,7 @@ const { toast, busy: keys, act } = useAct()
 
 const totpEnabled = computed(() => user.value?.twoFactorEnabled ?? false)
 
-const step = ref<'idle' | 'setup'>('idle')
+// Настройка идёт, пока сервер выдал адрес секрета и первый код ещё не принят.
 const totpUri = ref('')
 const totpSecret = computed(() => totpUri.value ? new URL(totpUri.value).searchParams.get('secret') ?? '' : '')
 const pwd = ref('')
@@ -23,7 +23,6 @@ const totpQr = computed(() => {
 })
 
 function reset() {
-  step.value = 'idle'
   totpUri.value = pwd.value = code.value = ''
 }
 watch(disableOpen, reset)
@@ -32,9 +31,9 @@ function call<T>(path: string, body: object, fail: string, done: (r: T) => unkno
   return act('2fa', async () => done(await $fetch<unknown>(`/api/auth/two-factor/${path}`, { method: 'POST', body }) as T), undefined, { title: fail })
 }
 
-// Код из аутентификатора: 6 цифр, пробелы и прочее не в счёт.
-function digits(ready = true) {
-  if (ready && code.value.replace(/\D/g, '').length === 6) return code.value.replace(/\s/g, '')
+// Код из аутентификатора: 6 цифр, пробелы и прочее не в счёт; без пароля код не принимается.
+function typedCode(passwordGiven = true) {
+  if (passwordGiven && code.value.replace(/\D/g, '').length === 6) return code.value.replace(/\s/g, '')
   toast.add({ title: 'Код не подошёл', color: 'error' })
 }
 
@@ -43,18 +42,17 @@ function startSetup() {
   return call<{ totpURI: string }>('enable', { password: pwd.value }, 'Ошибка setup', (r) => {
     totpUri.value = r.totpURI
     pwd.value = ''
-    step.value = 'setup'
   })
 }
 
 // Первый код включает 2FA; остальные сессии сервер рвёт.
 function confirmSetup() {
-  const c = digits()
+  const c = typedCode()
   if (c) return call('verify-totp', { code: c }, 'Неверный код', () => finish('2FA включена'))
 }
 
 function disableTotp() {
-  const c = digits(!!pwd.value)
+  const c = typedCode(!!pwd.value)
   if (c) return call('disable', { password: pwd.value, code: c }, 'Ошибка', () => finish('2FA выключена'))
 }
 
@@ -83,7 +81,7 @@ async function finish(title: string) {
         </button>
       </div>
     </template>
-    <form v-else-if="step === 'idle'" @submit.prevent="startSetup">
+    <form v-else-if="!totpUri" @submit.prevent="startSetup">
       <p class="mt">
         При входе панель спросит 6-значный код из приложения-аутентификатора (Aegis, Google Authenticator, 1Password) при входе.
       </p>

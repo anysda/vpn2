@@ -3,11 +3,8 @@
 .tag.amb{color:var(--amber);border:1px solid rgba(var(--amb-rgb),.35);background:rgba(var(--amb-rgb),.08)}
 .clp .tag.access-tag,.clp .crow .tag.access-tag,.clp .crow .cxp .tag.access-tag{max-width:130px;height:auto;min-height:24px;white-space:normal;line-height:1.2;padding:4px 10px}
 /* фильтр */
-.clp .seg{position:relative;display:inline-flex;gap:6px;margin-bottom:14px}
-.clp .seg>a{height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t2);font:500 13px var(--font-sans);cursor:pointer;text-decoration:none;display:flex;align-items:center;gap:8px;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
+.clp .seg>a{white-space:normal;text-decoration:none;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
 .clp .seg>a b{font-weight:300;font-size:15px;color:var(--t1)}
-.clp .seg>a:active{transform:scale(.96)}
-.clp .seg>a.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
 .clp .seg>a.on b{color:var(--acc-t)}
 .clp .sel{position:relative;display:inline-flex;align-items:center}
 .clp .sel select{appearance:none;height:40px;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px var(--font-sans);cursor:pointer;outline:0}

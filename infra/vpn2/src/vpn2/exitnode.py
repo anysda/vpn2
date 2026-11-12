@@ -1,7 +1,6 @@
 """Экзит: профиль WARP, секреты каналов, сертификат и конфиг sing-box.
 
-Модуль не тянет PyYAML и сторонних пакетов: роль exit зовёт его системным
-python прямо из колеса.
+Только stdlib: роль exit зовёт модуль системным python прямо из колеса.
 """
 import base64
 import ipaddress
@@ -50,14 +49,6 @@ def _register(etc, say, run):
     return False
 
 
-def _generate(etc, run):
-    """0 - профиль построен; 2 - аккаунт от wgcf < 2.3 без key_type; 1 - иной сбой."""
-    done = _output([WGCF, 'generate'], run, cwd=etc)
-    if done.returncode == 0:
-        return 0
-    return 2 if 'key_type' in done.stdout else 1
-
-
 def _protect(etc):
     for name in ('wgcf-account.toml', 'wgcf-profile.conf'):
         (etc / name).chmod(0o600)
@@ -70,36 +61,13 @@ def _nonempty(path):
 def ensure_warp_profile(etc, say, run=subprocess.run):
     """Регистрирует устройство WARP и строит профиль; False - WARP на узле нет."""
     account, profile = etc / 'wgcf-account.toml', etc / 'wgcf-profile.conf'
-    no_api = '⚠ wgcf register не прошёл (Cloudflare API недоступен)'
     if not account.is_file():
         say('регистрирую WARP устройство')
         if not _register(etc, say, run):
-            say(f'{no_api} — WARP outbound будет placeholder')
+            say('⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder')
             return False
-    if not account.is_file():
-        return profile.is_file()
-    status = _generate(etc, run)
-    if status == 0:
+    if _output([WGCF, 'generate'], run, cwd=etc).returncode == 0:
         _protect(etc)
-    elif status == 2:
-        # Аккаунт без key_type несовместим с wgcf 2.3: создаём устройство нового
-        # формата, ключ WARP в конфиге sing-box сменится свежим профилем.
-        old = etc / 'wgcf-account.toml.old'
-        account.replace(old)
-        say('регистрирую WARP устройство заново')
-        if _register(etc, say, run):
-            if _generate(etc, run) != 0:
-                say('⚠ wgcf generate не прошёл после регистрации — WARP outbound будет placeholder')
-                return False
-            _protect(etc)
-        elif _nonempty(profile):
-            # Аккаунт возвращаем на место: иначе следующий прогон пойдёт по ветке
-            # первой регистрации и при новом сбое потеряет рабочий профиль.
-            old.replace(account)
-            say(f'{no_api} — оставляю профиль прошлого прогона')
-        else:
-            say(f'{no_api} — WARP outbound будет placeholder')
-            return False
     elif _nonempty(profile):
         say('⚠ wgcf generate не прошёл — оставляю профиль прошлого прогона')
     else:

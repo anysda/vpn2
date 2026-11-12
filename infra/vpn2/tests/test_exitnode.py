@@ -116,15 +116,6 @@ def test_failed_generate_without_profile_gives_placeholder(node):
     assert exitnode.warp_values(node.etc, node.say, node.run) == exitnode.WARP_PLACEHOLDER
 
 
-def test_legacy_account_is_registered_anew(node):
-    (node.etc / 'wgcf-account.toml').write_text("device_id = 'old'\naccess_token = 'old'\n")
-    node.generate = [(1, 'missing key_type in account'), (0, '')]
-    values = exitnode.warp_values(node.etc, node.say, node.run)
-    assert values['WGCF_PRIVKEY'] == 'cHJpdg=='
-    assert (node.etc / 'wgcf-account.toml').read_text() == ACCOUNT
-    assert 'old' in (node.etc / 'wgcf-account.toml.old').read_text()
-
-
 def test_legacy_account_returns_when_cloudflare_is_down(node):
     legacy = "device_id = 'dev-1'\naccess_token = 'tok-1'\n"
     (node.etc / 'wgcf-account.toml').write_text(legacy)

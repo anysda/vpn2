@@ -79,9 +79,9 @@
     name: wireguard
     tasks_from: routing
   vars:
-    routing: {unit: anysda-ikev2-routing, iface: xfrm0, chain: ANYSDA_IKEV2_TPROXY, mss: 1360,
-              after: strongswan-starter.service, routes: "{{ ikev2_subnets }}", v6_reject: true,
-              xfrm_dev: "{{ ikev2_route.stdout.split(' dev ')[1].split()[0] }}", subnet6: "{{ ikev2_subnet6 }}"}
+    wireguard_routing: {unit: anysda-ikev2-routing, iface: xfrm0, chain: ANYSDA_IKEV2_TPROXY, mss: 1360,
+                        after: strongswan-starter.service, routes: "{{ ikev2_subnets }}", v6_reject: true,
+                        xfrm_dev: "{{ ikev2_route.stdout.split(' dev ')[1].split()[0] }}", subnet6: "{{ ikev2_subnet6 }}"}
 
 - name: Таймер счётчиков IKEv2 включён
   ansible.builtin.systemd_service:

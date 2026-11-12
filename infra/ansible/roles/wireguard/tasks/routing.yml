@@ -1,52 +1,52 @@
 ---
 # Маршрутизация туннеля в TPROXY sing-box; общая у wireguard, openvpn и ikev2.
-# routing: {unit, iface, chain, mss, after, routes, v6_reject, xfrm_dev, subnet6}.
+# wireguard_routing: {unit, iface, chain, mss, after, routes, v6_reject, xfrm_dev, subnet6}.
 - name: Скрипт маршрутизации туннелей
   ansible.builtin.copy:
     src: anysda-vpn-routing.sh
     dest: /usr/local/sbin/anysda-vpn-routing.sh
     mode: '0755'
 
-- name: Юнит маршрутизации {{ routing.iface }}
+- name: Юнит маршрутизации {{ wireguard_routing.iface }}
   ansible.builtin.template:
     src: anysda-vpn-routing.service.j2
-    dest: /etc/systemd/system/{{ routing.unit }}.service
+    dest: /etc/systemd/system/{{ wireguard_routing.unit }}.service
     mode: '0644'
 
 - name: Скрипт прежнего выпуска убран
   ansible.builtin.file:
-    path: /usr/local/sbin/{{ routing.unit }}.sh
+    path: /usr/local/sbin/{{ wireguard_routing.unit }}.sh
     state: absent
 
 - name: Ресурсы юнита маршрутизации
   ansible.builtin.include_role:
     name: resources
   vars:
-    resources_units: ["{{ routing.unit }}"]
+    resources_units: ["{{ wireguard_routing.unit }}"]
 
-- name: Маршрутизация {{ routing.iface }} включена
+- name: Включена маршрутизация {{ wireguard_routing.iface }}
   ansible.builtin.systemd_service:
-    name: "{{ routing.unit }}"
+    name: "{{ wireguard_routing.unit }}"
     enabled: true
     daemon_reload: true
 
 # Рестарт - это down + up: только при смене юнита или скрипта.
-- name: Маршрутизация {{ routing.iface }} запущена с текущими входами
+- name: С текущими входами запущена маршрутизация {{ wireguard_routing.iface }}
   ansible.builtin.command:
-    argv: [/opt/vpn2/venv/bin/vpn2, host, restart-if-changed, "{{ routing.unit }}",
-           "/etc/systemd/system/{{ routing.unit }}.service", /usr/local/sbin/anysda-vpn-routing.sh]
-  register: routing_restart
-  changed_when: "'vpn2: changed' in routing_restart.stdout"
+    argv: [/opt/vpn2/venv/bin/vpn2, host, restart-if-changed, "{{ wireguard_routing.unit }}",
+           "/etc/systemd/system/{{ wireguard_routing.unit }}.service", /usr/local/sbin/anysda-vpn-routing.sh]
+  register: wireguard_routing_restart
+  changed_when: "'vpn2: changed' in wireguard_routing_restart.stdout"
 
-- name: Цепочка TPROXY {{ routing.iface }} на месте
+- name: На месте цепочка TPROXY {{ wireguard_routing.iface }}
   ansible.builtin.command:
-    argv: [iptables, -t, mangle, -C, PREROUTING, -i, "{{ routing.iface }}", -j, "{{ routing.chain }}"]
-  register: routing_chain
+    argv: [iptables, -t, mangle, -C, PREROUTING, -i, "{{ wireguard_routing.iface }}", -j, "{{ wireguard_routing.chain }}"]
+  register: wireguard_routing_chain
   changed_when: false
   failed_when: false
 
-- name: Пропавшая цепочка TPROXY {{ routing.iface }} восстановлена
+- name: Восстановлена пропавшая цепочка TPROXY {{ wireguard_routing.iface }}
   ansible.builtin.systemd_service:
-    name: "{{ routing.unit }}"
+    name: "{{ wireguard_routing.unit }}"
     state: restarted
-  when: routing_chain.rc != 0
+  when: wireguard_routing_chain.rc != 0

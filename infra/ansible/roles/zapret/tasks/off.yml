@@ -21,9 +21,4 @@
     path: "{{ item }}"
     state: absent
   loop: "{{ zapret_off.files }}"
-  register: zapret_files
-
-- name: Systemd перечитал юниты
-  ansible.builtin.systemd_service:
-    daemon_reload: true
-  when: zapret_files is changed
+  notify: Systemd перечитал юниты

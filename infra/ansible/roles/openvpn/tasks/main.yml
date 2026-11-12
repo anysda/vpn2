@@ -73,5 +73,5 @@
     name: wireguard
     tasks_from: routing
   vars:
-    routing: {unit: anysda-ovpn-routing, iface: tun0, chain: ANYSDA_OVPN_TPROXY, mss: 1340,
-              after: openvpn-server@server.service}
+    wireguard_routing: {unit: anysda-ovpn-routing, iface: tun0, chain: ANYSDA_OVPN_TPROXY, mss: 1340,
+                        after: openvpn-server@server.service}

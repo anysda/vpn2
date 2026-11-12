@@ -62,5 +62,5 @@
 - name: Маршрутизация wg0
   ansible.builtin.include_tasks: routing.yml
   vars:
-    routing: {unit: anysda-wg-routing, iface: wg0, chain: ANYSDA_WG_TPROXY, mss: "{{ wireguard_mss }}",
-              after: wg-quick@wg0.service, routes: "{{ wireguard_subnets }}", v6_reject: true}
+    wireguard_routing: {unit: anysda-wg-routing, iface: wg0, chain: ANYSDA_WG_TPROXY, mss: "{{ wireguard_mss }}",
+                        after: wg-quick@wg0.service, routes: "{{ wireguard_subnets }}", v6_reject: true}

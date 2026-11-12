@@ -10,13 +10,14 @@
 
 - name: Зависимости видеопробы
   block:
-    - name: yt-dlp видеопробы
+    - name: Пакет yt-dlp видеопробы
       when: zapret_have.results[0].stdout | default('') != zapret_ytdlp_version
       ansible.builtin.shell:
         cmd: >-
           /usr/bin/python3 -m venv {{ zapret_probe_venv }} &&
           {{ zapret_probe_venv }}/bin/pip install --disable-pip-version-check 'yt-dlp[default]=={{ zapret_ytdlp_version }}'
       register: zapret_pip
+      changed_when: true
       until: zapret_pip is succeeded
       retries: 2
       delay: 10
@@ -30,6 +31,7 @@
           tar -xJf {{ zapret_tmp }}/node.tar.xz -C {{ zapret_probe_venv }} --strip-components=1
           {{ zapret_node_tree }}/bin/node {{ zapret_node_tree }}/lib/node_modules/npm
       register: zapret_node
+      changed_when: true
       until: zapret_node is succeeded
       retries: 2
       delay: 10

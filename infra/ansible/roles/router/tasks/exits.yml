@@ -67,9 +67,12 @@
   loop: "{{ router_reality_files.results | selectattr('content', 'defined') | list }}"
 
 - name: Секрет clash-api создаётся один раз
-  ansible.builtin.shell:
-    cmd: umask 077 && tr -dc A-Za-z0-9 < /dev/urandom | head -c 32 > /etc/anysda/clash-secret.txt
-    creates: /etc/anysda/clash-secret.txt
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=32) }}"
+    dest: /etc/anysda/clash-secret.txt
+    mode: '0600'
+    force: false
+  no_log: true
 
 - name: Секрет clash-api
   ansible.builtin.slurp:

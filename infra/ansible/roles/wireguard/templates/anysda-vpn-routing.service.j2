@@ -1,15 +1,15 @@
 [Unit]
-Description=anysda-vpn2 — {{ routing.iface }} forwarded traffic → sing-box TPROXY
-After=network-online.target sing-box.service {{ routing.after }}
+Description=anysda-vpn2 — {{ wireguard_routing.iface }} forwarded traffic → sing-box TPROXY
+After=network-online.target sing-box.service {{ wireguard_routing.after }}
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-Environment=IFACE={{ routing.iface }} CHAIN={{ routing.chain }} MSS={{ routing.mss }}
-Environment="ROUTES={{ routing.routes | default([]) | join(' ') }}"
-Environment=V6_REJECT={{ '1' if routing.v6_reject | default(false) else '' }}
-Environment=XFRM_DEV={{ routing.xfrm_dev | default('') }} SUBNET6={{ routing.subnet6 | default('') }}
+Environment=IFACE={{ wireguard_routing.iface }} CHAIN={{ wireguard_routing.chain }} MSS={{ wireguard_routing.mss }}
+Environment="ROUTES={{ wireguard_routing.routes | default([]) | join(' ') }}"
+Environment=V6_REJECT={{ '1' if wireguard_routing.v6_reject | default(false) else '' }}
+Environment=XFRM_DEV={{ wireguard_routing.xfrm_dev | default('') }} SUBNET6={{ wireguard_routing.subnet6 | default('') }}
 ExecStart=/usr/local/sbin/anysda-vpn-routing.sh up
 ExecStop=/usr/local/sbin/anysda-vpn-routing.sh down
 

@@ -1,5 +1,5 @@
 import type { Browser, Locator, Page, Response } from '@playwright/test'
-import { BitMatrix, QRCodeReader } from '@zxing/library'
+import zxing from '@zxing/library'
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,6 +7,9 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { ADMIN_PASSWORD, downloadText, expect, hydrated, loginApi, test, toast, uniq } from './support/fixtures'
 import { addDevice, configDialog, deviceCard, openClient } from './support/clients'
+
+// Пакет CommonJS без exports: в ESM Node именованные импорты не видны.
+const { BitMatrix, QRCodeReader } = zxing
 
 // VPN2-598: камера телефона должна брать каждый QR с экрана с первого наведения.
 // Предел: не меньше 4 CSS px на модуль (тихая зона входит в счёт модулей),
@@ -39,7 +42,7 @@ type Screen = typeof SCREENS[number]
 const isPhone = (s: Screen) => s.viewport.width < 500
 
 class ModuleReader extends QRCodeReader {
-  decodeModules(matrix: BitMatrix) {
+  decodeModules(matrix: InstanceType<typeof BitMatrix>) {
     return this.getDecoder().decodeBitMatrix(matrix)
   }
 }

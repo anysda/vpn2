@@ -1,9 +1,12 @@
-import { BitMatrix, QRCodeReader } from '@zxing/library'
+import zxing from '@zxing/library'
 import { ADMIN_PASSWORD, expect, hydrated, loginApi, test, toast, uniq } from './support/fixtures'
 import { configDialog, deviceCard, openClient } from './support/clients'
 
+// Пакет CommonJS без exports: в ESM Node именованные импорты не видны.
+const { BitMatrix, QRCodeReader } = zxing
+
 class ModuleReader extends QRCodeReader {
-  decodeModules(matrix: BitMatrix) {
+  decodeModules(matrix: InstanceType<typeof BitMatrix>) {
     return this.getDecoder().decodeBitMatrix(matrix)
   }
 }

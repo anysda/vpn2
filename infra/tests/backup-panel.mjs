@@ -1,5 +1,5 @@
 // Реальные loadServerKeys/syncWireguardConfig, без Nuxt и клиентской БД.
-// Запускается только из backup-restore.py в одноразовом контейнере с Node 24.
+// Запускается только из backup-keys.py в одноразовом контейнере с Node 26.
 import assert from 'node:assert/strict'
 import { readFile, mkdtemp, rm } from 'node:fs/promises'
 import { registerHooks } from 'node:module'
@@ -13,14 +13,11 @@ registerHooks({
   resolve(specifier, context, nextResolve) {
     const stubs = {
       'drizzle-orm': 'export const and=()=>{}, eq=()=>{}, isNull=()=>{};',
-      h3: 'export const createError=(e)=>Object.assign(new Error(e.message), e);',
-      '../database/client': `export const IP_CLAIM_ATTEMPTS=1, isUniqueViolation=()=>false;
+      pino: 'export const pino=()=>({info(){}, warn(){}, error(){}, debug(){}});',
+      '../database/client': `export const claimUnique=async (_what, attempt)=>attempt();
         export const useDb=()=>({select:()=>({from:()=>({innerJoin:async()=>[]})})});`,
       '../database/schema': 'export const clients={}, devices={}, collectorState={};',
-      './control': `import { control } from ${JSON.stringify(transport)}; export { control };
-        export const controlApply=(method,params)=>control(method,{...params,version:1});`,
       './allowed-ips': 'export const wgAllowedIps=()=>[];',
-      './client-status': 'export const isClientActive=()=>true, expiryForControl=(at)=>at ? at.toISOString() : null;',
     }
     if (specifier in stubs) {
       return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}`, shortCircuit: true }
@@ -32,6 +29,14 @@ registerHooks({
 })
 globalThis.useRuntimeConfig = () => ({ wgEnabled: true, wgServerIp: '192.0.2.1' })
 globalThis.useLogger = () => ({ warn() {} })
+// Автоимпорты Nitro: настоящая очередь и транспорт службы; версию изменения ведёт БД панели, её здесь нет.
+globalThis.createError = (e) => Object.assign(new Error(e.message), e)
+globalThis.isClientActive = () => true
+globalThis.expiryForControl = (at) => at ? at.toISOString() : null
+globalThis.serialQueue = (await import(pathToFileURL(`${process.argv[2]}/app/server/utils/api.ts`).href)).serialQueue
+const { control } = await import(transport)
+globalThis.control = control
+globalThis.controlApply = (method, params) => control(method, { ...params, version: 1 })
 const { loadServerKeys, syncWireguardConfig } = await import(
   pathToFileURL(`${process.argv[2]}/app/server/utils/wireguard.ts`).href
 )

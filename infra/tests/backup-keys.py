@@ -107,12 +107,23 @@ class BackupRestore(unittest.TestCase):
             '> /test-panel.log 2>&1 && touch /test-panel-started\nfi\n', 0o755)
         put('/test-bin/ip', '#!/bin/sh\nexit 1\n', 0o755)
         put('/test-bin/curl', '#!/bin/sh\necho \'{"version":"test"}\'\n', 0o755)
-        for stage in ('22-adguard', '30-frontend', '35-telegram'):
-            put(f'/opt/anysda-vpn2/infra/scripts/{stage}.sh', '#!/bin/sh\nexit 0\n', 0o755)
-        put('/opt/anysda-vpn2/infra/envs/all.env', 'HOST_TAG=ru\n')
-        put('/opt/anysda-vpn2/infra/envs/ru.env', 'ENTRY_HOST=vpn.example.test\n')
-        put('/opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl',
-            (ROOT / 'infra/configs/anysda-config.yaml.tpl').read_text())
+        # Клон установки: окружение стадий restore собирает инвентарём из его config.yaml,
+        # шаги стадий - установленный vpn2, он изолирован как внешняя служба.
+        # Пакет клона без vpn2.verify: проверка узла здесь не мерится, restore её пропускает.
+        clone = Path('/opt/anysda-vpn2')
+        shutil.rmtree(clone / 'infra', ignore_errors=True)
+        for name in ('infra/ansible', 'infra/configs', 'app/shared'):
+            (clone / name).parent.mkdir(parents=True, exist_ok=True)
+            (clone / name).unlink(missing_ok=True)
+            (clone / name).symlink_to(ROOT / name)
+        package = clone / 'infra/vpn2/src/vpn2'
+        package.mkdir(parents=True)
+        for item in (ROOT / 'infra/vpn2/src/vpn2').iterdir():
+            if item.name != 'verify':
+                (package / item.name).symlink_to(item)
+        put(clone / 'config.yaml', (ROOT / 'config.example.yaml').read_text()
+            .replace('  passphrase: ""', '  passphrase: disposable-test-only'))
+        put('/opt/vpn2/venv/bin/vpn2', '#!/bin/sh\nexit 0\n', 0o755)
 
     def roundtrip(self, backup_root, bare=False, legacy=False):
         original = identity()

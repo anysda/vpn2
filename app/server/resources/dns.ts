@@ -44,7 +44,7 @@ const Rewrite = z.object({ domain: z.string().min(1).max(253), answer: z.string(
 const HOUR = 3_600_000
 const LOG_HOURS = [24, 168, 2160]
 const STATS_HOURS = [24, 168, 720]
-// Одно поле за раз — как в макете: переключатель, сегмент или «Изменить».
+// Одно поле за раз, как в макете: переключатель, сегмент или «Изменить».
 const Setting = z.union([
   z.object({ upstreams: z.string().max(10_000) }),
   z.object({ mode: z.enum(['load_balance', 'parallel', 'fastest_addr']) }),
@@ -63,9 +63,73 @@ const Setting = z.union([
 ])
 const badSetting = (message: string) => createError({ statusCode: 422, statusMessage: 'bad_setting', message })
 const userRules = (st: { user_rules?: string[] | null }) => (st.user_rules ?? []).join('\n')
+const post = (path: string, body?: Record<string, unknown>) => agh(path, { method: 'POST', body })
+const put = (path: string, body: Record<string, unknown>) => agh(path, { method: 'PUT', body })
+const ok = () => ({ ok: true })
+
+type State = Awaited<ReturnType<typeof settingsState>>
+const dnsConfig = (body: Record<string, unknown>) => post('dns_config', body)
+const toggle = (path: string) => (on: boolean) => post(`${path}/${on ? 'enable' : 'disable'}`)
+const upstreamList = (text: string) => {
+  const list = upstreamLines(text)
+  if (!list.length) throw badSetting('Нужен хотя бы один сервер выше')
+  return list
+}
+
+/** Как применить каждую настройку DNS в AdGuard; значение уже проверено схемой `Setting`. */
+const APPLY: Record<string, (value: never, cur: State) => Promise<unknown>> = {
+  upstreams: async (text: string) => {
+    try {
+      await dnsConfig({ upstream_dns: upstreamList(text) })
+    }
+    catch (e) {
+      const x = e as { statusMessage?: string, message?: string }
+      if (x.statusMessage !== 'agh_rejected') throw e
+      throw badSetting(upstreamError(x.message ?? ''))
+    }
+  },
+  mode: (mode: string) => dnsConfig({ upstream_mode: mode }),
+  bootstrap: (text: string) => {
+    const r = parseBootstrap(text)
+    if ('error' in r) throw badSetting(r.error)
+    return dnsConfig({ bootstrap_dns: r.list })
+  },
+  safebrowsing: toggle('safebrowsing'),
+  parental: toggle('parental'),
+  safesearch: (on: boolean, cur) => put('safesearch/settings', { ...cur.ss, enabled: on }),
+  dnssec: (on: boolean) => dnsConfig({ dnssec_enabled: on }),
+  noAaaa: (on: boolean) => dnsConfig({ disable_ipv6: on }),
+  optimistic: (on: boolean) => dnsConfig({ cache_optimistic: on }),
+  ratelimit: (text: string) => {
+    const n = parseRatelimit(text)
+    if (n === null) throw badSetting('Лимит запросов: число в секунду или «без лимита»')
+    return dnsConfig({ ratelimit: n })
+  },
+  block: async (text: string, cur) => {
+    const r = parseBlock(text, cur.info)
+    if ('error' in r) throw badSetting(r.error)
+    if (r.set) await dnsConfig(r.set as Record<string, unknown>)
+  },
+  logHours: (hours: number, cur) => {
+    if (!LOG_HOURS.includes(hours)) throw badSetting('Журнал хранится 1, 7 или 90 дней')
+    return put('querylog/config/update', { ...cur.log, interval: hours * HOUR })
+  },
+  statsHours: (hours: number, cur) => {
+    if (!STATS_HOURS.includes(hours)) throw badSetting('Статистика хранится 24 часа, 7 или 30 дней')
+    return put('stats/config/update', { ...cur.stats, interval: hours * HOUR })
+  },
+  anonymize: (on: boolean, cur) => put('querylog/config/update', { ...cur.log, anonymize_client_ip: on }),
+}
+
+/** Что панель ждёт увидеть в настройках после записи; undefined - не сверяется. */
+const EXPECT: Record<string, (value: never) => unknown> = {
+  upstreams: (text: string) => upstreamLines(text).join('\n'),
+  bootstrap: (text: string) => (parseBootstrap(text) as { list: string[] }).list.join(', '),
+  ratelimit: () => undefined,
+  block: () => undefined,
+}
 
 export default {
-  /** Сводка вкладки DNS из статистики AdGuard и последних записей журнала. */
   'GET /dns/summary': admin(async () => {
     const [stats, info, log, names] = await Promise.all([
       agh<AghStats>('stats'),
@@ -109,9 +173,8 @@ export default {
   }),
 
   /**
-   * Журнал запросов. Фильтр и поиск точные: поиск идёт и по именам клиентов
-   * панели, которых AdGuard не знает, поэтому страницы AdGuard дочитываются
-   * здесь — до WANT строк или SCAN страниц; `older` продолжает с места остановки.
+   * Журнал запросов. Поиск идёт и по именам клиентов панели, которых AdGuard не знает:
+   * страницы дочитываются здесь до WANT строк или SCAN страниц, `older` продолжает с места остановки.
    */
   'GET /dns/log': admin(async (event) => {
     const p = LogQuery.safeParse(getQuery(event))
@@ -124,18 +187,10 @@ export default {
     let older = p.data.older
     for (let i = 0; i < SCAN && rows.length < WANT; i++) {
       const page = await agh<{ data: AghLogEntry[] | null, oldest: string }>('querylog', {
-        query: {
-          limit: PAGE,
-          older_than: older,
-          response_status: f === 'blk' || f === 'rw' ? 'filtered' : 'all',
-          search: q && !byName ? q : undefined,
-        },
+        query: { limit: PAGE, older_than: older, response_status: f === 'blk' || f === 'rw' ? 'filtered' : 'all', search: q && !byName ? q : undefined },
       })
       const data = page.data ?? []
-      for (const e of data) {
-        const r = logRow(e, names, lists, services)
-        if (logMatch(r, f, q)) rows.push(r)
-      }
+      rows.push(...data.map(e => logRow(e, names, lists, services)).filter(r => logMatch(r, f, q)))
       older = data.length < PAGE || !page.oldest ? undefined : page.oldest
       if (!older) break
     }
@@ -143,63 +198,54 @@ export default {
   }),
 
   /**
-   * «Заблокировать» / «Разблокировать» из строки журнала своим правилом.
-   * Сначала снимаем противоположное точное правило; новое добавляем, только если
-   * без него AdGuard всё ещё отвечает по-старому. Не помогло и правило (домен
-   * держит блокировка сервиса) — свои правила возвращаем как были.
-   * Правила AdGuard применяет не сразу, поэтому ответ check_host ждём.
+   * «Заблокировать» / «Разблокировать» из строки журнала своим правилом. Сначала снимается
+   * противоположное точное правило; новое добавляется, только если без него AdGuard отвечает
+   * по-прежнему. Не помогло и правило (домен держит блокировка сервиса) - свои правила
+   * возвращаются как были. Правила AdGuard применяет не сразу, ответ check_host ждём.
    */
   'POST /dns/log-rule': admin(async (event) => {
     const { domain, block, client } = await readBodyAs(event, LogRule)
     const d = domain.replace(/\.$/, '')
     const before = (await filteringStatus()).user_rules ?? []
-    const set = (rules: string[]) => agh('filtering/set_rules', { method: 'POST', body: { rules } })
-    const ok = (r: { reason: string }) => r.reason.startsWith('Filtered') === block
+    const set = (rules: string[]) => post('filtering/set_rules', { rules })
+    const done = (r: { reason: string }) => r.reason.startsWith('Filtered') === block
     const t = toggleRules(before, d, block)
     const gone = before.filter(r => !t.rules.includes(r))
     if (t.removed) await set(t.rules)
-    // Снятое правило ещё в ответе — движок не пересобран, ждём его.
     let r = await checkUntil(d, client, x => !citesGone(x, gone))
-    if (!ok(r)) {
+    if (!done(r)) {
       await set([...t.rules, t.rule])
-      r = await checkUntil(d, client, x => ok(x) || (!block && x.reason === 'FilteredBlockedService'))
+      r = await checkUntil(d, client, x => done(x) || (!block && x.reason === 'FilteredBlockedService'))
     }
-    if (!ok(r)) {
-      await set(before)
-      const why = r.reason === 'FilteredBlockedService'
-        ? `его блокирует сервис «${(await serviceNames()).get(r.service_name ?? '') ?? r.service_name}»`
-        : `AdGuard отвечает ${r.reason}`
-      throw createError({ statusCode: 409, statusMessage: 'rule_not_enough', message: `Правило для ${d} не помогло: ${why}` })
-    }
-    return { ok: true }
+    if (done(r)) return ok()
+    await set(before)
+    const why = r.reason === 'FilteredBlockedService'
+      ? `его блокирует сервис «${(await serviceNames()).get(r.service_name ?? '') ?? r.service_name}»`
+      : `AdGuard отвечает ${r.reason}`
+    throw createError({ statusCode: 409, statusMessage: 'rule_not_enough', message: `Правило для ${d} не помогло: ${why}` })
   }),
 
   'GET /dns/rules': admin(async () => ({ text: userRules(await filteringStatus()) })),
-  /**
-   * «Применить» свои правила. Строку с ошибкой AdGuard принял бы и молча
-   * пропустил — такой текст не отправляем, человеку номер строки и причина.
-   */
+  /** Строку с ошибкой AdGuard молча пропустил бы: такой текст не отправляем, человеку номер строки и причина. */
   'PUT /dns/rules': admin(async (event) => {
     const lines = (await readBodyAs(event, z.object({ text: z.string().max(1_000_000) }))).text.replace(/\r/g, '').split('\n')
     while (lines.length && !lines.at(-1)!.trim()) lines.pop()
     const errors = checkRules(lines)
     if (errors.length) {
-      const e = errors[0]!
-      const message = `Строка ${e.line}: ${e.why}${errors.length > 1 ? ` (и ещё ${errors.length - 1})` : ''}`
+      const message = `Строка ${errors[0]!.line}: ${errors[0]!.why}${errors.length > 1 ? ` (и ещё ${errors.length - 1})` : ''}`
       throw createError({ statusCode: 422, statusMessage: 'bad_rules', message, data: { message, errors } })
     }
-    await agh('filtering/set_rules', { method: 'POST', body: { rules: lines } })
+    await post('filtering/set_rules', { rules: lines })
     return { text: userRules(await confirmFiltering(st => userRules(st) === lines.join('\n'), 'свои правила не сохранились')) }
   }),
 
   'GET /dns/filters': admin(async () => listsView(await filteringStatus())),
-  /** Добавить список: AdGuard сам скачивает его и отвечает отказом, если не смог. */
+  /** AdGuard сам скачивает список и отказывает, если не смог. */
   'POST /dns/filters': admin(async (event) => {
     const { name, url, white } = await readBodyAs(event, NewList)
     await agh('filtering/add_url', { method: 'POST', body: { name, url, whitelist: white }, timeout: 60_000 })
     return listsView(await confirmFiltering(st => !!findList(st, url, white), `список «${name}» не появился`))
   }),
-  /** Включить или выключить список. */
   'PATCH /dns/filters': admin(async (event) => {
     const { url, white, enabled } = await readBodyAs(event, List.extend({ enabled: z.boolean() }))
     const f = findList(await filteringStatus(), url, white)
@@ -209,7 +255,7 @@ export default {
   }),
   'DELETE /dns/filters': admin(async (event) => {
     const { url, white } = await readBodyAs(event, List)
-    await agh('filtering/remove_url', { method: 'POST', body: { url, whitelist: white } })
+    await post('filtering/remove_url', { url, whitelist: white })
     return listsView(await confirmFiltering(st => !findList(st, url, white), 'список остался'))
   }),
   /** «Проверить обновления»: AdGuard перекачивает включённые списки, чёрные и белые. */
@@ -221,9 +267,8 @@ export default {
     return { updated, ...listsView(await filteringStatus()) }
   }),
 
-  /** Перезаписи DNS из AdGuard. */
   'GET /dns/rewrites': admin(() => rewriteList()),
-  /** Добавить перезапись. Дубль AdGuard принимает молча — отказываем сами. */
+  /** Дубль AdGuard принимает молча - отказываем сами. */
   'POST /dns/rewrites': admin(async (event) => {
     const b = await readBodyAs(event, z.object({ domain: z.string().max(253), answer: z.string().max(253) }))
     const rw = { domain: b.domain.trim().toLowerCase().replace(/\.$/, ''), answer: b.answer.trim() }
@@ -232,36 +277,33 @@ export default {
     if ((await rewriteList()).some(x => sameRewrite(x, rw))) {
       throw createError({ statusCode: 409, statusMessage: 'rewrite_exists', message: `Перезапись «${rw.domain}» → ${rw.answer} уже есть` })
     }
-    await agh('rewrite/add', { method: 'POST', body: { ...rw, enabled: true } })
+    await post('rewrite/add', { ...rw, enabled: true })
     return confirmRewrites(l => l.some(x => sameRewrite(x, rw)), `перезапись «${rw.domain}» не появилась`)
   }),
-  /** Включить или выключить перезапись. */
   'PATCH /dns/rewrites': admin(async (event) => {
     const { domain, answer, enabled } = await readBodyAs(event, Rewrite.extend({ enabled: z.boolean() }))
     const cur = await findRewrite(domain, answer)
-    await agh('rewrite/update', { method: 'PUT', body: { target: cur, update: { domain, answer, enabled } } })
+    await put('rewrite/update', { target: cur, update: { domain, answer, enabled } })
     return confirmRewrites(l => l.some(x => sameRewrite(x, cur) && x.enabled === enabled), `перезапись «${domain}» ${enabled ? 'не включилась' : 'не выключилась'}`)
   }),
   'DELETE /dns/rewrites': admin(async (event) => {
     const { domain, answer } = await readBodyAs(event, Rewrite)
     const cur = await findRewrite(domain, answer)
-    await agh('rewrite/delete', { method: 'POST', body: { domain: cur.domain, answer: cur.answer } })
+    await post('rewrite/delete', { domain: cur.domain, answer: cur.answer })
     return confirmRewrites(l => !l.some(x => sameRewrite(x, cur)), `перезапись «${domain}» не удалилась`)
   }),
 
-  /** Каталог сервисов AdGuard и заблокированные для всех клиентов. */
+  /** Каталог сервисов AdGuard и заблокированные для всех клиентов; расписание AdGuard не трогаем. */
   'GET /dns/services': admin(async () => {
     const [all, blocked] = await Promise.all([serviceCatalog(), blockedServices()])
     return { all: all.map(s => ({ id: s.id, name: s.name })), blocked: blocked.ids ?? [] }
   }),
-  /** Заблокированные для всех сервисы — список целиком; расписание AdGuard не трогаем. */
   'PUT /dns/services': admin(async (event) => {
     const ids = [...new Set((await readBodyAs(event, z.object({ ids: z.array(z.string().max(64)).max(1000) }))).ids)]
     const known = new Set((await serviceCatalog()).map(s => s.id))
     const unknown = ids.find(id => !known.has(id))
     if (unknown) throw createError({ statusCode: 422, statusMessage: 'unknown_service', message: `Сервиса «${unknown}» нет в AdGuard` })
-    const { schedule } = await blockedServices()
-    await agh('blocked_services/update', { method: 'PUT', body: { ids, schedule } })
+    await put('blocked_services/update', { ids, schedule: (await blockedServices()).schedule })
     const now = (await blockedServices()).ids ?? []
     if (now.length !== ids.length || ids.some(id => !now.includes(id))) {
       throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: 'AdGuard не применил изменение: блокировка сервисов' })
@@ -269,90 +311,37 @@ export default {
     return { blocked: now }
   }),
 
-  /** Настройки DNS из AdGuard: серверы выше, защита, кэш, журнал. */
   'GET /dns/settings': admin(async () => viewOf(await settingsState())),
-  /** Изменить одну настройку DNS и вернуть, что AdGuard показывает после. */
+  /** Одна настройка DNS; ответ - что AdGuard показывает после. */
   'PATCH /dns/settings': admin(async (event) => {
-    const b = await readBodyAs(event, Setting) as Partial<SettingsView> & { logHours?: number, statsHours?: number }
-    const cur = await settingsState()
-    const dns = (body: Record<string, unknown>) => agh('dns_config', { method: 'POST', body })
-    const toggle = (path: string, on: boolean) => agh(`${path}/${on ? 'enable' : 'disable'}`, { method: 'POST' })
-    if (b.upstreams !== undefined) {
-      const list = upstreamLines(b.upstreams)
-      if (!list.length) throw badSetting('Нужен хотя бы один сервер выше')
-      try {
-        await dns({ upstream_dns: list })
-      }
-      catch (e) {
-        const x = e as { statusMessage?: string, message?: string }
-        if (x.statusMessage !== 'agh_rejected') throw e
-        throw badSetting(upstreamError(x.message ?? ''))
-      }
-    }
-    else if (b.mode) await dns({ upstream_mode: b.mode })
-    else if (b.bootstrap !== undefined) {
-      const r = parseBootstrap(b.bootstrap)
-      if ('error' in r) throw badSetting(r.error)
-      await dns({ bootstrap_dns: r.list })
-    }
-    else if (b.safebrowsing !== undefined) await toggle('safebrowsing', b.safebrowsing)
-    else if (b.parental !== undefined) await toggle('parental', b.parental)
-    else if (b.safesearch !== undefined) await agh('safesearch/settings', { method: 'PUT', body: { ...cur.ss, enabled: b.safesearch } })
-    else if (b.dnssec !== undefined) await dns({ dnssec_enabled: b.dnssec })
-    else if (b.noAaaa !== undefined) await dns({ disable_ipv6: b.noAaaa })
-    else if (b.optimistic !== undefined) await dns({ cache_optimistic: b.optimistic })
-    else if (b.ratelimit !== undefined) {
-      const n = parseRatelimit(b.ratelimit)
-      if (n === null) throw badSetting('Лимит запросов: число в секунду или «без лимита»')
-      await dns({ ratelimit: n })
-    }
-    else if (b.block !== undefined) {
-      const r = parseBlock(b.block, cur.info)
-      if ('error' in r) throw badSetting(r.error)
-      if (r.set) await dns(r.set as Record<string, unknown>)
-    }
-    else if (b.logHours !== undefined) {
-      if (!LOG_HOURS.includes(b.logHours)) throw badSetting('Журнал хранится 1, 7 или 90 дней')
-      await agh('querylog/config/update', { method: 'PUT', body: { ...cur.log, interval: b.logHours * HOUR } })
-    }
-    else if (b.statsHours !== undefined) {
-      if (!STATS_HOURS.includes(b.statsHours)) throw badSetting('Статистика хранится 24 часа, 7 или 30 дней')
-      await agh('stats/config/update', { method: 'PUT', body: { ...cur.stats, interval: b.statsHours * HOUR } })
-    }
-    else if (b.anonymize !== undefined) await agh('querylog/config/update', { method: 'PUT', body: { ...cur.log, anonymize_client_ip: b.anonymize } })
+    const [key, value] = Object.entries(await readBodyAs(event, Setting))[0] as [string, never]
+    await APPLY[key]!(value, await settingsState())
     const view = viewOf(await settingsState())
-    const expect: Record<string, unknown> = { ...b }
-    if (b.upstreams !== undefined) expect.upstreams = upstreamLines(b.upstreams).join('\n')
-    if (b.bootstrap !== undefined) expect.bootstrap = (parseBootstrap(b.bootstrap) as { list: string[] }).list.join(', ')
-    if (b.ratelimit !== undefined) expect.ratelimit = undefined
-    if (b.block !== undefined) expect.block = undefined
-    const miss = Object.entries(expect).find(([k, v]) => v !== undefined && view[k as keyof SettingsView] !== v)
-    if (miss) throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: 'AdGuard не применил изменение настройки' })
+    const expected = EXPECT[key] ? EXPECT[key](value) : value
+    if (expected !== undefined && view[key as keyof SettingsView] !== expected) {
+      throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: 'AdGuard не применил изменение настройки' })
+    }
     return view
   }),
-  /** Очистить кэш DNS. */
   'POST /dns/settings/cache-clear': admin(async () => {
-    await agh('cache_clear', { method: 'POST' })
-    return { ok: true }
+    await post('cache_clear')
+    return ok()
   }),
-  /** Сбросить журнал запросов или статистику. */
   'POST /dns/settings/reset': admin(async (event) => {
     const { what } = await readBodyAs(event, z.object({ what: z.enum(['log', 'stats']) }))
-    await agh(what === 'log' ? 'querylog_clear' : 'stats_reset', { method: 'POST' })
-    return { ok: true }
+    await post(what === 'log' ? 'querylog_clear' : 'stats_reset')
+    return ok()
   }),
-  /** Проверить серверы выше: AdGuard спрашивает каждый и отвечает OK или текст ошибки. */
+  /** AdGuard спрашивает каждый сервер выше и отвечает OK или текст ошибки. */
   'POST /dns/settings/upstreams-check': admin(async (event) => {
     const b = await readBodyAs(event, z.object({ upstreams: z.string().max(10_000), bootstrap: z.string().max(2000) }))
-    const list = upstreamLines(b.upstreams)
-    if (!list.length) throw badSetting('Нужен хотя бы один сервер выше')
+    const list = upstreamList(b.upstreams)
     const boot = parseBootstrap(b.bootstrap)
     const res = await agh<Record<string, string>>('test_upstream_dns', {
       method: 'POST',
       body: { upstream_dns: list, bootstrap_dns: 'list' in boot ? boot.list : [], fallback_dns: [], private_upstream: [] },
       timeout: 20_000,
     })
-    const failed = Object.entries(res).filter(([, v]) => v !== 'OK').map(([k]) => k)
-    return { total: Object.keys(res).length, failed }
+    return { total: Object.keys(res).length, failed: Object.entries(res).filter(([, v]) => v !== 'OK').map(([k]) => k) }
   }),
 }

@@ -11,7 +11,7 @@ import subprocess
 # Inputs read by run-local/panel-stand and the live speedtest regression.
 DEPENDENCIES = {
     '.github/workflows/checks.yml',
-    'infra/lib/e2e_paths.py',
+    'infra/tests/e2e_paths.py',
     'infra/vpn2/src/vpn2/resources.py',
     'infra/vpn2/src/vpn2/pki.py',
     'infra/vpn2/src/vpn2/containers/compose.py',

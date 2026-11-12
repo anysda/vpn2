@@ -14,8 +14,6 @@ HELP = '''anysda-vpn — интерактивный конфигуратор
 
 Команды:
   ./setup.sh                    Запустить мастер настройки
-  ./setup.sh --front-test       Запустить тестовую панель
-  ./setup.sh --front-test-down  Остановить тестовую панель
   ./setup.sh -h | --help        Показать справку
 '''
 
@@ -68,8 +66,7 @@ class SetupHelpTests(unittest.TestCase):
 
     def test_unknown_arguments_show_error_and_help(self):
         for args in (['--unknown'], ['-x'], ['typo'], [''],
-                     ['--help', '--unknown'], ['--front-test', '--unknown'],
-                     ['--front-test-down', '--unknown']):
+                     ['--help', '--unknown'], ['--front-test'], ['--front-test-down']):
             with self.subTest(args=args):
                 code, stdout, stderr = self.run_setup(args, subprocess.PIPE)
                 self.assertNotEqual(code, 0)
@@ -86,15 +83,3 @@ class SetupHelpTests(unittest.TestCase):
                 stdin.seek(0)
                 self.run_setup([flag], stdin)
                 self.assertEqual(stdin.tell(), 0)
-
-    def test_front_test_commands_still_dispatch(self):
-        script = self.root / 'app/e2e/front-test.sh'
-        script.parent.mkdir(parents=True)
-        script.write_text('printf "front-test %s\\n" "$*"\nexit 23\n')
-        for flag, action in (('--front-test', 'up'), ('--front-test-down', 'down')):
-            with self.subTest(flag=flag):
-                code, stdout, stderr = self.run_setup([flag], subprocess.PIPE)
-                self.assertEqual(code, 23)
-                self.assertEqual(stdout, f'front-test {action}\n')
-                self.assertEqual(stderr, '')
-                self.assertFalse((self.root / 'config.yaml').exists())

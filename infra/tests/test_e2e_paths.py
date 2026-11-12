@@ -9,7 +9,7 @@ import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-SCRIPT = ROOT / 'infra/lib/e2e_paths.py'
+SCRIPT = ROOT / 'infra/tests/e2e_paths.py'
 
 
 class E2ePathsTests(unittest.TestCase):
@@ -35,14 +35,13 @@ class E2ePathsTests(unittest.TestCase):
                 (['infra/vpn2/src/vpn2/pki.py'], 'true'),
                 (['infra/vpn2/src/vpn2/containers/panel.py'], 'true'),
                 (['infra/tests/speedtest.py'], 'true'),
-                (['infra/lib/config2env.py'], 'true'),
                 (['infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py'], 'true'),
                 (['infra/tests/test_speedtest.py'], 'true'),
                 (['infra/tests/test_deploy.py'], 'true'),
                 (['infra/tests/test_panel_proxy.py'], 'true'),
                 (['infra/ansible/roles/router/templates/config-base.json.j2'], 'true'),
                 (['infra/tests/router_support.py'], 'true'),
-                (['infra/lib/e2e_paths.py'], 'true'),
+                (['infra/tests/e2e_paths.py'], 'true'),
                 (['.github/workflows/checks.yml'], 'true'),
                 (['app/a\nfile.ts'], 'true'),
             ]:

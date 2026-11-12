@@ -16,13 +16,11 @@ anysda-vpn — интерактивный конфигуратор
 
 Команды:
   ./setup.sh                    Запустить мастер настройки
-  ./setup.sh --front-test       Запустить тестовую панель
-  ./setup.sh --front-test-down  Остановить тестовую панель
   ./setup.sh -h | --help        Показать справку
 EOF
 }
 
-# Все аргументы проверяем до запуска мастера или тестовой панели.
+# Все аргументы проверяем до запуска мастера.
 if (( $# > 1 )); then
   printf 'Неожиданный аргумент: %s\n' "$2" >&2
   usage >&2
@@ -31,9 +29,6 @@ fi
 
 case "${1:-}" in
   -h|--help)        usage; exit 0 ;;
-  # Панель с выдуманными данными, без вопросов и без config.yaml.
-  --front-test)      exec bash "$REPO_ROOT/app/e2e/front-test.sh" up ;;
-  --front-test-down) exec bash "$REPO_ROOT/app/e2e/front-test.sh" down ;;
   *)
     if (( $# > 0 )); then
       printf 'Неизвестный аргумент: %s\n' "$1" >&2

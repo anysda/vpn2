@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Панель с выдуманными данными для просмотра в браузере: ./setup.sh --front-test.
+# Панель с выдуманными данными для просмотра в браузере: bash app/e2e/front-test.sh up.
 # Только панель в docker на этой машине, без нод: клиенты, устройства, маршруты,
 # бот и живые метрики - подставные (e2e/support/fake-backends.mjs в живом
 # режиме и e2e/support/front-test-seed.mjs). Повторный запуск пересоздаёт
 # контейнеры и данные.
 #
-#   ./setup.sh --front-test          поднять (или пересоздать)
-#   ./setup.sh --front-test-down     остановить и удалить
+#   bash app/e2e/front-test.sh up    поднять (или пересоздать)
+#   bash app/e2e/front-test.sh down  остановить и удалить
 #
 # Образ панели тот же, что ставит стадия 30-frontend: PANEL_IMAGE
 # (ghcr.io/anysda/vpn2/panel:dev), с отдельным слоем тестовых VPN-служб.
@@ -132,4 +132,4 @@ echo
 echo "Панель:  http://${HOST_IP:-127.0.0.1}:$PORT"
 echo "Логин:   admin"
 echo "Пароль:  $PASS"
-echo "Остановить: ./setup.sh --front-test-down"
+echo "Остановить: bash app/e2e/front-test.sh down"

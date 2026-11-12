@@ -20,7 +20,7 @@ APP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # Optional local gate: the same selector as CI, before Node/Docker setup.
 if [[ ${1:-} == --changed-only ]]; then
   shift
-  selected=$(python3 "$APP_DIR/../infra/lib/e2e_paths.py")
+  selected=$(python3 "$APP_DIR/../infra/tests/e2e_paths.py")
   if [[ $selected == false ]]; then
     echo 'panel-e2e: skipped (no panel dependencies changed)'
     exit 0

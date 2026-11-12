@@ -9,7 +9,6 @@ import importlib
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 # команда, обработчик "модуль:функция"
 COMMANDS = (
@@ -24,7 +23,6 @@ COMMANDS = (
     ('release', 'vpn2.release:main'),
     ('restore', 'vpn2.cli:restore'),
     ('router', 'vpn2.cli:router'),
-    ('snapshot', 'vpn2.cli:snapshot'),
     ('verify', 'vpn2.cli:verify'),
     ('version', 'vpn2.cli:version'),
     ('watchdog', 'vpn2.cli:watchdog'),
@@ -49,7 +47,6 @@ RESTORE_USAGE = '''Использование: vpn2 restore [АРХИВ|latest] 
   --dry-run              только назвать архив, ничего не менять
   --allow-incompatible   восстановить архив другой версии формата или схемы БД
 '''
-SNAPSHOT_TOOL = Path('infra/tests/snapshot.py')
 CONTROL_USAGE = 'vpn2 control: нужно serve [--probe|--expire] или apply <действие> ...\n'
 
 
@@ -209,14 +206,6 @@ def version(argv):
     del argv
     from importlib.metadata import version as installed
     print(installed('vpn2'))
-
-
-def snapshot(argv):
-    """Слепки стенда CI снимает и сверяет infra/tests/snapshot.py из checkout."""
-    if not SNAPSHOT_TOOL.is_file():
-        print(f'vpn2 snapshot: нет {SNAPSHOT_TOOL} - запускайте из корня checkout', file=sys.stderr)
-        return 2
-    return subprocess.run([sys.executable, '-B', str(SNAPSHOT_TOOL), *argv], check=False).returncode
 
 
 def main(argv=None):

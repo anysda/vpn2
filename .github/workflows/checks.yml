@@ -339,7 +339,7 @@ jobs:
       - name: изменения зависимостей панели
         id: paths
         run: |
-          selected=$(python3 ../infra/lib/e2e_paths.py --github)
+          selected=$(python3 ../infra/tests/e2e_paths.py --github)
           echo "run=$selected" >> "$GITHUB_OUTPUT"
       # Образ панели и его vpn-слой собираются встроенным сборщиком docker в
       # фоне, пока ставятся pnpm, Node и зависимости: кэш gha на ветках полос
@@ -429,7 +429,7 @@ jobs:
       - name: изменения зависимостей панели
         id: paths
         run: |
-          selected=$(python3 ../infra/lib/e2e_paths.py --github)
+          selected=$(python3 ../infra/tests/e2e_paths.py --github)
           echo "run=$selected" >> "$GITHUB_OUTPUT"
       # Как в шардах: сборка в фоне без buildx; запись кэша gha mode=max
       # стоила здесь ~50 с.

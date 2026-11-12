@@ -3,11 +3,11 @@
 
 install_prereqs() {
   step 'проверяю локальные зависимости'
-  local cmds=(ssh scp sshpass envsubst curl python3 rsync openssl) cmd missing=() pkgs=()
+  local cmds=(ssh sshpass curl python3 openssl) cmd missing=() pkgs=()
   for cmd in "${cmds[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 && continue
     missing+=("$cmd")
-    case "$cmd" in ssh|scp) pkgs+=(openssh-client) ;; envsubst) pkgs+=(gettext-base) ;; *) pkgs+=("$cmd") ;; esac
+    [[ "$cmd" == ssh ]] && pkgs+=(openssh-client) || pkgs+=("$cmd")
   done
   apt_have python3-venv || pkgs+=(python3-venv)
   if ! apt_have python3-wheel && dpkg --compare-versions \

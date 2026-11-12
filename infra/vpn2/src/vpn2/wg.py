@@ -2,8 +2,6 @@
 
 Файл читается как latin-1, один символ на байт, и пишется обратно так же: байты не меняются.
 """
-import base64
-import binascii
 import re
 import shutil
 import subprocess
@@ -248,19 +246,6 @@ def _refusal(stderr, lines):
     return f'строка {lines[found][0]}{shown}: {text}{value}', found
 
 
-def _clamped(key):
-    """Приватный ключ base64 в той форме, в какой его держит и печатает wg (curve25519 clamp), или None."""
-    try:
-        raw = bytearray(base64.b64decode(key, validate=True))
-    except (binascii.Error, ValueError):
-        return None
-    if len(raw) != 32:
-        return None
-    raw[0] &= 248
-    raw[31] = (raw[31] & 127) | 64
-    return base64.b64encode(raw).decode()
-
-
 def dump(data, *, run=run, timeout=TIMEOUT, which=shutil.which):
     """`wg show wg0 dump` после `wg setconf` файла `data` (bytes или str) на свежем wg0 в анонимном netns.
 
@@ -292,39 +277,17 @@ def dump(data, *, run=run, timeout=TIMEOUT, which=shutil.which):
         lines[found] = (lines[found][0], b'')
     if refusals:
         raise WgError('wg0.conf: wg отвергает файл: ' + '; '.join(refusals))
-    rows = done.stdout.decode().splitlines()
-    # wg печатает ключ прижатым; в ответ идёт ключ из строки файла, который wg взял.
-    private = rows[0].split('\t', 1)[0]
-    taken = [clean.partition(b'=')[2].decode('latin-1') for clean in (_clean(row) for _, row in lines)
-             if clean.partition(b'=')[0].lower() == b'privatekey']
-    taken = [key for key in taken if _clamped(key) == private]
-    if taken:
-        rows[0] = taken[-1] + rows[0][len(private):]
-    return rows
-
-
-def read(data, *, run=run):
-    """Интерфейс и пиры, какими их держит wg после setconf.
-
-    Интерфейс - {имя wg0.conf: значение} только заданных: PrivateKey, ListenPort, FwMark.
-    Пиры в порядке dump: ключ, PSK ('' без него), AllowedIPs.
-    """
-    rows = dump(data, run=run)
-    private, _public, port, fwmark = rows[0].split('\t')[:4]
-    interface = {name: value for name, value, unset in
-                 (('PrivateKey', private, '(none)'), ('ListenPort', port, '0'), ('FwMark', fwmark, 'off'))
-                 if value != unset}
-    peers = []
-    for row in rows[1:]:
-        key, psk, _endpoint, allowed = row.split('\t')[:4]
-        peers.append({'key': key, 'preshared_key': '' if psk == '(none)' else psk,
-                      'allowed': [] if allowed == '(none)' else allowed.split(',')})
-    return interface, peers
+    return done.stdout.decode().splitlines()
 
 
 def conf_peers(data, *, run=run):
-    """Пиры wg0.conf, какими их держит wg: ключ, PSK, AllowedIPs."""
-    return read(data, run=run)[1]
+    """Пиры wg0.conf, какими их держит wg после setconf, в порядке dump: ключ, PSK ('' без него), AllowedIPs."""
+    peers = []
+    for row in dump(data, run=run)[1:]:
+        key, psk, _endpoint, allowed = row.split('\t')[:4]
+        peers.append({'key': key, 'preshared_key': '' if psk == '(none)' else psk,
+                      'allowed': [] if allowed == '(none)' else allowed.split(',')})
+    return peers
 
 
 def _table(text, parts):

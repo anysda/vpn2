@@ -106,12 +106,10 @@ def test_peer_addresses(ip, expected):
     assert wg.peer_addresses(ip) == expected
 
 
-def test_dump_success_keeps_file_private_key_and_stdin_only():
+def test_dump_success_rows_and_stdin_only():
     fake = Fake(done(out=DUMP))
     rows = wg.dump(CONF, run=fake)
-    # wg печатает прижатый ключ, в ответ идёт ключ файла.
-    assert rows[0] == f'{S}\t{B}\t51820\toff'
-    assert rows[1].startswith(f'{A}')
+    assert rows == DUMP.splitlines()
     argv, data, timeout = fake.calls[0]
     assert argv == list(wg.ASK) and timeout == 30 and S not in ' '.join(argv)
     assert data == CONF.encode()
@@ -173,23 +171,12 @@ def test_dump_bad_saveconfig_is_wgerror_before_run():
     assert fake.calls == []
 
 
-def test_read_and_conf_peers():
+def test_conf_peers():
     out = HEAD + f'{A}\t{C}\t(none)\t192.0.2.2/32,fd66:66::2/128\t0\t0\t0\toff\n' \
                  f'{B}\t(none)\t(none)\t(none)\t0\t0\t0\toff\n'
-    interface, peers = wg.read(CONF, run=Fake(done(out=out)))
-    assert interface == {'PrivateKey': S, 'ListenPort': '51820'}
-    assert peers == [{'key': A, 'preshared_key': C, 'allowed': ['192.0.2.2/32', 'fd66:66::2/128']},
-                     {'key': B, 'preshared_key': '', 'allowed': []}]
-    assert wg.conf_peers(CONF, run=Fake(done(out=out))) == peers
-    # Без порта и fwmark: только заданное; повтор тот же.
-    unset = f'{clamp(S)}\t{B}\t0\toff\n'
-    for _ in range(2):
-        assert wg.read(CONF, run=Fake(done(out=unset)))[0] == {'PrivateKey': S}
-
-
-def test_read_fwmark_and_hidden_key():
-    out = f'(none)\t{B}\t0\t0x1f\n'
-    assert wg.read('x', run=Fake(done(out=out)))[0] == {'FwMark': '0x1f'}
+    assert wg.conf_peers(CONF, run=Fake(done(out=out))) == [
+        {'key': A, 'preshared_key': C, 'allowed': ['192.0.2.2/32', 'fd66:66::2/128']},
+        {'key': B, 'preshared_key': '', 'allowed': []}]
 
 
 def test_allowed_preshared_transfer():

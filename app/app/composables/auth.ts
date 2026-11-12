@@ -3,7 +3,6 @@ interface SessionData {
   session: { loginMethod?: 'password' | 'sso' | null }
 }
 
-/** Кто вошёл: сессия better-auth. На сервере запрос уходит с cookie браузера. */
 export function useAuthSession() {
   const data = useState<SessionData | null>('auth-session', () => null)
   const loaded = useState('auth-session-loaded', () => false)
@@ -24,7 +23,6 @@ export function useAuthSession() {
 
 const SSO_OFF = { enabled: false, autoRedirect: false, label: 'Authentik' }
 
-/** Вход через Authentik для страницы входа; не прочиталось - форма с паролем. */
 export function useSsoPublic() {
   const sso = useState('sso-public', () => SSO_OFF)
   const request = useRequestFetch()

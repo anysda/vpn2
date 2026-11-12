@@ -1,9 +1,6 @@
 import { botDeliveryText, botQueueText, type BotDelivery } from '#shared/bot-delivery'
 
-/**
- * Доставка уведомлений бота: строки колокольчика в шапке. Окончательная ошибка -
- * свой красный тост; очередь - один жёлтый тост на вкладку (sessionStorage).
- */
+/** Строки колокольчика доставки бота: ошибка - красный тост, очередь - один жёлтый тост на вкладку. */
 export function useBotDelivery() {
   const rows = useState<BotDelivery[]>('bot-deliveries', () => [])
   const seen = useState<Record<string, string>>('bot-delivery-seen', () => ({}))

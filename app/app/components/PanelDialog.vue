@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// Окно панели: заголовок, содержимое, внизу «Отмена» и главное действие `ok`.
 defineProps<{ title: string, ok?: string, danger?: boolean, busy?: boolean, wide?: boolean }>()
 defineEmits<{ ok: [] }>()
 const open = defineModel<boolean>('open', { default: false })

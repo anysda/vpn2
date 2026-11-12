@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// Кольцо долей `segs` по часовой; в середине - слот (число и подпись).
 const props = defineProps<{ segs: { v: number, c: string }[] }>()
 const R = 60, C = 2 * Math.PI * R
 const arcs = computed(() => {

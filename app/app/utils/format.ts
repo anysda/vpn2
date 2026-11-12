@@ -1,7 +1,5 @@
 import { plural } from '#shared/plural'
 
-// Числа, объёмы и даты панели. Разновидности намеренно разные (база 1024
-// против 1e9, UTC против МСК против зоны браузера) - имя говорит, какая где.
 
 const MIB = 1024 * 1024
 const GIB = 1024 ** 3
@@ -12,7 +10,6 @@ const MONTHS_GEN = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 
 
 export const pad2 = (x: number) => String(x).padStart(2, '0')
 
-/** Число по-русски: запятая и пробелы между разрядами. */
 export const ru = (v: number, digits = 0) =>
   v.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits }).replace(/[\u00A0\u202F]/g, ' ')
 
@@ -90,7 +87,6 @@ export function hmsOrDdmmHmLocal(t: string, today: string): string {
   return d.toDateString() === today ? hms : `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)} ${hms.slice(0, 5)}`
 }
 
-/** Инициалы для аватара: первые буквы первых двух слов. */
 export const initials = (name: string) => name.split(' ').filter(Boolean).map(s => s[0]).join('').slice(0, 2)
 
 /** Сколько суток до конца срока (вверх), если активный клиент истекает в ближайшую неделю. */

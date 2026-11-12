@@ -23,10 +23,7 @@ export function useMobile() {
   return on
 }
 
-/**
- * Подзаголовок раздела (счётчики) для шапки телефона. Только в браузере: на
- * сервере шапка рисуется раньше страницы и разошлась бы с HTML при гидратации.
- */
+/** Подзаголовок раздела для шапки телефона; ставится только в браузере. */
 export function usePageSub(text?: () => string) {
   const sub = useState('page-sub', () => '')
   if (text && import.meta.client) {
@@ -36,7 +33,6 @@ export function usePageSub(text?: () => string) {
   return sub
 }
 
-/** Текст ошибки запроса для человека: из тела ответа, иначе из статуса. */
 export function errText(e: unknown, fallback = 'Ошибка'): string {
   const x = e as { data?: { message?: string }, statusMessage?: string, message?: string } | null
   return x?.data?.message ?? x?.statusMessage ?? x?.message ?? fallback
@@ -49,14 +45,11 @@ export function doneToast(title: string, warning?: string) {
 
 type Note = string | { title: string, description?: string, color?: 'success' | 'info' | 'warning' }
 
-/**
- * Действие оператора: пока запрос идёт, его ключ занят (кнопка выключена);
- * ошибка - красным тостом, успех - тостом `done`. Возвращает, удалось ли.
- */
+/** Действие: ключ занят, пока идёт запрос; ошибка - красным тостом (`fail` объектом - свой заголовок, причина ниже), успех - тостом `done`. */
 export function useAct() {
   const toast = useToast()
   const busy = ref(new Set<string>())
-  async function act<R>(key: string, req: () => Promise<R>, done?: Note | ((r: R) => Note | undefined), fail?: string) {
+  async function act<R>(key: string, req: () => Promise<R>, done?: Note | ((r: R) => Note | undefined), fail?: string | { title: string }) {
     busy.value.add(key)
     try {
       const r = await req()
@@ -65,7 +58,8 @@ export function useAct() {
       return true
     }
     catch (e) {
-      toast.add({ title: errText(e, fail), color: 'error' })
+      if (typeof fail === 'object') toast.add({ title: fail.title, description: errText(e, '') || undefined, color: 'error' })
+      else toast.add({ title: errText(e, fail), color: 'error' })
       return false
     }
     finally {
@@ -79,10 +73,7 @@ export function useAct() {
 export interface Ask { title: string, text: string, ok: string, danger?: boolean, fail?: string, run: () => Promise<unknown> }
 export const useAsk = () => useState<Ask | null>('ask', () => null)
 
-/**
- * Копирование в буфер. По HTTP на IP Clipboard API нет: тогда execCommand
- * из поля внутри открытого окна (ловушка фокуса окна иначе забирает фокус).
- */
+/** Копирование в буфер; без Clipboard API (HTTP) - execCommand из поля внутри открытого окна. */
 export async function copyText(text: string): Promise<boolean> {
   if (window.isSecureContext && navigator.clipboard) {
     if (await navigator.clipboard.writeText(text).then(() => true, () => false)) return true

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// Сообщения фреймворка («Page not found: …») наружу не выводим: текст как в макете.
 defineProps<{ error: { statusCode?: number } }>()
 
 function handleError() {

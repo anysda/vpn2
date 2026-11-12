@@ -3,28 +3,22 @@ import { botDeliveryText, type BotDelivery } from '#shared/bot-delivery'
 
 const { status } = useTelegramStatus()
 const delivery = useBotDelivery()
-const toast = useToast()
+const { busy, act } = useAct()
 const message = ref('')
-const sending = ref(false)
 const configured = computed(() => Boolean(status.value?.configured))
 
-async function send() {
+function send() {
   const text = message.value.trim()
   if (!text || !configured.value) return
-  sending.value = true
-  try {
+  return act('send', async () => {
     const res = await $fetch<{ recipients: number, delivery: BotDelivery | null }>('/api/admin/broadcast', { method: 'POST', body: { text } })
-    if (res.delivery?.status === 'accepted') toast.add({ title: botDeliveryText(res.delivery), color: 'success' })
-    else if (res.delivery) delivery.show(res.delivery)
-    else toast.add({ title: 'Нет получателей рассылки.', color: 'warning' })
     message.value = ''
-  }
-  catch (e) {
-    toast.add({ title: 'Ошибка', color: 'error', description: errText(e, '') || undefined })
-  }
-  finally {
-    sending.value = false
-  }
+    return res.delivery
+  }, (d) => {
+    if (!d) return { title: 'Нет получателей рассылки.', color: 'warning' }
+    if (d.status === 'accepted') return { title: botDeliveryText(d), color: 'success' }
+    delivery.show(d)
+  }, { title: 'Ошибка' })
 }
 </script>
 
@@ -36,7 +30,7 @@ async function send() {
     <textarea v-model="message" class="area flex-1" maxlength="4096" placeholder="Текст сообщения всем клиентам с ботом" aria-label="Сообщение юзерам" />
     <div class="arow">
       <span v-if="!configured" class="hint">Сначала настройте Telegram-бота</span>
-      <button type="button" class="pill w ml-auto" :disabled="!configured || sending || !message.trim()" @click="send">
+      <button type="button" class="pill w ml-auto" :disabled="!configured || busy.has('send') || !message.trim()" @click="send">
         Отправить
       </button>
     </div>

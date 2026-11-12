@@ -1,26 +1,17 @@
 <script setup lang="ts">
 const { user, loginMethod } = useAuthSession()
 const { sso } = useSsoPublic()
-const toast = useToast()
+const { toast, busy, act } = useAct()
 const pwd = reactive({ current: '', next: '', confirm: '' })
-const saving = ref(false)
 
-async function changePassword() {
+function changePassword() {
   const bad = !pwd.current ? 'Введите текущий пароль' : pwd.next.length < 8 ? 'Пароль должен быть ≥ 8 символов' : pwd.next !== pwd.confirm ? 'Пароли не совпадают' : ''
   if (bad) return toast.add({ title: bad, color: 'error' })
-  saving.value = true
-  try {
-    // Остальные сессии сервер рвёт, эта остаётся.
+  // Остальные сессии сервер рвёт, эта остаётся.
+  return act('pwd', async () => {
     await $fetch<unknown>('/api/auth/change-password', { method: 'POST', body: { currentPassword: pwd.current, newPassword: pwd.next } })
-    toast.add({ title: 'Пароль обновлён', color: 'success' })
     pwd.current = pwd.next = pwd.confirm = ''
-  }
-  catch (e) {
-    toast.add({ title: 'Ошибка', color: 'error', description: errText(e) })
-  }
-  finally {
-    saving.value = false
-  }
+  }, { title: 'Пароль обновлён', color: 'success' }, { title: 'Ошибка' })
 }
 </script>
 
@@ -42,7 +33,7 @@ async function changePassword() {
       <label class="fld"><span>Повторите</span><input v-model="pwd.confirm" class="in" type="password" autocomplete="new-password"></label>
       <div class="fld">
         <span /><code class="sub2" />
-        <button type="submit" class="pill w" :disabled="saving">Сохранить пароль</button>
+        <button type="submit" class="pill w" :disabled="busy.has('pwd')">Сохранить пароль</button>
       </div>
     </form>
 

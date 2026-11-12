@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const toast = useToast()
+const { busy, act } = useAct()
 const { load: loadPublic } = useSsoPublic()
 
 interface SsoForm {
@@ -17,7 +17,6 @@ const dirty = computed(() => JSON.stringify(form) !== saved.value)
 const loaded = ref(false)
 const loading = ref(false)
 const loadError = ref('')
-const saving = ref(false)
 const checking = ref(false)
 const check = ref<{ ok: boolean, text: string } | null>(null)
 
@@ -65,20 +64,12 @@ async function runCheck() {
   }
 }
 
-async function save() {
-  if (!loaded.value || saving.value || !dirty.value) return
-  saving.value = true
-  try {
+function save() {
+  if (!loaded.value || busy.value.has('save') || !dirty.value) return
+  return act('save', async () => {
     await $fetch<unknown>('/api/admin/sso', { method: 'PUT', body: form })
-    toast.add({ title: 'Настройки входа сохранены', color: 'success' })
     await Promise.all([reload(), loadPublic()])
-  }
-  catch (e) {
-    toast.add({ title: 'Не сохранено', color: 'error', description: errText(e) })
-  }
-  finally {
-    saving.value = false
-  }
+  }, { title: 'Настройки входа сохранены', color: 'success' }, { title: 'Не сохранено' })
 }
 </script>
 
@@ -89,11 +80,7 @@ async function save() {
       <div class="ha">
         <span v-if="form.enabled" class="tag ok"><span class="dot bg-(--green)" />Включён</span>
         <span v-else class="tag">Выключен</span>
-        <button
-          type="button" role="switch" class="tog" :class="{ on: form.enabled }" :aria-checked="form.enabled" aria-label="Вход через Authentik"
-          :disabled="!loaded || saving" @click="form.enabled = !form.enabled">
-          <i />
-        </button>
+        <PanelSwitch v-model="form.enabled" label="Вход через Authentik" :disabled="!loaded || busy.has('save')" />
       </div>
     </div>
     <template v-if="loadError">
@@ -107,7 +94,7 @@ async function save() {
         </button>
       </div>
     </template>
-    <fieldset :disabled="!loaded || saving" class="fg2">
+    <fieldset :disabled="!loaded || busy.has('save')" class="fg2">
       <label class="fld"><span>Адрес Authentik или discovery URL</span><input v-model="form.authentikUrl" class="in mono" placeholder="https://auth.example.com"></label>
       <label class="fld"><span>Slug приложения</span><input v-model="form.appSlug" class="in mono" placeholder="vpn2"><small class="hl">не нужен, если выше discovery URL</small></label>
       <div class="fld">
@@ -128,19 +115,13 @@ async function save() {
       </label>
       <div class="fld">
         <span>Бесшовный вход</span><code>сразу уводить в Authentik</code>
-        <button type="button" role="switch" class="tog" :class="{ on: form.autoRedirect }" :aria-checked="form.autoRedirect" aria-label="Бесшовный вход" @click="form.autoRedirect = !form.autoRedirect">
-          <i />
-        </button>
+        <PanelSwitch v-model="form.autoRedirect" label="Бесшовный вход" />
       </div>
       <div class="fld">
         <span>Оставить вход по паролю</span>
         <code v-if="form.passwordLogin">аварийный вход /login?direct=1 работает</code>
         <code v-else class="text-(--amber)">Без пароля аварийного входа /login?direct=1 нет. Выключается отдельным сохранением, после входа через Authentik.</code>
-        <button
-          type="button" role="switch" class="tog" :class="{ on: form.passwordLogin }" :aria-checked="form.passwordLogin"
-          aria-label="Оставить вход по паролю" @click="form.passwordLogin = !form.passwordLogin">
-          <i />
-        </button>
+        <PanelSwitch v-model="form.passwordLogin" label="Оставить вход по паролю" />
       </div>
       <div class="fld">
         <span /><code />

@@ -1,6 +1,5 @@
 import type { AccessOperation } from '#shared/access-operation'
 
-/** Клиент - человек со сроком, статусом и лимитом; девайсы - его устройства. */
 export interface Client {
   accessStatus: string
   id: number

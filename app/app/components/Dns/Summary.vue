@@ -38,7 +38,6 @@ const lists = computed(() => [
   { title: 'Частые запросы', unit: 'раз', rows: data.value!.domains },
   { title: 'Частые блокировки', unit: 'раз', rows: data.value!.blocks, red: true },
 ])
-// Подпись точки графика: час или день, считая от текущего.
 function when(i: number) {
   const back = data.value!.q.length - 1 - i
   if (data.value!.units === 'days') return new Date(Date.now() - back * 864e5).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })

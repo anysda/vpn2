@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// Первая загрузка подраздела не удалась: причина и повтор без перезагрузки страницы.
 defineProps<{ of: { data: Ref<unknown>, error: Ref<unknown>, status: Ref<string>, refresh: () => unknown } }>()
 </script>
 

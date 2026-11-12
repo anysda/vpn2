@@ -1,5 +1,4 @@
 <script setup lang="ts" generic="R extends { enabled: boolean }">
-// Список AdGuard с тумблером в строке, удалением через вопрос и окном добавления.
 const props = defineProps<{
   title: string
   sub: string
@@ -53,9 +52,7 @@ async function save() {
       <span v-for="(c, i) in cols" :key="i">{{ c }}</span>
     </div>
     <div v-for="r in rows" :key="rowKey(r)" class="grid items-center gap-3 border-t border-(--line) px-1 py-2.5 text-sm" :class="[grid, { 'opacity-50': !r.enabled }]">
-      <button type="button" class="tog" :class="{ on: r.enabled }" role="switch" :aria-checked="r.enabled" :aria-label="rowKey(r)" :disabled="busy.has(rowKey(r))" @click="flip(r)">
-        <i />
-      </button>
+      <PanelSwitch :model-value="r.enabled" :label="rowKey(r)" :disabled="busy.has(rowKey(r))" @update:model-value="flip(r)" />
       <slot :row="r" />
       <button type="button" class="xb" aria-label="Удалить" @click="askRemove(r)">
         <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>

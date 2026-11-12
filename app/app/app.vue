@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// На телефоне тосты сверху, под шапкой (main.css).
 const mobile = useMobile()
 useHead({
   link: [

@@ -79,11 +79,7 @@ function toggle(x: NodeMetric) {
           <span class="sub2 mono">{{ n.host ?? n.instance }} · аптайм {{ uptimeShort(n.uptimeSec) }}</span>
           <div v-if="n.tag !== 'ru'" class="ha">
             <span class="tag">{{ n.disabled ? 'ВЫКЛ' : `${n.activeDevices ?? 0} устр.` }}</span>
-            <button
-              type="button" role="switch" class="tog" :class="{ on: !n.disabled }" :aria-checked="!n.disabled"
-              :aria-label="`${exitName(n.tag)}: ${n.disabled ? 'включить' : 'выключить'}`" :disabled="busy.has('exit')" @click="toggle(n)">
-              <i />
-            </button>
+            <PanelSwitch :model-value="!n.disabled" :label="`${exitName(n.tag)}: ${n.disabled ? 'включить' : 'выключить'}`" :disabled="busy.has('exit')" @update:model-value="toggle(n)" />
           </div>
         </div>
         <div class="kgrid mgrid">

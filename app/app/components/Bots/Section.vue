@@ -1,10 +1,9 @@
 <script setup lang="ts">
 const { status: data, refresh } = useTelegramStatus(10_000)
-const toast = useToast()
+const { busy, act } = useAct()
 const token = ref('')
 const chatId = ref('')
 const admin = ref('')
-const saving = ref(false)
 const showToken = ref(false)
 const savedChat = () => String(data.value?.chat_id ?? '')
 const savedAdmin = () => String(data.value?.admin_username ?? '')
@@ -28,22 +27,14 @@ const body = computed(() => {
 async function save() {
   const sent = { token: token.value, chatId: chatId.value, admin: admin.value }
   if (!Object.keys(body.value).length) return
-  saving.value = true
-  try {
+  await act('save', async () => {
     await $fetch<unknown>('/api/admin/telegram', { method: 'PUT', body: body.value })
-    toast.add({ title: 'Настройки бота сохранены', color: 'success' })
     // Правку, сделанную пока PUT был в пути, не стираем.
     if (token.value === sent.token) token.value = ''
     if (chatId.value === sent.chatId) chatId.value = sent.chatId.trim()
     if (admin.value === sent.admin) admin.value = sent.admin.trim().replace(/^@+/, '')
     await refresh({ dedupe: 'cancel' })
-  }
-  catch (e) {
-    toast.add({ title: 'Ошибка', color: 'error', description: errText(e, '') || undefined })
-  }
-  finally {
-    saving.value = false
-  }
+  }, { title: 'Настройки бота сохранены', color: 'success' }, { title: 'Ошибка' })
 }
 </script>
 
@@ -71,7 +62,7 @@ async function save() {
         v-model="admin" class="in" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore placeholder="@ник"></label>
       <div class="fld">
         <span />
-        <button type="button" class="pill w" :disabled="!Object.keys(body).length || saving" @click="save">Сохранить</button>
+        <button type="button" class="pill w" :disabled="!Object.keys(body).length || busy.has('save')" @click="save">Сохранить</button>
       </div>
     </div>
   </div>

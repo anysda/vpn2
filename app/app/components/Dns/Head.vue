@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// Шапка карточки подраздела: заголовок, пояснение, справа - действия из слота.
 defineProps<{ title: string, sub: string }>()
 </script>
 

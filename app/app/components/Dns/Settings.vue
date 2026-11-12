@@ -100,9 +100,7 @@ function reset(what: keyof typeof RESET) {
         </div>
         <div v-for="p in PROTECT" :key="p.k" class="fld">
           <span>{{ p.name }}</span><code>{{ p.note }}</code>
-          <button type="button" role="switch" class="tog" :class="{ on: data[p.k] }" :aria-checked="data[p.k]" :aria-label="p.name" :disabled="busy.has(p.k)" @click="tog(p.k)">
-            <i />
-          </button>
+          <PanelSwitch :model-value="data[p.k]" :label="p.name" :disabled="busy.has(p.k)" @update:model-value="tog(p.k)" />
         </div>
       </div>
       <div class="card sc">
@@ -117,9 +115,7 @@ function reset(what: keyof typeof RESET) {
         </div>
         <div class="fld">
           <span>Оптимистичный кэш</span><code>отвечать устаревшим, пока обновляется</code>
-          <button type="button" role="switch" class="tog" :class="{ on: data.optimistic }" :aria-checked="data.optimistic" aria-label="Оптимистичный кэш" :disabled="busy.has('optimistic')" @click="tog('optimistic')">
-            <i />
-          </button>
+          <PanelSwitch :model-value="data.optimistic" label="Оптимистичный кэш" :disabled="busy.has('optimistic')" @update:model-value="tog('optimistic')" />
         </div>
         <div v-for="[k, name] in ([['ratelimit', 'Лимит запросов'], ['block', 'Ответ на блокировку']] as const)" :key="k" class="fld">
           <span>{{ name }}</span><code class="break-all">{{ data[k] }}</code>
@@ -142,9 +138,7 @@ function reset(what: keyof typeof RESET) {
         </div>
         <div class="fld">
           <span>Скрывать адреса клиентов</span><code>в журнале последний байт обнуляется</code>
-          <button type="button" role="switch" class="tog" :class="{ on: data.anonymize }" :aria-checked="data.anonymize" aria-label="Скрывать адреса клиентов" :disabled="busy.has('anonymize')" @click="tog('anonymize')">
-            <i />
-          </button>
+          <PanelSwitch :model-value="data.anonymize" label="Скрывать адреса клиентов" :disabled="busy.has('anonymize')" @update:model-value="tog('anonymize')" />
         </div>
         <div class="fld">
           <span>Сбросить</span><code />

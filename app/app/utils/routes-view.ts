@@ -24,8 +24,7 @@ export interface Column {
 
 const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
 
-// Название страны по тегу экзита: «de» → «Германия», «us2» → «США».
-// Тег не из двух букв остаётся как есть.
+// Страна по двухбуквенному тегу экзита: «de» → «Германия»; иной тег - как есть.
 export function countryName(tag: string): string {
   const code = tag.replace(/[0-9]+$/, '').toUpperCase()
   if (/^[A-Z]{2}$/.test(code)) {

@@ -11,10 +11,7 @@ interface TgStatus {
   delivered_day: number
 }
 
-/**
- * Статус бота: раздел настроек и кнопки «в Telegram». Сбой опроса оставляет
- * последний удачный статус; таймаут дольше ворот смены сессии (15 с).
- */
+/** Статус бота; сбой опроса оставляет последний удачный, таймаут дольше ворот смены сессии (15 с). */
 export function useTelegramStatus(pollMs = 15_000) {
   const last = useState<TgStatus | null>('tg-status-last', () => null)
   const { data, refresh } = useFetch<TgStatus | null>('/api/admin/telegram', {

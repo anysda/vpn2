@@ -11,8 +11,7 @@ if (loggedIn.value) {
   await navigateTo('/')
 }
 
-// Break-glass: /login?direct=1 показывает форму даже при включённом SSO. Сюда же
-// приводит любая ошибка входа через IdP — иначе авторедирект зациклил бы её.
+// /login?direct=1 и ошибка входа через Authentik показывают форму даже при авторедиректе.
 const ssoError = computed(() => (route.query.error as string | undefined) ?? null)
 const showForm = computed(() => !sso.value.enabled || !sso.value.autoRedirect || route.query.direct !== undefined || !!ssoError.value)
 
@@ -37,8 +36,7 @@ const needsTotp = ref(false)
 const error = ref<string | null>(null)
 const loading = ref(false)
 
-// Вход в два шага, как его ведёт better-auth: логин и пароль, затем, если у
-// учётки включена 2FA, код — уже без пароля, по cookie первого шага.
+// Вход в два шага: логин и пароль, затем код 2FA по cookie первого шага.
 async function submit() {
   error.value = null
   loading.value = true

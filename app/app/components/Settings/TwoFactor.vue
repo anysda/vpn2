@@ -2,7 +2,7 @@
 import QRCode from 'qrcode-svg'
 
 const { user, fetch: refreshSession } = useAuthSession()
-const toast = useToast()
+const { toast, busy: keys, act } = useAct()
 
 const totpEnabled = computed(() => user.value?.twoFactorEnabled ?? false)
 
@@ -11,11 +11,10 @@ const totpUri = ref('')
 const totpSecret = computed(() => totpUri.value ? new URL(totpUri.value).searchParams.get('secret') ?? '' : '')
 const pwd = ref('')
 const code = ref('')
-const busy = ref(false)
+const busy = computed(() => keys.value.has('2fa'))
 const disableOpen = ref(false)
 
-// QR разметкой: квадрат на каждый тёмный модуль, тихая зона 4 модуля, 4 px на модуль
-// (меньше камера с экрана не берёт); ecl L - версия ниже, модуль крупнее.
+// QR: 4 px на модуль с тихой зоной 4 модуля, ecl L.
 const totpQr = computed(() => {
   if (!totpUri.value) return null
   const { modules } = new QRCode({ content: totpUri.value, ecl: 'L' }).qrcode
@@ -29,17 +28,8 @@ function reset() {
 }
 watch(disableOpen, reset)
 
-async function call<T>(path: string, body: object, fail: string, done: (r: T) => unknown) {
-  busy.value = true
-  try {
-    await done(await $fetch<unknown>(`/api/auth/two-factor/${path}`, { method: 'POST', body }) as T)
-  }
-  catch (e) {
-    toast.add({ title: fail, color: 'error', description: errText(e, '') || undefined })
-  }
-  finally {
-    busy.value = false
-  }
+function call<T>(path: string, body: object, fail: string, done: (r: T) => unknown) {
+  return act('2fa', async () => done(await $fetch<unknown>(`/api/auth/two-factor/${path}`, { method: 'POST', body }) as T), undefined, { title: fail })
 }
 
 // Код из аутентификатора: 6 цифр, пробелы и прочее не в счёт.

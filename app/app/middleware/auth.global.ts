@@ -1,5 +1,4 @@
-// Неавторизованного - на вход; при бесшовном SSO сразу в Authentik
-// (серверный маршрут с 302 в IdP, поэтому external).
+// Без входа - на /login; при бесшовном SSO - на серверный маршрут Authentik (external).
 export default defineNuxtRouteMiddleware((to) => {
   if (to.path === '/login' || useAuthSession().loggedIn.value) return
   const { sso } = useSsoPublic()

@@ -1,9 +1,6 @@
 type Method = 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
-/**
- * Подраздел DNS: снимок с сервера; каждое изменение отвечает новым снимком,
- * применяется ответ последнего запроса, после отказа раздел перечитывается.
- */
+/** Снимок подраздела DNS: применяется ответ последнего запроса, после отказа снимок перечитывается. */
 export function useDns<T>(url: string) {
   const { toast, busy, act } = useAct()
   const load = useFetch<T>(url, { server: false, lazy: true })

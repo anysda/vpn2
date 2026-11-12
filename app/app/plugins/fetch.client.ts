@@ -1,13 +1,7 @@
-/**
- * Все запросы панели идут через ofetch, а он берёт `fetch` из `globalThis` на
- * каждый запрос - здесь одна обёртка над ним:
- * - текст ошибки для человека лежит в `message` тела (Caddy и HTTP/2 текст
- *   статуса теряют) - отдаём его через `statusText`, его читает ofetch;
- * - без признака входа (cookie vpn2-signed-in, server/middleware/session-mark.ts)
- *   запрос к закрытым ручкам не уходит, странице сразу 401;
- * - смена пароля и 2FA пересоздают сессию: остальные запросы ждут их ответа
- *   (не дольше 15 с) и уходят уже с новой cookie.
- */
+// Обёртка над globalThis.fetch, через который идут все запросы ofetch:
+// - текст ошибки из `message` тела отдаётся как `statusText`;
+// - без cookie vpn2-signed-in запрос к закрытым ручкам сразу получает 401;
+// - смена пароля и 2FA пересоздают сессию: остальные запросы ждут их ответа не дольше 15 с.
 const OPEN = /^\/api\/(auth\/|bot\/|_nuxt_icon\/|sso$|version$)/
 const ROTATES = /^\/api\/auth\/(two-factor\/(disable|verify-totp)|change-password)$/
 const MARK = 'vpn2-signed-in'

@@ -59,18 +59,12 @@ async function submit() {
     </div>
     <div class="crw mt-4">
       <span>Фильтровать трафик (AdGuard)</span>
-      <button type="button" role="switch" class="tog" :class="{ on: form.filter }" :aria-checked="form.filter" aria-label="Фильтровать трафик (AdGuard)" @click="form.filter = !form.filter">
-        <i />
-      </button>
+      <PanelSwitch v-model="form.filter" label="Фильтровать трафик (AdGuard)" />
     </div>
     <div class="crw">
       <span>Отправить доступ к боту</span>
       <span :title="tgReason || undefined">
-        <button
-          type="button" role="switch" class="tog" :class="{ on: form.bot && canSend }" :aria-checked="form.bot && canSend" aria-label="Отправить доступ к боту"
-          :disabled="!canSend" @click="form.bot = !form.bot">
-          <i />
-        </button>
+        <PanelSwitch :model-value="form.bot && canSend" label="Отправить доступ к боту" :disabled="!canSend" @update:model-value="form.bot = !form.bot" />
       </span>
     </div>
   </PanelDialog>

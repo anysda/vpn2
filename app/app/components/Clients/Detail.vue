@@ -121,7 +121,6 @@ function askRemove(c: ClientDetail) {
     }, 'Отключение выполняется', true)
 }
 
-// --- Состояние доступа ---
 const UNSURE = 'Состояние не подтверждено'
 const opTitle = computed(() => d.value?.operation ? accessStatus(d.value.operation) : UNSURE)
 function protocolText(op: AccessOperation, p: typeof accessProtocols[number]) {
@@ -146,7 +145,6 @@ const tag = computed(() => {
 const rx = computed(() => props.traffic?.rxBytes ?? d.value?.rxTotal ?? 0)
 const tx = computed(() => props.traffic?.txBytes ?? d.value?.txTotal ?? 0)
 
-// --- Девайсы ---
 const KINDS = [['wg', 'WG'], ['ovpn', 'OVPN'], ['ike', 'IKEv2']] as const
 const cfg = ref<{ device: Device, kind: 'wg' | 'ovpn' | 'ike' }>()
 const cfgOpen = ref(false)

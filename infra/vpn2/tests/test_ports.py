@@ -101,3 +101,18 @@ def run(case, tmp):
 @pytest.mark.parametrize('case', CASES, ids=[case['name'] for case in CASES])
 def test_ports_check(case, tmp_path):
     assert run(case, tmp_path) == case['expected']
+
+
+def test_probe_measures_hy2_past_tcp_fallback():
+    # Селектор канала на запасном TCP отвечает и при режущемся порте hy2: меряется сам hysteria2.
+    sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+    from vpn2 import ports
+
+    class Api:
+        def delay(self, name, _url, **_options):
+            self.name = name
+            return 120, None
+
+    api = Api()
+    assert ports.probe_delay(api, 'se') == 120
+    assert api.name == 'transport-hy2-se-direct'

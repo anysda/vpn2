@@ -31,8 +31,11 @@ def fatal(text):
 
 
 def probe_delay(api, tag):
-    """Одна проба канала через clash-api роутера entry: мс или None."""
-    delay, _reason = api.delay(f'hy2-{tag}-direct', 'http://cp.cloudflare.com/generate_204',
+    """Одна проба hy2 через clash-api роутера entry: мс или None.
+
+    Сам hysteria2, мимо селектора: на запасном TCP канал жив и при режущемся порте hy2.
+    """
+    delay, _reason = api.delay(f'transport-hy2-{tag}-direct', 'http://cp.cloudflare.com/generate_204',
                                timeout_ms=5000, http_timeout=8)
     return delay
 

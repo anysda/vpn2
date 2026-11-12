@@ -15,8 +15,7 @@ import sys
 import time
 
 from vpn2 import wg
-
-MANIFEST = 'manifest.json'
+from vpn2.backup.archive import MANIFEST
 
 
 def _openssl(*args, data):
@@ -46,16 +45,8 @@ def _timestamp(root):
         return time.time()
 
 
-def _problems(root, run):
-    """(расхождения, что нечем проверить) по каталогу набора с db.sqlite.
-
-    Соединение закрывается сразу: открытое чтение не даёт следующему писателю среза свернуть WAL в файл БД.
-    """
-    with contextlib.closing(sqlite3.connect(f'file:{root / "db.sqlite"}?mode=ro', uri=True)) as con:
-        return _compare(con, root, run)
-
-
-def _compare(con, root, run):
+def _problems(con, root, run):
+    """(расхождения, что нечем проверить) по каталогу набора с db.sqlite."""
 
     def columns(table):
         return {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
@@ -158,17 +149,24 @@ def check_bundle(bundle_dir, *, run=wg.run, out=None, err=None):
     run - запуск программ для wg (как в vpn2.wg). Без db.sqlite в наборе проверять нечего - 0.
     Битая БД или CRL - строка «Тип: текст» в err и код 1.
     """
-    out = sys.stdout if out is None else out
-    err = sys.stderr if err is None else err
     if not pathlib.Path(bundle_dir, MANIFEST).is_file():
         print(f"anysda-backup: --check-bundle: '{bundle_dir}' — не распакованный бандл (нет manifest.json); "
-              'укажи каталог anysda-vpn2-* из архива', file=err)
+              'укажи каталог anysda-vpn2-* из архива', file=err or sys.stderr)
         return 2
+    return compare(bundle_dir, run=run, out=out, err=err)
+
+
+def compare(bundle_dir, *, run=wg.run, out=None, err=None):
+    """check_bundle без требования manifest.json: срез бэкапа сверяется до записи манифеста."""
+    out = sys.stdout if out is None else out
+    err = sys.stderr if err is None else err
     root = pathlib.Path(bundle_dir)
     if not (root / 'db.sqlite').is_file():
         return 0
     try:
-        bad, nocheck = _problems(root, run)
+        # Соединение закрывается сразу: открытое чтение не даёт следующему писателю среза свернуть WAL в файл БД.
+        with contextlib.closing(sqlite3.connect(f'file:{root / "db.sqlite"}?mode=ro', uri=True)) as con:
+            bad, nocheck = _problems(con, root, run)
     except Exception as error:  # noqa: BLE001 - любой сбой разбора - код 1
         print(f'{type(error).__name__}: {error}', file=err)
         return 1

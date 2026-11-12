@@ -154,12 +154,7 @@ def db_copy(db, target):
 def check_slice(bundle):
     """Сверка БД среза с конфигами VPN: (код check_bundle, текст расхождений)."""
     out = io.StringIO()
-    marker = Path(bundle, archive.MANIFEST)  # check_bundle требует manifest.json, а его ещё нет
-    marker.write_text('{}')
-    try:
-        return check.check_bundle(bundle, out=out), out.getvalue().rstrip('\n')
-    finally:
-        marker.unlink(missing_ok=True)
+    return check.compare(bundle, out=out), out.getvalue().rstrip('\n')
 
 
 def _mismatch_warning(mismatch):

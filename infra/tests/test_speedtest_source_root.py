@@ -27,7 +27,7 @@ class ExitListFromSourceRootTests(unittest.TestCase):
 
     def exits(self):
         """Команда списка экзитов из run(), выполненная локальным bash."""
-        speedtest = runpy.run_path(str(ROOT / 'infra/tools/speedtest.py'))
+        speedtest = runpy.run_path(str(ROOT / 'infra/tests/speedtest.py'))
         ran = []
 
         def sh(_target, cmd, **kwargs):

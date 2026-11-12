@@ -71,7 +71,7 @@ class AdguardRatelimitTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get('ADGUARD_BIN'), 'set ADGUARD_BIN in an isolated network namespace')
     def test_live_single_and_parallel_pool_clients(self):
-        spec = importlib.util.spec_from_file_location('speedtest', ROOT / 'infra/tools/speedtest.py')
+        spec = importlib.util.spec_from_file_location('speedtest', ROOT / 'infra/tests/speedtest.py')
         speedtest = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(speedtest)
         binary = os.environ['ADGUARD_BIN']

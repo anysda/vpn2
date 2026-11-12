@@ -11,13 +11,13 @@
   - iperf3-сервер вне РФ, слушает порты --iperf-port и следующие за ним.
 
 Пример:
-  infra/tools/speedtest.py --hub root@HUB --iperf IPERF_HOST \\
+  infra/tests/speedtest.py --hub root@HUB --iperf IPERF_HOST \\
       --client wg=root@CLIENT1/speed-wg \\
       --client ovpn=root@CLIENT2/speed-ovpn \\
       --client ikev2=root@CLIENT3/speed-ikev2 \\
       --out before.json > before.md
 
-  infra/tools/speedtest.py --compare before.json after.json
+  infra/tests/speedtest.py --compare before.json after.json
 
 Клиент задаётся как МЕТКА=SSH/ИМЯ_КЛИЕНТА_В_ПАНЕЛИ. Экзит переключается через
 API панели (preferredExit) на самом хабе; пароль админа не покидает хаб.

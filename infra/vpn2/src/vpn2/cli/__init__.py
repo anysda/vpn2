@@ -52,7 +52,7 @@ RESTORE_USAGE = '''Использование: vpn2 restore [АРХИВ|latest] 
   --dry-run              только назвать архив, ничего не менять
   --allow-incompatible   восстановить архив другой версии формата или схемы БД
 '''
-SNAPSHOT_TOOL = Path('infra/tools/snapshot.py')
+SNAPSHOT_TOOL = Path('infra/tests/snapshot.py')
 CONTROL_USAGE = 'vpn2 control: нужно serve [--probe|--expire] или apply <действие> ...\n'
 
 
@@ -217,7 +217,7 @@ def version(argv):
 
 
 def snapshot(argv):
-    """Слепки стенда CI снимает и сверяет infra/tools/snapshot.py из checkout."""
+    """Слепки стенда CI снимает и сверяет infra/tests/snapshot.py из checkout."""
     if not SNAPSHOT_TOOL.is_file():
         print(f'vpn2 snapshot: нет {SNAPSHOT_TOOL} - запускайте из корня checkout', file=sys.stderr)
         return 2

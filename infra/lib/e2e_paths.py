@@ -16,7 +16,7 @@ DEPENDENCIES = {
     'infra/vpn2/src/vpn2/pki.py',
     'infra/vpn2/src/vpn2/containers/compose.py',
     'infra/vpn2/src/vpn2/containers/panel.py',
-    'infra/tools/speedtest.py',
+    'infra/tests/speedtest.py',
     'infra/tests/test_speedtest.py',
     'infra/tests/test_deploy.py',
     'infra/tests/test_panel_proxy.py',

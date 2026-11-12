@@ -15,7 +15,7 @@ direct и WARP выбранного экзита; служебный hy2-mgmt о
 
 ## speedtest.py
 
-`infra/tools/speedtest.py` снимает на стенде одну таблицу: iperf3 TCP (1 и 8
+`infra/tests/speedtest.py` снимает на стенде одну таблицу: iperf3 TCP (1 и 8
 потоков в обе стороны) и UDP через туннель клиент → entry → экзит → сервер,
 TTFB HTTPS к зарубежным и российским сайтам, пачку DNS-запросов к AdGuard и
 приросты счётчиков узлов (`UdpRcvbufErrors`, ретрансмиты, `tc -s qdisc`,
@@ -33,13 +33,13 @@ TTFB HTTPS к зарубежным и российским сайтам, пач�
   `iperf3`, `curl`, `ping`, `python3`.
 
 ```bash
-infra/tools/speedtest.py --hub root@<entry> --iperf <iperf-сервер> \
+infra/tests/speedtest.py --hub root@<entry> --iperf <iperf-сервер> \
   --client wg=root@<клиент-wg>/<имя-в-панели> \
   --client ovpn=root@<клиент-ovpn>/<имя-в-панели> \
   --client ikev2=root@<клиент-ikev2>/<имя-в-панели> \
   --out before.json > before.md
 # после правки - тот же запуск с --out after.json, затем:
-infra/tools/speedtest.py --compare before.json after.json
+infra/tests/speedtest.py --compare before.json after.json
 ```
 
 Путь до iperf-сервера проседает на минуты целиком, поэтому прогон идёт

@@ -105,7 +105,7 @@ infra/
   ansible/           деплой: роль и плей на стадию, инвентарь из config.yaml
   vpn2/              пакет Python: логика на нодах и команда vpn2
   versions.yml       закреплённые версии внешних компонентов
-  tools/             стенд на KVM и замер скорости
+  tests/             тесты, стенд на KVM, слепок хоста и замер скорости
 telegram/vpn2bot/    бот
 deploy.sh            точка входа деплоя
 setup.sh             интерактивный мастер config.yaml

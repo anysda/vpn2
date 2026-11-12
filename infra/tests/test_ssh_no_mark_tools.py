@@ -66,7 +66,7 @@ class ToolNoMarkTests(unittest.TestCase):
 
 
 class SpeedtestNoMarkTests(unittest.TestCase):
-    sh = staticmethod(runpy.run_path(str(ROOT / 'infra/tools/speedtest.py'))['sh'])
+    sh = staticmethod(runpy.run_path(str(ROOT / 'infra/tests/speedtest.py'))['sh'])
     ROUTES = (('direct', {}), ('via hub', {'via': 'hub'}))
 
     def test_login_exit_before_command_raises_with_reason(self):

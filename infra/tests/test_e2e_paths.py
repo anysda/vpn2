@@ -34,7 +34,7 @@ class E2ePathsTests(unittest.TestCase):
                 (['infra/ansible/roles/resources/files/entry_resources.py'], 'true'),
                 (['infra/vpn2/src/vpn2/pki.py'], 'true'),
                 (['infra/vpn2/src/vpn2/containers/panel.py'], 'true'),
-                (['infra/tools/speedtest.py'], 'true'),
+                (['infra/tests/speedtest.py'], 'true'),
                 (['infra/lib/config2env.py'], 'true'),
                 (['infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py'], 'true'),
                 (['infra/tests/test_speedtest.py'], 'true'),

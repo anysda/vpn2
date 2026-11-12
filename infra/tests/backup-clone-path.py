@@ -125,7 +125,7 @@ class ClonePath(unittest.TestCase):
                           + ['vpn2/src/vpn2/cli/verify.py']])
 
     def assert_speedtest_uses(self, root):
-        text = (REPO / 'infra/tools/speedtest.py').read_text()
+        text = (REPO / 'infra/tests/speedtest.py').read_text()
         panel_call = text.split("PANEL_CALL = r'''", 1)[1].split("'''", 1)[0]
         calls = OUT / 'curl-calls'
         calls.unlink(missing_ok=True)

@@ -24,7 +24,7 @@ class PanelCallFixture(unittest.TestCase):
         for name in ('infra/lib/config2env.py', 'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py'):
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ROOT / name, self.root / name)
-        self.script = runpy.run_path(str(ROOT / 'infra/tools/speedtest.py'))['PANEL_CALL']
+        self.script = runpy.run_path(str(ROOT / 'infra/tests/speedtest.py'))['PANEL_CALL']
         for path, replacement in (
             ('/opt/anysda-vpn2', str(self.root)),
             ('/root/.speedtest-panel.jar', str(self.root / 'session.jar')),

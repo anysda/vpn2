@@ -135,7 +135,7 @@ echo all-clean
         self.assertTrue(module.Targets.exit_command(1, 1).startswith('echo && '))
 
     def test_speedtest_reads_only_command_output_direct_and_via_hub(self):
-        sh = runpy.run_path(str(ROOT / 'infra/tools/speedtest.py'))['sh']
+        sh = runpy.run_path(str(ROOT / 'infra/tests/speedtest.py'))['sh']
         for noise in NOISES:
             with self.subTest(noise=noise), Node(noise) as node, \
                     mock.patch.dict(os.environ, node.env):

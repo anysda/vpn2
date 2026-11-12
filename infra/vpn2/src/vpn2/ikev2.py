@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from vpn2 import pki
-from vpn2.fsutil import lock
+from vpn2.fsutil import filled, lock
 
 ETC = '/etc/anysda'
 SWANCTL = '/etc/swanctl'
@@ -104,10 +104,6 @@ def _read(path):
         return ''
 
 
-def _filled(path):
-    return os.path.isfile(path) and os.path.getsize(path) > 0
-
-
 def _readable(path):
     return bool(path) and os.access(path, os.R_OK)
 
@@ -120,7 +116,7 @@ def plan(entry_host, public_host, panel_domain, *, etc=ETC, swanctl=SWANCTL, cad
     le_key = f'{caddy}/{le_domain}/{le_domain}.key' if le_domain else ''
     # Restore возвращает пару LE в swanctl раньше, чем Caddy на чистом узле её получит.
     restored = (le_domain and mode == 'letsencrypt' and host == le_domain
-                and _filled(f'{swanctl}/x509/anysda-server.crt') and _filled(f'{swanctl}/private/anysda-server.key'))
+                and filled(f'{swanctl}/x509/anysda-server.crt') and filled(f'{swanctl}/private/anysda-server.key'))
     if (_readable(le_cert) and _readable(le_key)) or restored:
         both = os.path.exists(f'{swanctl}/x509ca/anysda-ca.crt')
         return Plan('letsencrypt', le_domain, le_domain, le_cert, le_key, '%any' if both else le_domain, both)

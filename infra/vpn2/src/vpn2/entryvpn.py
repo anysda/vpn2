@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from vpn2 import pki, wg
+from vpn2.fsutil import filled
 
 WG_DIR = '/etc/wireguard'
 WG_ULA = 'fd66:66::1'
@@ -24,13 +25,6 @@ def dns_rules(destination, subnets):
     """Правила ufw: клиенты пулов ходят к DNS на destination по udp и tcp."""
     return [f'proto {proto} from {subnet} to {destination} port 53'
             for subnet in subnets for proto in ('udp', 'tcp')]
-
-
-def _filled(path):
-    try:
-        return os.stat(path).st_size > 0
-    except OSError:
-        return False
 
 
 def _text(path):
@@ -58,12 +52,12 @@ def wg_identity(port, address, *, root=WG_DIR, run=wg.run):
     before = _wg_state(root)
     with pki.transaction(root / 'keys') as work:
         private, public = work / 'server.priv', work / 'server.pub'
-        if not _filled(private) and _filled(conf):
+        if not filled(private) and filled(conf):
             key = wg.private_key(_text(conf))
             private.write_text(f'{key}\n' if key else '')
         key = _text(private).rstrip('\n')
         if not re.fullmatch(WG_PRIVATE, key, re.ASCII):
-            if _filled(root / 'server.pub') or _filled(conf):
+            if filled(root / 'server.pub') or filled(conf):
                 raise pki.PkiIdentity('PKI: cannot replace an active WireGuard private key')
             key = wg.genkey(run=run)
             private.write_text(key + '\n')

@@ -108,7 +108,6 @@ export const clients = sqliteTable('clients', {
   ...timestamps,
 })
 
-/** Устройство клиента со своими ключами WG/OVPN/IKEv2. */
 export const devices = sqliteTable('devices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   deleting: integer('deleting', { mode: 'boolean' }).notNull().default(false),
@@ -126,7 +125,7 @@ export const devices = sqliteTable('devices', {
   ikev2Username: text('ikev2_username'),
   ikev2Password: text('ikev2_password'),
   ikev2Ip: text('ikev2_ip'),
-  // Накопительный трафик устройства по всем протоколам, байты (utils/traffic-collector.ts).
+  // Накопительный трафик устройства по всем протоколам, байты (сборщик в utils/traffic.ts).
   rxTotal: integer('rx_total').notNull().default(0),
   txTotal: integer('tx_total').notNull().default(0),
   ...timestamps,

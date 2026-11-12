@@ -62,14 +62,7 @@ function panelClient(url: string): Client {
   }
 }
 
-export function useDb() {
-  if (!_db) {
-    const config = useRuntimeConfig()
-    const client = panelClient(config.databaseUrl)
-    _db = drizzle(client, { schema })
-  }
-  return _db
-}
+export const useDb = () => (_db ??= drizzle(panelClient(useRuntimeConfig().databaseUrl), { schema }))
 
 /** Нарушение UNIQUE: drizzle заворачивает ошибку libsql, смотрим цепочку `cause`. */
 function isUniqueViolation(err: unknown): boolean {

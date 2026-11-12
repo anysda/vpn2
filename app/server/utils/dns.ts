@@ -303,7 +303,7 @@ const fmtMs = (ms: number) => String(ms < 10 ? Math.round(ms * 10) / 10 : Math.r
 function classify(e: AghLogEntry, lists: Map<number, string>, services: Map<string, string>): { kind: LogKind, detail: string } {
   if (e.reason === 'FilteredSafeBrowsing') return { kind: 'safe', detail: 'Безопасная навигация' }
   if (e.reason === 'FilteredParental') return { kind: 'safe', detail: 'Родительский контроль' }
-  if (e.reason === 'FilteredBlockedService') return { kind: 'blk', detail: `Сервис: ${services.get(e.service_name ?? '') ?? e.service_name ?? ''}` }
+  if (e.reason === 'FilteredBlockedService') return { kind: 'blk', detail: `Сервис: ${serviceName(services, e.service_name)}` }
   if (BLOCKED.has(e.reason)) return { kind: 'blk', detail: listName(e.rules?.[0]?.filter_list_id, lists) }
   if (REWRITTEN.has(e.reason)) return { kind: 'rw', detail: `→ ${(e.answer ?? []).find(x => x.value)?.value ?? 'пусто'}` }
   if (e.reason === 'NotFilteredWhiteList') return { kind: 'ok', detail: listName(e.rules?.[0]?.filter_list_id, lists) }
@@ -470,34 +470,30 @@ export function checkRules(lines: string[]) {
 }
 
 interface Verdict { kind: 'blk' | 'ok' | 'rw', label: string, why: [string, string, string] }
+const only = (text: string): Verdict['why'] => [text, '', '']
+const blocked = (why: Verdict['why']): Verdict => ({ kind: 'blk', label: 'Заблокирован', why })
+const rewritten = (why: Verdict['why']): Verdict => ({ kind: 'rw', label: 'Перезаписан', why })
+const serviceName = (services: Map<string, string>, id = '') => services.get(id) ?? id
 
 /** Ответ check_host словами: why - текст, правило моноширинным, текст. */
 export function verdict(r: CheckHost, lists: Map<number, string>, services: Map<string, string>): Verdict {
-  const rule = r.rules?.[0]
-  const text = rule?.text ?? ''
-  const id = rule?.filter_list_id ?? 0
+  const text = r.rules?.[0]?.text ?? ''
+  const id = r.rules?.[0]?.filter_list_id ?? 0
   const list = lists.get(id) ?? `Список ${id}`
+  const from = id === 0 ? ' из своих правил' : ` из списка «${list}»`
   switch (r.reason) {
-    case 'FilteredBlackList':
-      return { kind: 'blk', label: 'Заблокирован', why: ['Правило ', text, id === 0 ? ' из своих правил' : ` из списка «${list}»`] }
+    case 'FilteredBlackList': return blocked(['Правило ', text, from])
     case 'NotFilteredWhiteList':
       return { kind: 'ok', label: 'Разрешён', why: id === 0
         ? ['Правило ', text, ' разблокирует его, даже если он есть в списках']
         : ['Правило ', text, ` из белого списка «${list}»`] }
-    case 'FilteredBlockedService':
-      return { kind: 'blk', label: 'Заблокирован', why: [`Заблокирован сервис «${services.get(r.service_name ?? '') ?? r.service_name ?? ''}»`, '', ''] }
-    case 'FilteredSafeBrowsing':
-      return { kind: 'blk', label: 'Заблокирован', why: ['Опасный сайт: фишинг или вредонос', '', ''] }
-    case 'FilteredParental':
-      return { kind: 'blk', label: 'Заблокирован', why: ['Сайт для взрослых', '', ''] }
-    case 'FilteredSafeSearch':
-      return { kind: 'rw', label: 'Перезаписан', why: ['Безопасный поиск', '', ''] }
+    case 'FilteredBlockedService': return blocked(only(`Заблокирован сервис «${serviceName(services, r.service_name)}»`))
+    case 'FilteredSafeBrowsing': return blocked(only('Опасный сайт: фишинг или вредонос'))
+    case 'FilteredParental': return blocked(only('Сайт для взрослых'))
+    case 'FilteredSafeSearch': return rewritten(only('Безопасный поиск'))
     case 'Rewrite':
-    case 'RewriteEtcHosts':
-      return { kind: 'rw', label: 'Перезаписан', why: ['Ответ ', r.ip_addrs?.[0] || r.cname || 'пусто', ' из перезаписей DNS'] }
-    case 'RewriteRule':
-      return { kind: 'rw', label: 'Перезаписан', why: ['Правило ', text, id === 0 ? ' из своих правил' : ` из списка «${list}»`] }
-    default:
-      return { kind: 'ok', label: 'Не фильтруется', why: ['Ни одно правило не подошло, запрос уйдёт на серверы выше', '', ''] }
+    case 'RewriteEtcHosts': return rewritten(['Ответ ', r.ip_addrs?.[0] || r.cname || 'пусто', ' из перезаписей DNS'])
+    case 'RewriteRule': return rewritten(['Правило ', text, from])
+    default: return { kind: 'ok', label: 'Не фильтруется', why: only('Ни одно правило не подошло, запрос уйдёт на серверы выше') }
   }
 }

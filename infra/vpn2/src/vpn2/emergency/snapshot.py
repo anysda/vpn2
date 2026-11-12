@@ -35,43 +35,38 @@ def _integer(value):
     return type(value) is int
 
 
-def _fields(value, names, error):
-    # Новые поля допустимы, проверяются только известные.
-    if not isinstance(value, dict) or not names <= set(value):
+def _require(ok, error):
+    if not ok:
         raise ValueError(error)
+
+
+def _record(value, names, seen, error):
+    """Словарь с известными полями (новые допустимы) и неповторённым id."""
+    _require(isinstance(value, dict) and names <= set(value) and value['id'] not in seen, error)
+    seen.add(value['id'])
 
 
 def validate(value):
     """Двусмысленные личности отвергаются; непонятное право - отказ в доступе."""
-    _fields(value, {'schema', 'version', 'installation_id', 'created_at', 'exits',
-                    'admin_chat_id', 'bot_token', 'clients'}, 'invalid snapshot')
-    if value['schema'] != 1 or not _integer(value['version']) or value['version'] < 1:
-        raise ValueError('unsupported snapshot')
-    if not isinstance(value['installation_id'], str) or not value['installation_id']:
-        raise ValueError('invalid installation')
+    _require(isinstance(value, dict) and {'schema', 'version', 'installation_id', 'created_at', 'exits',
+                                          'admin_chat_id', 'bot_token', 'clients'} <= set(value), 'invalid snapshot')
+    _require(value['schema'] == 1 and _integer(value['version']) and value['version'] >= 1, 'unsupported snapshot')
+    _require(isinstance(value['installation_id'], str) and value['installation_id'], 'invalid installation')
     timestamp(value['created_at'])
-    if value['admin_chat_id'] is not None and not _integer(value['admin_chat_id']):
-        raise ValueError('invalid admin')
-    if value['bot_token'] is not None and not isinstance(value['bot_token'], str):
-        raise ValueError('invalid bot token')
-    if not isinstance(value['exits'], list) or not isinstance(value['clients'], list):
-        raise ValueError('invalid lists')
+    _require(value['admin_chat_id'] is None or _integer(value['admin_chat_id']), 'invalid admin')
+    _require(value['bot_token'] is None or isinstance(value['bot_token'], str), 'invalid bot token')
+    _require(isinstance(value['exits'], list) and isinstance(value['clients'], list), 'invalid lists')
     exits, clients, devices = set(), set(), set()
     for node in value['exits']:
-        _fields(node, {'id', 'name', 'ip', 'priority'}, 'invalid exit')
-        if (not all(isinstance(node[k], str) and node[k] for k in ('id', 'name', 'ip'))
-                or node['id'] in exits or not _integer(node['priority'])):
-            raise ValueError('invalid exit')
-        exits.add(node['id'])
+        _record(node, {'id', 'name', 'ip', 'priority'}, exits, 'invalid exit')
+        _require(all(isinstance(node[k], str) and node[k] for k in ('id', 'name', 'ip'))
+                 and _integer(node['priority']), 'invalid exit')
     for client in value['clients']:
-        _fields(client, {'id', 'name', 'telegram_chat_id', 'allowed', 'expires_at', 'devices'},
+        _record(client, {'id', 'name', 'telegram_chat_id', 'allowed', 'expires_at', 'devices'}, clients,
                 'invalid client')
         chat = client['telegram_chat_id']
-        if (not _integer(client['id']) or client['id'] in clients
-                or not isinstance(client['name'], str) or not (chat is None or _integer(chat))
-                or not isinstance(client['devices'], list)):
-            raise ValueError('invalid client')
-        clients.add(client['id'])
+        _require(_integer(client['id']) and isinstance(client['name'], str) and (chat is None or _integer(chat))
+                 and isinstance(client['devices'], list), 'invalid client')
         # Доступ даёт только буквальное true; непонятный срок - отказ.
         client['allowed'] = client['allowed'] is True
         if client['expires_at'] is not None:
@@ -80,11 +75,8 @@ def validate(value):
             except (ValueError, TypeError, OverflowError):
                 client['allowed'], client['expires_at'] = False, iso_time(0)
         for device in client['devices']:
-            _fields(device, {'id', 'name'}, 'invalid device')
-            if (not _integer(device['id']) or device['id'] in devices
-                    or not isinstance(device['name'], str)):
-                raise ValueError('invalid device')
-            devices.add(device['id'])
+            _record(device, {'id', 'name'}, devices, 'invalid device')
+            _require(_integer(device['id']) and isinstance(device['name'], str), 'invalid device')
     return value
 
 

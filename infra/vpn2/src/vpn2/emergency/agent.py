@@ -81,11 +81,10 @@ class Agent:
 
     def run_entry(self):
         """Entry: пульс с признаком готовности каждому экзиту."""
-        settings = self.config.get('recovery', {})
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             while not self.stop.is_set():
                 began = time.monotonic()
-                ready = readiness.entry_ready(settings)
+                ready = readiness.entry_ready()
                 for name in self.order:
                     self.send(sock, name, ready=ready)
                 self.stop.wait(max(1, PERIOD - (time.monotonic() - began)))
@@ -375,8 +374,7 @@ class Exit(Agent):
         if leader['active']:
             if now - self.probe_at >= PERIOD:
                 self.probe_at = now
-                self.reach = readiness.reachable(self.state.get('entry_host') or self.nodes[self.entry][0],
-                                             self.config.get('recovery', {}).get('entry_port', readiness.ENTRY_PORT))
+                self.reach = readiness.reachable(self.state.get('entry_host') or self.nodes[self.entry][0])
                 if not self.reach:
                     self.ready_since = None
             if role and leader['owner'] == self.node:

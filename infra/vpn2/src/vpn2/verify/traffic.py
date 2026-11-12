@@ -261,6 +261,18 @@ class Protocol:
     def cleanup(self):
         self.down()
 
+    def stop_process(self):
+        """Процесс клиента: terminate, через 5 с kill."""
+        if self.process is None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        self.process = None
+
 
 class WireGuard(Protocol):
     name = 'WireGuard'
@@ -368,14 +380,7 @@ class OpenVPN(Protocol):
         return False
 
     def down(self):
-        if self.process is not None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-            self.process = None
+        self.stop_process()
 
     def revoke(self, identity):
         name = self.names[identity]
@@ -522,13 +527,7 @@ class IKEv2(Protocol):
 
     def cleanup(self):
         self.down()
-        if self.process is not None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-            self.process = None
+        self.stop_process()
         if SWAN_FILE.exists():
             SWAN_FILE.unlink()
             run('swanctl', '--load-all', '--noprompt', check=False)

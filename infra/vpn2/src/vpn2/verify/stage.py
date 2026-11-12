@@ -18,6 +18,7 @@ import tempfile
 import time
 import traceback
 
+from vpn2 import fsutil
 from vpn2.watchdog import warp, yt
 
 REPORT = '/var/lib/anysda/verify-report.json'
@@ -126,8 +127,8 @@ def yt_status():
         if not any(o.get('tag') == 'youtube-auto' for o in config.get('outbounds', [])):
             return 2, 'YouTube: ожидаю конфиг youtube-auto от стадии 20'
         lines = ['YouTube selector: ' + yt.api('GET')['now']]
-        state = json.loads(yt.STATE.read_text()) if yt.STATE.exists() else None
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as failure:
+        state = fsutil.read_json(yt.STATE, None)
+    except BROKEN as failure:
         return 1, f'YouTube: ошибка контроллера {type(failure).__name__}'
     if lines[0].rpartition(' ')[2] not in ('youtube-ru', 'foreign-best'):
         return 1, '\n'.join([*lines, 'неизвестный выход selector'])
@@ -461,9 +462,7 @@ class Stage:
             rows = self.read_rows()
             report = {'host': self.tag, 'code': self.code(), 'checks': rows, 'warnings': self.warnings, 'time': now()}
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = Path(f'{path}.tmp')
-            tmp.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding='utf-8')
-            os.replace(tmp, path)
+            fsutil.atomic(path, json.dumps(report, ensure_ascii=False, indent=1), mode=0o644)
         except (OSError, ValueError, KeyError, TypeError) as error:
             say(problem(error), sys.stderr)
             self.line(f'✗ отчёт: не записан {path}', sys.stderr)

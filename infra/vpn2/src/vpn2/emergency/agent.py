@@ -6,7 +6,6 @@
 """
 
 import argparse
-import fcntl
 import hmac
 import json
 import logging
@@ -561,12 +560,11 @@ def main(argv=None):
         raise SystemExit('emergency agent: invalid config')
     entry = config['node'] == config.get('entry_id', ENTRY)
     agent = Agent(config, args.state_dir) if entry else Exit(config, args.state_dir)
-    with open(agent.directory / 'agent.lock', 'w') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            raise SystemExit('observer already running') from None
-        for number in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(number, lambda *_: agent.stop.set())
-        agent.run_entry() if entry else agent.run()
+    try:
+        with fsutil.lock(agent.directory / 'agent.lock', blocking=False):
+            for number in (signal.SIGTERM, signal.SIGINT):
+                signal.signal(number, lambda *_: agent.stop.set())
+            agent.run_entry() if entry else agent.run()
+    except fsutil.LockBusy:
+        raise SystemExit('observer already running') from None
     return 0

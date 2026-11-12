@@ -15,7 +15,7 @@ from .texts import ERROR_FALLBACK, ERROR_TEXT
 
 panel_http = httpx.AsyncClient(base_url=config.ANYSDA_URL, timeout=10.0, trust_env=False,
                                headers={'Authorization': f'Bearer {config.SECRET}'})
-# Sends bypass the python-telegram-bot pool (it gave PoolTimeout); getUpdates uses WatchedRequest.
+# Sends bypass the python-telegram-bot pool; getUpdates goes through WatchedRequest.
 telegram_http = httpx.AsyncClient(
     base_url=f'https://api.telegram.org/bot{config.TOKEN}', proxy=config.TG_PROXY,
     timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0),
@@ -46,7 +46,6 @@ async def telegram(method: str, payload: dict, files: dict | None = None) -> dic
 
 async def send(chat_id: int, text: str, parse_mode: str | None = None,
                reply_markup: dict | None = None, message_id: int | None = None) -> dict:
-    """With message_id the sent message is redrawn in place."""
     payload = _given(chat_id=chat_id, text=text, message_id=message_id or None,
                      parse_mode=parse_mode or None, reply_markup=reply_markup)
     return await telegram('editMessageText' if message_id else 'sendMessage', payload)
@@ -58,7 +57,6 @@ async def answer(callback_id: str, text: str = '', alert: bool = False) -> dict:
 
 
 async def send_file(chat_id: int, kind: str, filename: str, content: bytes, caption: str) -> dict:
-    """kind is 'photo' (a QR the phone scans right from the chat) or 'document'."""
     mime = 'image/png' if kind == 'photo' else 'application/octet-stream'
     data = {'chat_id': str(chat_id), 'caption': caption, 'parse_mode': 'Markdown'}
     return await telegram(f'send{kind.capitalize()}', data, {kind: (filename, content, mime)})

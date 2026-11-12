@@ -151,7 +151,6 @@ async def play(scenario, defaults):
             raise asyncio.CancelledError
         await real_sleep(0)
 
-    bot.monitor.time = SimpleNamespace(monotonic=lambda: clock.now)
     with tempfile.TemporaryDirectory() as tmp, patch.object(asyncio, 'sleep', fake_sleep):
         outbox = bot.outbox.Outbox(f'{tmp}/outbox.sqlite')
         for who, what in scenario['steps']:
@@ -169,4 +168,5 @@ async def play(scenario, defaults):
             others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
             await asyncio.gather(*others, return_exceptions=True)
             record.extend(['queued', payload] for payload in queued(outbox))
+        outbox.db.close()
     return record

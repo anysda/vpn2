@@ -43,7 +43,6 @@ async def restart_on_new_runtime() -> None:
 
 async def main() -> None:
     if not config.TOKEN or config.CHAT_ID == 0:
-        # Exiting here would make docker --restart spin; /health keeps the container healthy.
         log.warning('Токен бота или Chat ID не заданы: жду их в панели, раздел «Боты»')
         await serve(web.get('/health', events.health(waiting_token=True)))
         await restart_on_new_runtime()
@@ -87,8 +86,7 @@ async def main() -> None:
 
 
 async def invalid_token_pause() -> None:
-    """Without the pause docker restarts the bot into the same rejected token within seconds.
-    A new token from the panel ends the pause at once; /health stays up throughout."""
+    """/health stays up for the pause; a new token from the panel ends it at once."""
     runner = await serve(web.get('/health', events.health(waiting_token=True, invalid_token=True)))
     try:
         log.error('Telegram отверг токен бота (InvalidToken): проверьте токен в панели, '

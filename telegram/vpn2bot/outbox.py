@@ -98,13 +98,7 @@ class Outbox:
     def remove(self, event_id: int) -> None:
         with self.db:
             self.db.execute('DELETE FROM events WHERE id = ?', (event_id,))
-
-    def retry(self, event_id: int, delay: float) -> None:
-        with self.db:
-            self.db.execute('UPDATE events SET due = ? WHERE id = ?', (time.time() + delay, event_id))
-
     async def run(self, send, on_rejected) -> None:
-        """on_rejected(payload, status) hears of a message Telegram refused for good."""
         while True:
             try:
                 row = self.claim()
@@ -130,7 +124,8 @@ class Outbox:
                             60 if status is None else 0, error.retry_after if status == 429 else 0)
                 if status == 429:
                     self.throttled_until = max(self.throttled_until, time.time() + delay)
-                self.retry(row['id'], delay)
+                with self.db:
+                    self.db.execute('UPDATE events SET due = ? WHERE id = ?', (time.time() + delay, row['id']))
                 log.warning('outbox retry id=%d attempt=%d delay=%.1fs error=%s',
                             row['id'], row['attempts'] + 1, delay, type(error).__name__)
                 return

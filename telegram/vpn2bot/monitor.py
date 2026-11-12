@@ -1,9 +1,8 @@
 """Polls the panel and alerts the admin chat about nodes, their load and the panel itself."""
 import asyncio
 import os
-import time
 
-from . import api, config, texts
+from . import api, config
 from .config import log
 
 INTERVAL_SEC = 30
@@ -26,7 +25,6 @@ node_size: dict[str, dict] = {}
 
 
 def thresholds(size: dict) -> tuple[float, float, int]:
-    """CPU and RAM thresholds and checks in a row for a node of this size."""
     cores, mem = size.get('cores'), size.get('memTotalBytes')
     small_cpu = isinstance(cores, (int, float)) and cores <= 1
     small_ram = isinstance(mem, (int, float)) and mem <= SMALL_MEM_BYTES
@@ -56,9 +54,8 @@ async def check_nodes(nodes: list) -> None:
         tag, stale = n.get('tag', '?'), n.get('staleSec')
         down = stale is None or stale >= DOWN_SEC
         await edge((tag, 'down'), down, not down, HITS,
-                   texts.NODE_DOWN.format(tag.upper(), DOWN_SEC // 60), texts.NODE_UP.format(tag.upper()))
-    for n in nodes:
-        tag = n.get('tag', '?')
+                   f'🔴 *Нода {tag.upper()} лежит* — метрик нет больше {DOWN_SEC // 60} мин',
+                   f'🟢 *Нода {tag.upper()} восстановилась*')
         size = node_size.setdefault(tag, {})
         size.update({field: n[field] for field in ('cores', 'memTotalBytes')
                      if isinstance(n.get(field), (int, float))})
@@ -66,35 +63,25 @@ async def check_nodes(nodes: list) -> None:
         for label, value, high in (('CPU', n.get('cpu'), cpu_high), ('RAM', n.get('ram'), ram_high)):
             if isinstance(value, (int, float)):
                 await edge((tag, label), value >= high, value < high - HYSTERESIS, hits,
-                           texts.LOAD_HIGH.format(tag.upper(), label, high, value),
-                           texts.LOAD_OK.format(tag.upper(), label, value))
+                           f'⚠️ *{tag.upper()}*: нагрузка на {label} выше {high:.0f}% ({value:.0f}%)',
+                           f'✅ *{tag.upper()}*: {label} вернулся в норму ({value:.0f}%)')
 
 
 async def monitor_loop() -> None:
     log.info('monitor started: every %ds, cpu=%s, ram=%s, window=%s (None - by node size)',
              INTERVAL_SEC, ENV_CPU, ENV_RAM, ENV_WINDOW)
-    failed_since, panel_alerted = None, False
     while True:
         await asyncio.sleep(INTERVAL_SEC)
         try:
-            data = await api.status()
+            data, failed = await api.status(), False
         except Exception as e:
             log.warning('panel poll error: %s', e)
-            now = time.monotonic()
-            failed_since = now if failed_since is None else failed_since
-            if now - failed_since >= DOWN_SEC and not panel_alerted:
-                try:
-                    await api.send(config.CHAT_ID, texts.PANEL_DOWN)
-                    panel_alerted = True
-                except Exception as error:
-                    log.warning('panel alert delivery error: %s', error)
-            continue
-        # A failed send or a broken snapshot does not make the panel unreachable.
-        failed_since = None
+            data, failed = {}, True
         try:
-            if panel_alerted:
-                await api.send(config.CHAT_ID, texts.PANEL_UP)
-                panel_alerted = False
-            await check_nodes(data.get('nodes', []))
+            # A failed send or a broken snapshot does not make the panel unreachable.
+            await edge(('panel',), failed, not failed, DOWN_SEC // INTERVAL_SEC + 1,
+                       '🔴 Панель недоступна — мониторинговые данные не поступают', '🟢 Панель снова доступна')
+            if not failed:
+                await check_nodes(data.get('nodes', []))
         except Exception as e:
             log.warning('monitor error: %s', e)

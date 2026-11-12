@@ -1,4 +1,4 @@
-"""Команды, кнопки и текст: одна таблица маршрутов и один разбор входящего."""
+"""Commands, buttons and text of both chats: one route table and one parse of an incoming update."""
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -6,20 +6,20 @@ from datetime import datetime
 from . import api, config, events, texts
 from .api import BotApiError
 from .config import log
+from .texts import md_bold
 
 ADMIN, CLIENT = 'admin', 'client'
 TEXT = 'text'
+CLIENTS = '/api/bot/admin/clients'
 
-# Чаты, от которых ждём название устройства после «Добавить устройство».
+# Chats asked for a device name after «Добавить устройство».
 awaiting_device_name: set[int] = set()
-# Чего ждём текстом в админском чате (он один): ('anew', '') — имя нового
-# клиента, ('aexp', '<id>') — срок действия клиента <id>.
+# What the one admin chat is asked to type: ('anew', '') a new client's name, ('aexp', id) an expiry.
 admin_await: tuple | None = None
 
 
 @dataclass
 class Ask:
-    """Одно входящее: кто, что нажал или написал, и куда отвечать."""
     chat_id: int
     action: str
     arg: str
@@ -31,7 +31,7 @@ class Ask:
         await api.send(self.chat_id, text, parse_mode, markup)
 
     async def show(self, text: str, markup: dict):
-        """Перерисовать сообщение с нажатой кнопкой; без кнопки - прислать новое."""
+        """Redraw the message of the pressed button; without a button send a new one."""
         await api.send(self.chat_id, text, 'Markdown', markup, self.message_id)
 
     async def answer(self, text: str = '', alert: bool = False) -> dict:
@@ -40,8 +40,6 @@ class Ask:
     async def json(self, method: str, path: str, body: dict | None = None):
         return (await api.panel(method, path, body)).json()
 
-
-# ── Клиент ─────────────────────────────────────────────────────────────────────
 
 async def client_view(ask: Ask) -> dict:
     return await ask.json('GET', f'/api/bot/client?chatId={ask.chat_id}')
@@ -53,7 +51,6 @@ async def show_devices(ask: Ask, view: dict) -> None:
 
 async def client_start(ask: Ask) -> None:
     if ask.arg:
-        # Диплинк-приглашение t.me/bot?start=<пароль> привязывает чат к клиенту.
         body = {'password': ask.arg, 'chatId': ask.chat_id}
         if ask.username:
             body['username'] = ask.username
@@ -62,9 +59,9 @@ async def client_start(ask: Ask) -> None:
         except BotApiError as e:
             if e.status != 404:
                 raise
-            await ask.say(texts.BAD_INVITE)
+            await ask.say('Ссылка недействительна. Запросите новое приглашение у администратора.')
             return
-        await ask.say(texts.LINKED.format(texts.md_bold(view.get('name', '?'))), 'Markdown')
+        await ask.say(f'✅ Доступ к VPN активирован для {md_bold(view.get("name", "?"))}.', 'Markdown')
     else:
         view = await client_view(ask)
     await ask.say(texts.menu(view), 'Markdown', texts.REPLY_KB)
@@ -73,19 +70,17 @@ async def client_start(ask: Ask) -> None:
 async def client_text(ask: Ask) -> None:
     naming = ask.chat_id in awaiting_device_name
     awaiting_device_name.discard(ask.chat_id)
-    # Кнопки навигации важнее ожидания названия.
     if naming and ask.arg not in (texts.NAV_DEVICES, texts.NAV_ADD):
         if not ask.arg:
-            await ask.say(texts.NO_DEVICE_NAME)
+            await ask.say('Название не распознано. Откройте меню: /start')
             return
         view = await ask.json('POST', '/api/bot/devices', {'chatId': ask.chat_id, 'name': ask.arg})
-        await ask.say(texts.DEVICE_ADDED.format(ask.arg))
+        await ask.say(f'✅ Устройство «{ask.arg}» добавлено.')
     else:
         view = await client_view(ask)
         devices = view.get('devices', [])
         if ask.arg == texts.NAV_DEVICES:
-            await ask.say(texts.devices(view), 'Markdown',
-                          texts.devices_markup(view) if devices else None)
+            await ask.say(texts.devices(view), 'Markdown', texts.devices_markup(view) if devices else None)
             return
         if ask.arg == texts.NAV_ADD:
             limit = view.get('deviceLimit')
@@ -93,7 +88,7 @@ async def client_text(ask: Ask) -> None:
                 await ask.say(texts.ERROR_TEXT['device_limit'])
                 return
             awaiting_device_name.add(ask.chat_id)
-            await ask.say(texts.ASK_DEVICE_NAME)
+            await ask.say('Пришлите название устройства (например: Телефон, Ноутбук).')
             return
     await ask.say(texts.menu(view), 'Markdown', texts.REPLY_KB)
 
@@ -116,18 +111,17 @@ async def device_card(ask: Ask) -> None:
 
 
 async def device_config(ask: Ask) -> None:
-    """Кнопки wg и ovpn: конфиг файлом, для WireGuard перед ним QR."""
     device = texts.find_device(await client_view(ask), ask.arg)
     if device is None:
         await ask.answer(texts.NO_DEVICE, alert=True)
         return
-    title, default_name, ext = texts.CONFIGS[ask.action]
-    await ask.answer(texts.PREPARING.format(title))
+    title, default_name, ext = {'wg': ('WireGuard', 'wireguard', 'conf'),
+                                'ovpn': ('OpenVPN', 'openvpn', 'ovpn')}[ask.action]
+    await ask.answer(f'Готовлю конфиг {title}…')
     base, query = api.device_path(ask.arg), f'?chatId={ask.chat_id}'
     conf = (await api.panel('GET', f'{base}/{ask.action}-config{query}')).text
-    caption = f'{texts.md_bold(device.get("name", "?"))} — {title}'
+    caption = f'{md_bold(device.get("name", "?"))} — {title}'
     if ask.action == 'wg':
-        # QR того же конфига рисует панель: один генератор с её SVG.
         qr = (await api.panel('GET', f'{base}/wg-qrcode.png{query}')).content
         await api.send_file(ask.chat_id, 'photo', 'qr.png', qr, caption)
     name = device.get('configName') or device.get('name') or default_name
@@ -136,51 +130,39 @@ async def device_config(ask: Ask) -> None:
 
 async def reissue_ask(ask: Ask) -> None:
     await ask.answer()
-    await ask.show(texts.REISSUE_CONFIRM,
+    await ask.show('🔄 *Перевыпустить ключи?*\n\nСтарые конфиги перестанут работать — '
+                   'нужно будет выдать новые на все устройства.',
                    texts.confirm_markup(f'reicyes:{ask.arg}', f'dev:{ask.arg}'))
 
 
 async def reissue(ask: Ask) -> None:
-    await ask.answer(texts.REISSUING)
+    await ask.answer('Перевыпускаю ключи…')
     view = await ask.json('POST', api.device_path(ask.arg, '/reissue'), {'chatId': ask.chat_id})
     device = texts.find_device(view, ask.arg)
     if device is None:
         await show_devices(ask, view)
         return
-    await ask.show(texts.REISSUE_STARTED.format(texts.device_card(device)),
-                   texts.device_card_markup(ask.arg))
+    await ask.show(f'Перевыпуск выполняется\n\n{texts.device_card(device)}', texts.device_card_markup(ask.arg))
 
 
 async def delete_device_ask(ask: Ask) -> None:
     device = texts.find_device(await client_view(ask), ask.arg) or {}
     await ask.answer()
-    question = texts.DELETE_DEVICE_ASK.format(device.get('name', '?'))
-    await ask.show(texts.DELETE_DEVICE.format(texts.md_bold(question)),
+    question = md_bold(f'Удалить устройство «{device.get("name", "?")}»?')
+    await ask.show(f'🗑 {question}\n\nКонфиги этого устройства перестанут работать.',
                    texts.confirm_markup(f'delyes:{ask.arg}', f'dev:{ask.arg}'))
 
 
 async def delete_device(ask: Ask) -> None:
-    await ask.answer(texts.DELETING)
+    await ask.answer('Удаляю устройство…')
     view = await ask.json('DELETE', f'{api.device_path(ask.arg)}?chatId={ask.chat_id}')
     await show_devices(ask, view)
 
 
-# ── Администратор ──────────────────────────────────────────────────────────────
-
-CLIENTS = '/api/bot/admin/clients'
-
-
-async def admin_start(ask: Ask) -> None:
-    await ask.say(texts.ADMIN_START, 'Markdown')
-
-
-async def status(ask: Ask) -> None:
-    await ask.say(texts.status(await api.status()), 'Markdown')
-
-
 async def client_list(ask: Ask) -> None:
     items = await ask.json('GET', CLIENTS)
-    await ask.show(texts.CLIENT_LIST.format(len(items)), texts.clients_markup(items))
+    await ask.show(f'👥 *Клиенты* ({len(items)} шт.)\nВыберите клиента для управления:',
+                   texts.clients_markup(items))
 
 
 async def client_card(ask: Ask, client_id: str) -> None:
@@ -194,21 +176,21 @@ async def open_clients(ask: Ask) -> None:
 
 
 async def ask_input(ask: Ask) -> None:
-    """Кнопки «Создать клиента» и «Срок»: дальше ждём текст."""
     global admin_await
     admin_await = (ask.action, ask.arg)
     await ask.answer()
     if ask.action == 'anew':
-        await ask.say(texts.ASK_CLIENT_NAME)
+        await ask.say('➕ Пришлите имя нового клиента.')
     else:
-        await ask.say(texts.ASK_EXPIRY, 'Markdown')
+        await ask.say('🗓 Пришлите дату окончания доступа в формате *ДД.ММ.ГГГГ* или слово «бессрочно».',
+                      'Markdown')
 
 
 async def freeze(ask: Ask) -> None:
     c = await ask.json('GET', f'{CLIENTS}/{ask.arg}')
     frozen = not c.get('frozenManual')
     await ask.json('PATCH', f'{CLIENTS}/{ask.arg}', {'frozenManual': frozen})
-    await ask.answer(texts.ACCESS_OFF if frozen else texts.ACCESS_ON)
+    await ask.answer(texts.ACCESS_OFF if frozen else 'Включение запущено')
     await client_card(ask, ask.arg)
 
 
@@ -216,10 +198,10 @@ async def retry(ask: Ask) -> None:
     c = await ask.json('GET', f'{CLIENTS}/{ask.arg}')
     operation_id = (c.get('operation') or {}).get('id', '')
     if not re.fullmatch(r'[a-f0-9-]{36}', operation_id):
-        await ask.answer(texts.NO_OPERATION, alert=True)
+        await ask.answer('Операция не найдена', alert=True)
         return
     await api.panel('POST', f'/api/bot/admin/access-operations/{operation_id}/retry')
-    await ask.answer(texts.RETRY_STARTED)
+    await ask.answer('Повтор запущен')
     await client_card(ask, ask.arg)
 
 
@@ -228,32 +210,31 @@ async def change_limit(ask: Ask) -> None:
     limit = c.get('deviceLimit')
     if ask.action == 'alm+':
         if limit is None:
-            await ask.answer(texts.LIMIT_UNLIMITED)
+            await ask.answer('Лимит уже безлимитный')
             return
         limit += 1
     else:
-        # С безлимита — на число устройств (не меньше 1). Ниже числа устройств
-        # панель не пустит сама: вернёт 409.
+        # From unlimited down to the device count; below it the panel answers 409 itself.
         limit = max(c.get('deviceCount', 0), 1) if limit is None else limit - 1
     await ask.json('PATCH', f'{CLIENTS}/{ask.arg}', {'deviceLimit': limit})
-    await ask.answer(texts.LIMIT_SET.format(limit))
+    await ask.answer(f'Лимит: {limit}')
     await client_card(ask, ask.arg)
 
 
 async def invite(ask: Ask) -> None:
     c = await ask.json('GET', f'{CLIENTS}/{ask.arg}')
     if not c.get('password', ''):
-        await ask.answer(texts.NO_PASSWORD, alert=True)
+        await ask.answer('У клиента нет пароля для приглашения', alert=True)
         return
-    await ask.answer(texts.SENDING_INVITE)
+    await ask.answer('Отправляю приглашение…')
     await events.send_invite(c)
 
 
 async def delete_client_ask(ask: Ask) -> None:
     c = await ask.json('GET', f'{CLIENTS}/{ask.arg}')
     await ask.answer()
-    question = texts.DELETE_CLIENT_ASK.format(c.get('name', '?'))
-    await ask.show(texts.DELETE_CLIENT.format(texts.md_bold(question)),
+    question = md_bold(f'Удалить клиента «{c.get("name", "?")}»?')
+    await ask.show(f'🗑 {question}\n\nВсе его устройства и конфиги перестанут работать.',
                    texts.confirm_markup(f'adyes:{ask.arg}', f'acl:{ask.arg}'))
 
 
@@ -264,37 +245,41 @@ async def delete_client(ask: Ask) -> None:
 
 
 async def admin_text(ask: Ask) -> None:
-    """Текст в админском чате нужен, только пока ждём имя клиента или срок."""
     global admin_await
     if admin_await is None:
         return
     kind, client_id = admin_await
     if kind == 'anew':
         if not ask.arg:
-            await ask.say(texts.NO_CLIENT_NAME)
+            await ask.say('Имя не распознано. Пришлите имя клиента ещё раз.')
             return
         admin_await = None
         client_id = str((await ask.json('POST', CLIENTS, {'name': ask.arg})).get('id'))
-        await ask.say(texts.CLIENT_CREATED.format(ask.arg))
+        await ask.say(f'✅ Клиент «{ask.arg}» создан.')
     else:
         expires = None
-        if ask.arg.lower() not in texts.NEVER_EXPIRES:
+        if ask.arg.lower() not in ('бессрочно', 'безсрочно', 'infinite', 'never'):
             try:
-                day = datetime.strptime(ask.arg, '%d.%m.%Y')
+                expires = datetime.strptime(ask.arg, '%d.%m.%Y').strftime('%Y-%m-%dT00:00:00.000Z')
             except ValueError:
-                await ask.say(texts.BAD_EXPIRY, 'Markdown')
+                await ask.say('⚠️ Неверный формат. Пришлите дату как *ДД.ММ.ГГГГ* или слово «бессрочно».',
+                              'Markdown')
                 return
-            expires = day.strftime('%Y-%m-%dT00:00:00.000Z')
         admin_await = None
         await ask.json('PATCH', f'{CLIENTS}/{client_id}', {'expiresAt': expires})
-        await ask.say(texts.EXPIRY_CLEARED if expires is None else texts.EXPIRY_SET)
+        await ask.say('Срок действия снят (бессрочно).' if expires is None else 'Срок действия обновлён.')
     await client_card(ask, client_id)
 
 
-# ── Маршруты ───────────────────────────────────────────────────────────────────
+async def admin_start(ask: Ask) -> None:
+    await ask.say('*anysda-vpn*\n\n/status — состояние системы\n/clients — клиенты', 'Markdown')
 
-# (кому доступно, команда | кнопка | TEXT) → обработчик. Чего в таблице нет,
-# того этой роли нельзя: команда молча пропускается, кнопка просто гаснет.
+
+async def status(ask: Ask) -> None:
+    await ask.say(texts.status(await api.status()), 'Markdown')
+
+
+# What a role may do; anything missing is skipped silently, a button just stops spinning.
 ROUTES = {
     (CLIENT, '/start'): client_start,
     (CLIENT, '/help'): client_start,
@@ -327,7 +312,7 @@ COMMANDS = sorted({name[1:] for _, name in ROUTES if name.startswith('/')})
 
 
 async def allowed(update) -> bool:
-    """Личный чат удостоверяет владельца сам; в группе слушаем только её админов."""
+    """A private chat vouches for its owner; in the admin group only its admins are obeyed."""
     chat, user = update.effective_chat, update.effective_user
     if chat is None or user is None or user.is_bot:
         return False
@@ -335,7 +320,7 @@ async def allowed(update) -> bool:
         return user.id == chat.id
     if chat.id != config.CHAT_ID or chat.type not in ('group', 'supergroup'):
         return False
-    # Анонимные сообщения от имени группы не удостоверяют отправителя.
+    # A message sent on behalf of the group does not show who sent it.
     if update.message and update.message.sender_chat:
         return False
     try:
@@ -347,7 +332,6 @@ async def allowed(update) -> bool:
 
 
 async def dispatch(update, _context) -> None:
-    """Единая точка входа для команд, кнопок и текста."""
     if not await allowed(update):
         return
     chat_id, query = update.effective_chat.id, update.callback_query
@@ -364,7 +348,7 @@ async def dispatch(update, _context) -> None:
         if command[1:] in COMMANDS and command.startswith('/'):
             ask.action, ask.arg = command, words[1] if len(words) > 1 else ''
         elif update.message:
-            # Правка старого сообщения — не новый ввод: её текст не читаем.
+            # An edited old message is not new input: update.message is None for it.
             ask.arg = (update.message.text or '').strip()
     handler = ROUTES.get((role, ask.action))
     if handler is None:
@@ -378,16 +362,16 @@ async def dispatch(update, _context) -> None:
 
 
 async def report_failure(ask: Ask, role: str, error: Exception) -> None:
-    """Один ответ на любую ошибку: отказ панели её словами, прочее - общей фразой."""
+    """One answer to any error: a panel refusal in its own words, anything else in a common phrase."""
     if isinstance(error, BotApiError):
         message = error.message
     else:
         log.error('%s %s failed (%s)', role, ask.action, type(error).__name__)
         message = texts.UNEXPECTED_ERROR
-    # Панель не знает этот чат: его не привязывали или отвязали посреди запроса.
+    # The panel does not know this chat: never linked, or unlinked in the middle of the request.
     if (role == CLIENT and isinstance(error, BotApiError) and error.status == 404
             and 'not_linked' in (error.code, error.message)):
-        # Сообщением: кнопку уже могли погасить «Готовлю конфиг…», второй ответ не дойдёт.
+        # As a message: «Готовлю конфиг…» may have used up the one answer to the button.
         if ask.callback_id:
             await ask.answer()
         await ask.say(texts.no_access())

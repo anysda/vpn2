@@ -18,7 +18,6 @@ OUTBOX_KEY = web.AppKey('outbox', Outbox)
 
 
 async def report_rejected(payload: dict, status: int) -> None:
-    """A message Telegram refused goes to the panel journal, the bot does not write about it in Telegram."""
     recipient = 'admin' if payload.get('chat_id') == config.CHAT_ID else 'client'
     r = await api.panel_http.post('/api/bot/events', json={
         'type': 'telegram_rejected', 'status': status, 'recipient': recipient})
@@ -74,7 +73,7 @@ def system_alert(data: dict) -> list[dict]:
 
 # Queued notifications; the panel writes the client texts, the bot only delivers them.
 QUEUED = {
-    'client_created': lambda d: admin_note(texts.NEW_CLIENT.format(md_bold(d.get('name', '?')))),
+    'client_created': lambda d: admin_note(f'👤 Новый клиент: {md_bold(d.get("name", "?"))}'),
     'broadcast': lambda d: [{'chat_id': chat_id, 'text': d.get('text', '')}
                             for chat_id in chat_ids(d.get('chatIds'))],
     'client_notify': lambda d: [{'chat_id': chat_ids([d.get('chatId')])[0],
@@ -101,23 +100,22 @@ async def send_config(data: dict) -> None:
 
 async def send_ikev2(data: dict) -> None:
     username = data.get('username', '?')
-    await api.send(config.CHAT_ID, texts.IKEV2.format(
-        data.get('server', '?'), username, data.get('password', '?'), md_bold(username)), 'Markdown')
+    await api.send(config.CHAT_ID, f'Сервер: `{data.get("server", "?")}`\nЛогин: `{username}`\n'
+                   f'Пароль: `{data.get("password", "?")}`\n\n{md_bold(username)} — IKEv2', 'Markdown')
     if data.get('caCertPem'):
         await api.send_file(config.CHAT_ID, 'document', f'{username}-ca.crt',
                             data['caCertPem'].encode('utf-8'), f'{md_bold(username)} — CA-сертификат IKEv2')
 
 
 async def send_invite(data: dict) -> None:
-    """A note to the admin and the ready invitation he forwards to the client."""
     if data.get('password', ''):
-        await api.send(config.CHAT_ID, texts.INVITE_NOTE.format(data.get('name', '?')))
+        await api.send(config.CHAT_ID, f'📨 Приглашение для «{data.get("name", "?")}». Перешлите клиенту сообщение ниже ↓')
         await api.send(config.CHAT_ID, texts.invite(data['password']))
 
 
 async def announce_deploy(data: dict) -> None:
     unmeasured = data.get('verify_unmeasured') is True
-    text = title = texts.DEPLOY_WARNED if unmeasured else texts.DEPLOY_DONE
+    text = title = '⚠️ *Установка завершена с предупреждениями*' if unmeasured else '✅ *Установка завершена*'
     # Right after a deploy the panel may still be starting.
     for attempt in range(5):
         try:
@@ -126,7 +124,9 @@ async def announce_deploy(data: dict) -> None:
         except Exception as e:
             log.warning('announce_deploy: status failed (try %d): %s', attempt + 1, e)
             await asyncio.sleep(3)
-    await api.send(config.CHAT_ID, text + (texts.DEPLOY_UNMEASURED if unmeasured else ''), 'Markdown')
+    if unmeasured:
+        text += '\n\n? Не проверено: часть проверок не измерена. Причины — в сводке деплоя 99-verify.'
+    await api.send(config.CHAT_ID, text, 'Markdown')
 
 
 # Sent at once past the queue: the admin forwards these to the client himself.

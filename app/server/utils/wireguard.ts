@@ -4,6 +4,7 @@ import os from 'node:os'
 import { and, eq, isNull } from 'drizzle-orm'
 import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
+import { wgAllowedIps } from './allowed-ips'
 import { coalesceRuns } from './api'
 
 /**

@@ -5,8 +5,7 @@
     state: directory
     mode: '0755'
 
-# Разбор wg0.conf остаётся на узле для проверок вне пакета, общие функции
-# стадий и список пулов берёт restore.
+# Общие функции стадий и список пулов берёт restore.
 - name: Библиотеки для команд вне клона
   ansible.builtin.copy:
     src: "{{ backup_infra }}/{{ item }}"
@@ -15,11 +14,13 @@
   loop: "{{ backup_node_lib }}"
 
 - name: Команды бэкапа, восстановления и списка архивов
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "/usr/local/bin/{{ item }}"
+  ansible.builtin.template:
+    src: anysda-command.sh.j2
+    dest: "/usr/local/bin/{{ item.name }}"
     mode: '0755'
   loop: "{{ backup_commands }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 # Единственное место, где парольная фраза живёт на entry.
 - name: Настройки бэкапа

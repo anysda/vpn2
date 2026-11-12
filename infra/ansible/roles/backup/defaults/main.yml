@@ -26,9 +26,9 @@ backup_packages_s3: [unzip, curl, gnupg]
 # Версия aws-cli v2 - из общего списка пинов; Ubuntu 24.04 убрала пакет awscli.
 backup_aws_cli_version: "{{ (lookup('ansible.builtin.file', backup_infra ~ '/versions.yml') | from_yaml).aws_cli }}"
 backup_aws_cli_url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{{ backup_aws_cli_version }}.zip"
-# Три команды на entry и то, что они берут с узла вне клона.
-backup_commands: [anysda-backup.sh, anysda-restore.sh, anysda-backup-list.sh]
-backup_node_lib:
-  - ansible/roles/backup/files/wg_conf.py
-  - lib/anysda-svc.sh
-  - ../app/shared/vpn-pools.json
+# Три команды на entry и то, что restore берёт с узла вне клона.
+backup_commands:
+  - {name: anysda-backup.sh, command: backup}
+  - {name: anysda-restore.sh, command: restore}
+  - {name: anysda-backup-list.sh, command: backup-list}
+backup_node_lib: [lib/anysda-svc.sh, ../app/shared/vpn-pools.json]

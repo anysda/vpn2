@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# {{ item.name }}: работу ведёт пакет vpn2 (команда `vpn2 {{ item.command }}`), здесь только его запуск.
+# Пакет берётся из окружения деплоя, иначе из клона по отметке /etc/anysda/source-root
+# (её пишет стадия 26-backup); без отметки - /opt/anysda-vpn2.
+set -euo pipefail
+
+[[ -x /opt/vpn2/venv/bin/vpn2 ]] && exec /opt/vpn2/venv/bin/vpn2 {{ item.command }} "$@"
+root=$(cat /etc/anysda/source-root 2>/dev/null || true)
+src=${root:-/opt/anysda-vpn2}/infra/vpn2/src
+[[ -d "$src/vpn2" ]] || { echo "{{ item.name }}: нет пакета vpn2 в $src" >&2; exit 2; }
+PYTHONPATH=$src exec python3 -m vpn2.cli {{ item.command }} "$@"

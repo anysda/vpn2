@@ -35,8 +35,8 @@
   tasks:
     - name: Журнал закрыт
       ansible.builtin.raw: >-
-        python3 -c 'import json,pathlib,sys; p=pathlib.Path("/var/lib/vpn2-deploy/operation.json");
-        sys.exit(0 if not p.exists() or json.loads(p.read_text())["phase"] in ("complete","aborted","rolled-back") else 76)'
+        f=/var/lib/vpn2-deploy/operation.json; test ! -e $f
+        || grep -qE '"phase": *"(complete|aborted|rolled-back)"' $f || exit 76
       register: journal
       changed_when: false
       failed_when: journal.rc != 0
@@ -51,6 +51,7 @@
 - name: Проверки выпуска и артефакты
   hosts: all
   any_errors_fatal: true
+  environment: &package {PYTHONPATH: /tmp/anysda}
   vars:
     images: >-
       --panel-image={{ vpn2_env.PANEL_IMAGE | default('') | quote }} --bot-image={{ vpn2_env.TGBOT_IMAGE | default('') | quote }}
@@ -64,9 +65,8 @@
       ansible.builtin.unarchive: {src: "{{ bundle }}", dest: /tmp/anysda}
       changed_when: false
       tags: [release, complete, artifacts]
-    - name: Журнал выпуска и общие функции
-      ansible.builtin.copy: {src: "../lib/{{ item }}", dest: "/tmp/anysda/{{ item }}", mode: "0700"}
-      loop: [deploy_state.py, anysda-svc.sh]
+    - name: Общие функции
+      ansible.builtin.copy: {src: ../lib/anysda-svc.sh, dest: /tmp/anysda/anysda-svc.sh, mode: "0700"}
       changed_when: false
       tags: [release, complete, artifacts]
     - name: Манифест сборки
@@ -75,7 +75,7 @@
       tags: [release, complete, artifacts]
       when: manifest | default('') != ''
     - name: ОС, ресурсы и совместимость
-      ansible.builtin.command: python3 /tmp/anysda/deploy_state.py preflight {{ '--partial' if partial | default(false) | bool else '' }}
+      ansible.builtin.command: python3 -m vpn2.cli state preflight {{ '--partial' if partial | default(false) | bool else '' }}
       changed_when: false
       tags: [release]
       when: manifest | default('') != ''
@@ -94,13 +94,13 @@
       tags: [release]
       when: manifest | default('') != '' and inventory_hostname == 'ru'
     - name: Образы и бинарники выпуска
-      ansible.builtin.command: python3 /tmp/anysda/deploy_state.py prepare --role {{ vpn2_node.role }} {{ images }}
+      ansible.builtin.command: python3 -m vpn2.cli state prepare --role {{ vpn2_node.role }} {{ images }}
       changed_when: false
       tags: [release]
       when: manifest | default('') != ''
     - name: Состав записан, журнал закрыт
       ansible.builtin.command: >-
-        python3 /tmp/anysda/deploy_state.py
+        python3 -m vpn2.cli state
         {{ 'complete --role ' ~ vpn2_node.role if manifest | default('') != '' else 'phase --phase complete' }}
       changed_when: false
       tags: [complete]
@@ -110,18 +110,20 @@
   hosts: all
   any_errors_fatal: true
   tags: [release]
+  environment: *package
   tasks:
     - name: Снимок базы, PKI и конфигов
-      ansible.builtin.command: python3 /tmp/anysda/deploy_state.py backup
+      ansible.builtin.command: python3 -m vpn2.cli state backup
       changed_when: false
 
 - name: Узлы меняются
   hosts: all
   any_errors_fatal: true
   tags: [release]
+  environment: *package
   tasks:
     - name: Фаза applying
-      ansible.builtin.command: python3 /tmp/anysda/deploy_state.py phase --phase applying
+      ansible.builtin.command: python3 -m vpn2.cli state phase --phase applying
       changed_when: false
 
 - name: Деплой остановлен до изменений
@@ -131,7 +133,7 @@
     - name: Журнал со снимком закрыт как aborted
       ansible.builtin.raw: >-
         grep -q '"phase": *"backed-up"' /var/lib/vpn2-deploy/operation.json 2>/dev/null
-        && python3 /tmp/anysda/deploy_state.py phase --phase aborted || true
+        && PYTHONPATH=/tmp/anysda python3 -m vpn2.cli state phase --phase aborted || true
       changed_when: false
 
 - name: Секреты экзитов для роутера entry

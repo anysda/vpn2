@@ -24,6 +24,7 @@ COMMANDS = (
     ('release', 'vpn2.release:main'),
     ('restore', 'vpn2.cli:restore'),
     ('router', 'vpn2.cli:router'),
+    ('state', 'vpn2.release.state:main'),
     ('verify', 'vpn2.cli:verify'),
     ('version', 'vpn2.cli:version'),
     ('watchdog', 'vpn2.cli:watchdog'),

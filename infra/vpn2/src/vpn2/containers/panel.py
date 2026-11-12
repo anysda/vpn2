@@ -40,7 +40,6 @@ OVPN_INPUTS = ['/usr/sbin/openvpn', '/usr/lib/systemd/system/openvpn-server@.ser
                '/etc/openvpn/server/pki/server.key', '/etc/openvpn/server/pki/tls-crypt.key']
 APPLY = '/usr/local/sbin/vpn2-apply'
 STATE = Path('/var/lib/vpn2-deploy/panel')
-DEPLOY_STATE = '/tmp/anysda/deploy_state.py'
 INSTALLED = Path('/var/lib/vpn2-deploy/installed.json')
 DATA = '/var/lib/anysda-vpn2'
 LEGACY_PREVIOUS = 'anysda-vpn2-previous'
@@ -53,8 +52,7 @@ class StageError(Exception):
 
 
 def deploy_state(*args):
-    tool = os.environ.get('VPN2_DEPLOY_STATE') or DEPLOY_STATE
-    return subprocess.run([sys.executable, tool, *map(str, args)], check=False).returncode
+    return subprocess.run([sys.executable, '-m', 'vpn2.cli', 'state', *map(str, args)], check=False).returncode
 
 
 def must(*args):

@@ -13,7 +13,7 @@ ROLE = ROOT / 'infra/ansible/roles/containers'
 PACKAGE = ROOT / 'infra/vpn2/src/vpn2/containers'
 PLAYS = {'25-monitoring': 'monitoring', '30-frontend': 'panel', '35-telegram': 'telegram'}
 # Пути-подмены для тестов пакета: плей их не задаёт, шаг берёт умолчания хоста.
-OVERRIDES = {'VPN2_ENTRY_RESOURCES', 'VPN2_PANEL_CONFIG_TPL', 'VPN2_DEPLOY_STATE'}
+OVERRIDES = {'VPN2_ENTRY_RESOURCES', 'VPN2_PANEL_CONFIG_TPL'}
 # Массивы из ответа расчёта ресурсов, а не переменные окружения.
 RESOURCE_ARRAYS = {'ENTRY_DOCKER_ARGS', 'ENTRY_RUNTIME_ARGS'}
 READ = re.compile(r'''(?:\bget\(|environ\[)\s*(?:f?["'])([A-Z][A-Z0-9_]*)["']''')

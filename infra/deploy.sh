@@ -316,7 +316,7 @@ esac
 case "${1:-}" in
   ''|recover) do_all ;;
   restore)    do_restore "${@:2}" ;;
-  rollback)   /opt/vpn2/venv/bin/vpn2 containers rollback && python3 /tmp/anysda/deploy_state.py phase --phase rolled-back ;;
+  rollback)   /opt/vpn2/venv/bin/vpn2 containers rollback && PYTHONPATH=/tmp/anysda python3 -m vpn2.cli state phase --phase rolled-back ;;
   *)          run_stage "$1" "$2"
               [[ "$1" != 30-frontend || "$2" == [!ra]* ]] || print_sso_notice ;;
 esac

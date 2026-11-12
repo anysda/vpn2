@@ -1,5 +1,7 @@
-#!/usr/bin/env python3
-"""Host-side deploy lock, preflight, WAL-safe snapshots and compatibility checks."""
+"""vpn2 state: deploy journal, preflight, WAL-safe snapshots and compatibility checks on a node.
+
+On a node being deployed the package is unpacked to /tmp/anysda: PYTHONPATH=/tmp/anysda python3 -m vpn2.cli state ...
+"""
 
 import argparse
 from contextlib import closing
@@ -14,12 +16,8 @@ import tarfile
 import tempfile
 import time
 
-try:  # при деплое пакет лежит рядом (/tmp/anysda/vpn2)
-    import vpn2.release  # noqa: F401
-except ImportError:  # дерево исходников
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'vpn2/src'))
-from vpn2 import swap  # noqa: E402
-from vpn2.release import ReleaseError, architecture, artifact, command, image, load, read_json, sha256  # noqa: E402
+from vpn2 import swap
+from vpn2.release import ReleaseError, architecture, artifact, command, image, load, read_json, sha256
 
 
 def atomic_json(path, data):
@@ -243,8 +241,8 @@ def preflight(manifest, database, state, os_release=Path('/etc/os-release'), mem
             raise ReleaseError('local service API is incompatible')
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog='vpn2 state', description=__doc__)
     parser.add_argument('--state', type=Path, default=Path('/var/lib/vpn2-deploy'))
     parser.add_argument('--database', type=Path, default=Path('/var/lib/anysda-vpn2/db.sqlite'))
     parser.add_argument('--manifest', default='/tmp/anysda/release-manifest.json')
@@ -258,7 +256,7 @@ def main():
     parser.add_argument('--offline-images', action='store_true')
     parser.add_argument('--phase', default='prepared')
     parser.add_argument('--role', choices=('entry', 'exit'), default='entry')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     os.umask(0o077)
     try:
         args.state.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -330,7 +328,3 @@ def main():
         print('deploy stopped: ' + message, file=sys.stderr)
         return 1
     return 0
-
-
-if __name__ == '__main__':
-    sys.exit(main())

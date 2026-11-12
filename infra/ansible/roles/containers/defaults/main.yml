@@ -12,10 +12,8 @@ containers_tls_lib: /usr/local/lib/vpn2/vpn2_tls.py
 containers_tools:
   monitoring: []
   panel:
-    - {src: lib/deploy_state.py, dest: deploy_state.py}
     - {src: configs/anysda-config.yaml.tpl, dest: anysda-config.yaml.tpl}
   telegram:
-    - {src: lib/deploy_state.py, dest: deploy_state.py}
     - {src: configs/anysda-config.yaml.tpl, dest: anysda-config.yaml.tpl}
 
 # Окружение шага: общие переменные стадий и по набору на экзит. Бот при смене

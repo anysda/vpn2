@@ -2,12 +2,6 @@
 # AdGuard Home на entry: слушает 127.0.0.1 и служебный адрес, клиенты туннелей
 # спрашивают его напрямую. Веб-интерфейс и API только на loopback, для панели.
 # Второй экземпляр на 127.0.0.2 отвечает без фильтров.
-- name: Команда vpn2
-  ansible.builtin.stat:
-    path: "{{ adguard_vpn2 }}"
-  register: adguard_vpn2_stat
-  failed_when: not (adguard_vpn2_stat.stat.executable | default(false))
-
 - name: Бинарник AdGuard Home
   ansible.builtin.command:
     argv: "{{ adguard_step + ['binary'] }}"

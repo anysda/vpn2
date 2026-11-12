@@ -74,10 +74,8 @@ def main(argv):
     if len(argv) != 1:
         sys.stderr.write('Использование: vpn2 containers emergency-static <каталог аварийки>\n')
         return 2
-    environ = {**os.environ, 'EMERGENCY_IMAGE': os.environ.get('EMERGENCY_IMAGE', ''),
-               'EMERGENCY_IMAGE_PULL': os.environ.get('EMERGENCY_IMAGE_PULL', 'true')}
     try:
-        image = compose.release_image(environ, 'emergency', compose.Docker())
+        image = compose.release_image(os.environ, 'emergency', compose.Docker())
     except (compose.EngineError, ReleaseError, OSError, ValueError, KeyError) as error:
         sys.exit(f'release: emergency: {error}; no unverified artifact accepted')
     print(f'image={image}', flush=True)

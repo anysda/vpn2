@@ -5,12 +5,6 @@
     that: containers_service in containers_tools
     quiet: true
 
-- name: Команда vpn2
-  ansible.builtin.stat:
-    path: "{{ containers_vpn2 }}"
-  register: containers_vpn2_stat
-  failed_when: not (containers_vpn2_stat.stat.executable | default(false))
-
 - name: Плагин docker compose
   ansible.builtin.command:
     argv: "{{ containers_bash + [containers_compose_step, containers_tmp] }}"

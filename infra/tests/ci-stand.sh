@@ -171,6 +171,9 @@ warm_script() {
 #!/bin/sh
 t0=$(date +%s)
 say() { echo "прогрев: $* за $(( $(date +%s) - t0 )) с"; }
+# Таймер прошивок образа срабатывает в случайный момент и без выхода в LVFS падает:
+# слепок видел бы failed fwupd-refresh от часов, а не от деплоя.
+systemctl stop fwupd-refresh.timer 2>/dev/null || true
 # Старый mtime заставляет стадию обновить списки самой, как на машине без прогрева;
 # --error-on=any - иначе update с ошибкой зеркала возвращает 0. timeout - жёсткий
 # предел на случай, когда прокси держит соединение без ответа; по пределу попытка
@@ -902,7 +905,7 @@ cmd_deploy_again() {
   entry_run deploy-again './deploy.sh --development' || rc=$?
   log "повторный деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
-  ssh_node "$ENTRY" "grep -qF 'ansible: пины те же' /root/deploy-again.log" \
+  ssh_node "$ENTRY" "grep -qF 'ansible: пины те же' /opt/vpn2/ansible-venv.log" \
     || die 'повторный деплой переустановил venv с ansible'
   cmd_snapshot "$out" snapshot-again
 }

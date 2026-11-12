@@ -74,4 +74,3 @@
 - {section: containers, name: 'anysda-tgbot', field: image_id, reason: образ бота собирается из исходников коммита}
 - {section: containers, name: 'vpn2-emergency', field: image, reason: образ аварийного канала собирается из исходников коммита}
 - {section: containers, name: 'vpn2-emergency', field: image_id, reason: образ аварийного канала собирается из исходников коммита}
-- {section: files, name: /etc/systemd/system/anysda-ikev2-cert-sync.timer, field: '*', reason: таймер ставится всегда - без домена он выключен}

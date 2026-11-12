@@ -52,7 +52,9 @@ async function compactTrafficHistory(nowSec: number): Promise<void> {
 }
 
 type Counter = { rx: number, tx: number }
-async function sample<T>(protocol: string, pick: (s: T & Counter) => { deviceId?: number, uniqueid?: string }) {
+type Sample = Counter & { deviceId: number, uniqueid: string }
+
+async function sample<T>(protocol: string, pick: (s: T & Counter) => { deviceId?: number, uniqueid?: string }): Promise<Sample[] | null> {
   try {
     const { samples } = await control<{ samples: Array<T & Counter> }>('traffic.read', { protocol })
     return samples.flatMap((s) => {
@@ -63,51 +65,43 @@ async function sample<T>(protocol: string, pick: (s: T & Counter) => { deviceId?
   catch { return null }
 }
 
+const sampleKey = (s: Sample) => `${s.deviceId}:${s.uniqueid}`
+/** Меньше прошлого - счётчик обнулился (рестарт службы): засчитывается текущее целиком. */
+const grown = (now: number, last: number) => now >= last ? now - last : now
+
 export const collectTraffic = coalesceRuns(async (): Promise<void> => {
-  const log = useLogger()
   const db = useDb()
-
   const rows = await db.select({ id: devices.id, pk: devices.wgPublicKey, ikev2: devices.ikev2Username }).from(devices)
-  const deviceByPubkey = new Map<string, number>()
-  const deviceByIkev2User = new Map<string, number>()
-  for (const r of rows) {
-    if (r.pk) deviceByPubkey.set(r.pk, r.id)
-    if (r.ikev2) deviceByIkev2User.set(r.ikev2, r.id)
-  }
-  const [wgSamples, ovpnSamples, ikev2] = await Promise.all([
-    sample<{ key: string }>('wg', s => ({ deviceId: deviceByPubkey.get(s.key) })),
+  const byWgKey = new Map(rows.filter(r => r.pk).map(r => [r.pk!, r.id]))
+  const byIkev2User = new Map(rows.filter(r => r.ikev2).map(r => [r.ikev2!, r.id]))
+  const [wg, ovpn, ikev2] = await Promise.all([
+    sample<{ key: string }>('wg', s => ({ deviceId: byWgKey.get(s.key) })),
     sample<{ device_id: number }>('openvpn', s => ({ deviceId: s.device_id })),
-    sample<{ username: string, uniqueid: string }>('ikev2', s => ({ deviceId: deviceByIkev2User.get(s.username), uniqueid: s.uniqueid })),
+    sample<{ username: string, uniqueid: string }>('ikev2', s => ({ deviceId: byIkev2User.get(s.username), uniqueid: s.uniqueid })),
   ])
-  const wg = wgSamples ?? []
-  const ovpn = ovpnSamples ?? []
+  const inMemory = [...wg ?? [], ...ovpn ?? []]
 
-  const deltas = new Map<number, { rx: number, tx: number }>()
-  function add(deviceId: number, dRx: number, dTx: number) {
-    if (dRx <= 0 && dTx <= 0) return
-    const d = deltas.get(deviceId) ?? { rx: 0, tx: 0 }
-    d.rx += dRx
-    d.tx += dTx
-    deltas.set(deviceId, d)
+  const deltas = new Map<number, Counter>()
+  function add(s: Sample, last: Counter) {
+    const rx = grown(s.rx, last.rx)
+    const tx = grown(s.tx, last.tx)
+    if (rx <= 0 && tx <= 0) return
+    const d = deltas.get(s.deviceId) ?? { rx: 0, tx: 0 }
+    deltas.set(s.deviceId, { rx: d.rx + rx, tx: d.tx + tx })
   }
-  for (const s of [...wg, ...ovpn]) {
-    const last = lastSeen.get(`${s.deviceId}:${s.uniqueid}`)
-    if (!last) continue
-    // Меньше прошлого - счётчик обнулился (рестарт службы): берём текущее целиком.
-    add(s.deviceId, s.rx >= last.rx ? s.rx - last.rx : s.rx, s.tx >= last.tx ? s.tx - last.tx : s.tx)
+  for (const s of inMemory) {
+    const last = lastSeen.get(sampleKey(s))
+    if (last) add(s, last)
   }
-  // IKE_SA по «<deviceId>:<uniqueid>»: новая засчитывается целиком, исчезнувшие из снимка уходят.
+  // Новая IKE_SA засчитывается целиком, исчезнувшие из снимка уходят из него.
   let ikev2Next: Record<string, [number, number]> | null = null
   if (ikev2) {
     const [row] = await db.select().from(collectorState).where(eq(collectorState.name, 'ikev2'))
     const prev: Record<string, [number, number]> | null = row ? JSON.parse(row.value) : null
-    ikev2Next = {}
-    for (const s of ikev2) {
-      const key = `${s.deviceId}:${s.uniqueid}`
-      ikev2Next[key] = [s.rx, s.tx]
-      if (!prev) continue
-      const [lastRx, lastTx] = prev[key] ?? [0, 0]
-      add(s.deviceId, s.rx >= lastRx ? s.rx - lastRx : s.rx, s.tx >= lastTx ? s.tx - lastTx : s.tx)
+    ikev2Next = Object.fromEntries(ikev2.map(s => [sampleKey(s), [s.rx, s.tx]]))
+    for (const s of prev ? ikev2 : []) {
+      const [rx, tx] = prev![sampleKey(s)] ?? [0, 0]
+      add(s, { rx, tx })
     }
   }
 
@@ -133,13 +127,8 @@ export const collectTraffic = coalesceRuns(async (): Promise<void> => {
   }
   const [first, ...rest] = writes
   if (first) await db.batch([first, ...rest])
-  for (const s of [...wg, ...ovpn]) lastSeen.set(`${s.deviceId}:${s.uniqueid}`, { rx: s.rx, tx: s.tx })
-  for (const [id, d] of deltas) {
-    const list = recent.get(id) ?? []
-    list.push({ at: now, bytes: Math.round(d.rx) + Math.round(d.tx) })
-    recent.set(id, list)
-  }
-
+  for (const s of inMemory) lastSeen.set(sampleKey(s), { rx: s.rx, tx: s.tx })
+  for (const [id, d] of deltas) recent.set(id, [...recent.get(id) ?? [], { at: now, bytes: Math.round(d.rx) + Math.round(d.tx) }])
   for (const [id, list] of recent) {
     const fresh = list.filter(e => now - e.at <= RECENT_WINDOW_MS)
     if (fresh.length) recent.set(id, fresh)
@@ -151,7 +140,7 @@ export const collectTraffic = coalesceRuns(async (): Promise<void> => {
     await compactTrafficHistory(Math.floor(now / 1000))
   }
 
-  log.info({ wg: wg.length, ovpn: ovpn.length, ikev2: ikev2?.length ?? null, updated: deltas.size }, 'traffic: collected')
+  useLogger().info({ wg: wg?.length ?? 0, ovpn: ovpn?.length ?? 0, ikev2: ikev2?.length ?? null, updated: deltas.size }, 'traffic: collected')
 })
 
 // «В сети» - от 20 КБ за 5 минут (keepalive и рукопожатия простаивающего устройства ~0,5 КБ),

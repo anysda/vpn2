@@ -210,8 +210,8 @@ def verify(argv):
 
 def version(argv):
     del argv
-    from importlib.metadata import version as installed
-    print(installed('vpn2'))
+    from vpn2 import __version__
+    print(__version__)
 
 
 def main(argv=None):

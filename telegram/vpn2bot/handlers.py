@@ -21,9 +21,10 @@ admin_await: tuple | None = None
 @dataclass
 class Ask:
     chat_id: int
-    action: str
-    arg: str
-    username: str | None = None
+    role: str
+    username: str | None
+    action: str = TEXT
+    arg: str = ''
     callback_id: str | None = None
     message_id: int | None = None
 
@@ -71,27 +72,25 @@ async def client_start(ask: Ask) -> None:
 async def client_text(ask: Ask) -> None:
     naming = ask.chat_id in awaiting_device_name
     awaiting_device_name.discard(ask.chat_id)
-    if naming and ask.arg not in (texts.NAV_DEVICES, texts.NAV_ADD):
-        if not ask.arg:
-            await ask.say('Название не распознано. Откройте меню: /start')
-            return
-        view = await ask.json('POST', '/api/bot/devices', {'chatId': ask.chat_id, 'name': ask.arg})
-        await ask.say(f'✅ Устройство «{ask.arg}» добавлено.')
-    else:
+    if ask.arg == texts.NAV_DEVICES:
         view = await client_view(ask)
-        devices = view.get('devices', [])
-        if ask.arg == texts.NAV_DEVICES:
-            await ask.say(texts.devices(view), 'Markdown', texts.devices_markup(view) if devices else None)
-            return
-        if ask.arg == texts.NAV_ADD:
-            limit = view.get('deviceLimit')
-            if limit is not None and len(devices) >= limit:
-                await ask.say(texts.ERROR_TEXT['device_limit'])
-                return
+        await ask.say(texts.devices(view), 'Markdown', texts.devices_markup(view) if view.get('devices') else None)
+    elif ask.arg == texts.NAV_ADD:
+        view = await client_view(ask)
+        limit = view.get('deviceLimit')
+        if limit is not None and len(view.get('devices', [])) >= limit:
+            await ask.say(texts.ERROR_TEXT['device_limit'])
+        else:
             awaiting_device_name.add(ask.chat_id)
             await ask.say('Пришлите название устройства (например: Телефон, Ноутбук).')
-            return
-    await ask.say(texts.menu(view), 'Markdown', texts.REPLY_KB)
+    elif naming and not ask.arg:
+        await ask.say('Название не распознано. Откройте меню: /start')
+    elif naming:
+        view = await ask.json('POST', '/api/bot/devices', {'chatId': ask.chat_id, 'name': ask.arg})
+        await ask.say(f'✅ Устройство «{ask.arg}» добавлено.')
+        await ask.say(texts.menu(view), 'Markdown', texts.REPLY_KB)
+    else:
+        await ask.say(texts.menu(await client_view(ask)), 'Markdown', texts.REPLY_KB)
 
 
 async def device_list(ask: Ask) -> None:
@@ -336,8 +335,7 @@ async def dispatch(update, _context) -> None:
     if not await allowed(update):
         return
     chat_id, query = update.effective_chat.id, update.callback_query
-    role = ADMIN if chat_id == config.CHAT_ID else CLIENT
-    ask = Ask(chat_id, TEXT, '', update.effective_user.username)
+    ask = Ask(chat_id, ADMIN if chat_id == config.CHAT_ID else CLIENT, update.effective_user.username)
     if query:
         ask.action, _, ask.arg = (query.data or '').partition(':')
         ask.callback_id = query.id
@@ -351,7 +349,7 @@ async def dispatch(update, _context) -> None:
         elif update.message:
             # An edited old message is not new input: update.message is None for it.
             ask.arg = (update.message.text or '').strip()
-    handler = ROUTES.get((role, ask.action))
+    handler = ROUTES.get((ask.role, ask.action))
     if handler is None:
         if query:
             await ask.answer()
@@ -359,19 +357,17 @@ async def dispatch(update, _context) -> None:
     try:
         await handler(ask)
     except Exception as e:
-        await report_failure(ask, role, e)
+        await report_failure(ask, e)
 
 
-async def report_failure(ask: Ask, role: str, error: Exception) -> None:
+async def report_failure(ask: Ask, error: Exception) -> None:
     """One answer to any error: a panel refusal in its own words, anything else in a common phrase."""
-    if isinstance(error, BotApiError):
-        message = error.message
-    else:
-        log.error('%s %s failed (%s)', role, ask.action, type(error).__name__)
-        message = 'Сервис временно недоступен. Попробуйте позже.'
+    refused = isinstance(error, BotApiError)
+    if not refused:
+        log.error('%s %s failed (%s)', ask.role, ask.action, type(error).__name__)
+    message = error.message if refused else 'Сервис временно недоступен. Попробуйте позже.'
     # The panel does not know this chat: never linked, or unlinked in the middle of the request.
-    if (role == CLIENT and isinstance(error, BotApiError) and error.status == 404
-            and 'not_linked' in (error.code, error.message)):
+    if ask.role == CLIENT and refused and error.status == 404 and 'not_linked' in (error.code, error.message):
         # As a message: «Готовлю конфиг…» may have used up the one answer to the button.
         if ask.callback_id:
             await ask.answer()
@@ -381,5 +377,5 @@ async def report_failure(ask: Ask, role: str, error: Exception) -> None:
         await ask.say(f'❌ {message}')
     else:
         answered = await ask.answer(message, alert=True)
-        if role == CLIENT and not answered.get('ok'):
+        if ask.role == CLIENT and not answered.get('ok'):
             await ask.say(f'❌ {message}')

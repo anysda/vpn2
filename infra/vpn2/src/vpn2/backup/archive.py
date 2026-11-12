@@ -1,4 +1,5 @@
 """Архив бэкапа: рабочий каталог, sha компонентов, tar.gz и шифрование age через pty."""
+import calendar
 import contextlib
 import fcntl
 import hashlib
@@ -28,6 +29,11 @@ class ArchiveError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def stamp_epoch(stamp):
+    """Метка вида 2026-05-22T020000Z в секунды эпохи (UTC)."""
+    return calendar.timegm(time.strptime(stamp, '%Y-%m-%dT%H%M%SZ'))
 
 
 def is_archive(entry):

@@ -4,16 +4,75 @@
 переносятся в распакованный набор до замены (openssl ca -revoke/-gencrl,
 правка wg0.conf и swanctl набора, список «выдано после архива»).
 """
-import hashlib, os, re, shutil, sqlite3, subprocess, tempfile
+import hashlib
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import tempfile
 
+from vpn2 import wg
 from vpn2.backup.archive import ArchiveError as RevokeError
 
+HEX = re.compile(r'[0-9A-Fa-f]{1,64}')
+DEV_CN = re.compile(r'(?:^|[/,])CN=dev_(\d+)(?:[/,]|$)')
 
-def wg_values(text, wanted):
-    """Значения ключа wg0.conf как у wg-quick и wg: NUL вон, строка до первого `#`, без пробельных символов, имя в любом регистре ASCII."""
-    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0]).partition('=')
-             for line in text.split('\n')]
-    return [value for name, eq, value in lines if eq and value and name.encode().lower() == wanted]
+
+def say(message):
+    print('anysda-restore: ' + message, flush=True)
+
+
+def read(path, newline=None, encoding=None):
+    """Текст файла или None, если его нет или он не читается."""
+    try:
+        with open(path, encoding=encoding, errors='replace', newline=newline) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def digest(path):
+    try:
+        with open(path, 'rb') as f:
+            return hashlib.sha256(f.read().strip()).hexdigest()
+    except OSError:
+        return None
+
+
+def wg_key(directory):
+    """sha256 приватного ключа сервера WireGuard: keys/, server.priv или [Interface] из wg0.conf."""
+    found = digest(os.path.join(directory, 'keys/server.priv')) or digest(os.path.join(directory, 'server.priv'))
+    if found:
+        return found
+    key = wg.private_key(read(os.path.join(directory, 'wg0.conf'), newline='', encoding='latin-1') or '')
+    return hashlib.sha256(key.encode()).hexdigest() if key else None
+
+
+def wg_public_keys(text):
+    """PublicKey всех пиров wg0.conf так, как их читает wg."""
+    pairs = (wg.line(line.replace('\0', '')) for line in text.split('\n'))
+    return {value for name, value in pairs if name == 'PublicKey' and value}
+
+
+def index_rows(path):
+    return [line.split('\t') for line in (read(path) or '').splitlines()]
+
+
+def devices(path, writable=False):
+    """(соединение, строки devices по id, столбцы, последний выданный номер); без столбца id - (None, ...)."""
+    con = sqlite3.connect(f'file:{path}' + ('' if writable else '?mode=ro'), uri=True)
+    columns = {row[1] for row in con.execute('PRAGMA table_info(devices)')}
+    if 'id' not in columns:
+        con.close()
+        return None, {}, set(), 0
+    con.row_factory = sqlite3.Row
+    rows = {row['id']: dict(row) for row in con.execute('SELECT * FROM devices')}
+    try:
+        seq = con.execute("SELECT seq FROM sqlite_sequence WHERE name = 'devices'").fetchone()
+    except sqlite3.Error:
+        seq = None
+    return con, rows, columns, max([seq[0] if seq else 0, *rows])
 
 
 def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
@@ -21,64 +80,18 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         live_ike_conf='/etc/swanctl/conf.d/anysda-clients.conf',
         live_ccd='/etc/openvpn/server/ccd', runner=subprocess.run):
     """Перенос отзывов в набор; возвращает код выхода, ошибка openssl - RevokeError."""
-    LIVE_DB, LIVE_PKI = live_db, live_pki
     pki = os.path.join(bundle, 'etc-openvpn/server/pki')
     db_path = os.path.join(bundle, 'db.sqlite')
     wg_path = os.path.join(bundle, 'etc-wireguard/wg0.conf')
     ike_path = os.path.join(bundle, 'etc-swanctl/conf.d/anysda-clients.conf')
-    HEX = re.compile(r'[0-9A-Fa-f]{1,64}')
-
-    def say(message):
-        print('anysda-restore: ' + message, flush=True)
-
-    def digest(path):
-        try:
-            with open(path, 'rb') as f:
-                return hashlib.sha256(f.read().strip()).hexdigest()
-        except OSError:
-            return None
-
-    def wg_key(directory):
-        """Приватный ключ сервера WireGuard: keys/ или [Interface] из wg0.conf."""
-        found = digest(os.path.join(directory, 'keys/server.priv')) or digest(os.path.join(directory, 'server.priv'))
-        if found:
-            return found
-        try:
-            text = open(os.path.join(directory, 'wg0.conf'), encoding='latin-1', newline='').read()
-        except OSError:
-            return None
-        keys = wg_values(text, b'privatekey')
-        return hashlib.sha256(keys[-1].encode()).hexdigest() if keys else None
-
-    def index_rows(path):
-        try:
-            lines = open(path).read().splitlines()
-        except OSError:
-            return []
-        return [line.split('\t') for line in lines]
 
     def serial_of(pem):
         out = runner(['openssl', 'x509', '-noout', '-serial'], input=pem, text=True,
-                             capture_output=True, check=False).stdout
+                     capture_output=True, check=False).stdout
         value = out.strip().partition('=')[2]
         return int(value, 16) if HEX.fullmatch(value) else None
 
-    def devices(path, writable=False):
-        uri = f'file:{path}' + ('' if writable else '?mode=ro')
-        con = sqlite3.connect(uri, uri=True)
-        columns = {row[1] for row in con.execute('PRAGMA table_info(devices)')}
-        if 'id' not in columns:
-            con.close()
-            return None, {}, set(), 0
-        con.row_factory = sqlite3.Row  # noqa - consumed by sqlite3
-        rows = {row['id']: dict(row) for row in con.execute('SELECT * FROM devices')}
-        try:
-            seq = con.execute("SELECT seq FROM sqlite_sequence WHERE name = 'devices'").fetchone()
-        except sqlite3.Error:
-            seq = None
-        return con, rows, columns, max([seq[0] if seq else 0, *rows])
-
-    live_ca = digest(os.path.join(LIVE_PKI, 'ca.crt'))
+    live_ca = digest(os.path.join(live_pki, 'ca.crt'))
     archive_ca = digest(os.path.join(pki, 'ca.crt'))
     live_wg = wg_key(live_wg_dir)
     archive_wg = wg_key(os.path.join(bundle, 'etc-wireguard'))
@@ -88,26 +101,23 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         return 0
     same_ca = bool(live_ca) and live_ca == archive_ca
 
-    live_revoked = {}
-    if same_ca:
-        for row in index_rows(os.path.join(LIVE_PKI, 'index.txt')):
-            if len(row) == 6 and row[0] == 'R' and HEX.fullmatch(row[3]):
-                live_revoked[int(row[3], 16)] = row
+    # Живой index: отозванные строки и сертификаты dev_N (серийник -> (номер, действует)).
+    live_revoked, indexed = {}, {}
+    for row in index_rows(os.path.join(live_pki, 'index.txt')) if same_ca else ():
+        if len(row) != 6 or not HEX.fullmatch(row[3]):
+            continue
+        if row[0] == 'R':
+            live_revoked[int(row[3], 16)] = row
+        if found := DEV_CN.search(row[5]):
+            indexed[int(row[3], 16)] = (int(found[1]), row[0] == 'V')
     # certificateHold ставит только restore — выданным после архива. Устройство,
     # чей сертификат в восстанавливаемом архиве, получает доступ обратно.
     held = {serial for serial, row in live_revoked.items() if row[2].partition(',')[2] == 'certificateHold'}
-    # Сертификаты dev_N в живом index: серийник -> (номер, действует).
-    dev = re.compile(r'(?:^|[/,])CN=dev_(\d+)(?:[/,]|$)')
-    indexed = {}
-    if same_ca:
-        for row in index_rows(os.path.join(LIVE_PKI, 'index.txt')):
-            if len(row) == 6 and HEX.fullmatch(row[3]) and dev.search(row[5]):
-                indexed[int(row[3], 16)] = (int(dev.search(row[5])[1]), row[0] == 'V')
 
     live, live_seq, live_read = {}, 0, False
-    if os.path.isfile(LIVE_DB):
+    if os.path.isfile(live_db):
         try:
-            con, live, _columns, live_seq = devices(LIVE_DB)
+            con, live, _columns, live_seq = devices(live_db)
             if con:
                 con.close()
                 live_read = True
@@ -115,20 +125,14 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             say(f'WARN: живая БД не читается ({error}) — переношу только отзывы сертификатов')
             live, live_seq = {}, 0
 
-    def live_text(path, newline=None, encoding=None):
-        try:
-            return open(path, encoding=encoding, errors='replace', newline=newline).read()
-        except OSError:
-            return None
-
     # Без живой БД живые конфиги узла судят только устройства без сертификата
     # OpenVPN в архиве, а у отозванных панелью подсказывают подпись в журнале.
     live_peers = live_ike = None
     if not live_read:
-        live_peers = live_text(os.path.join(live_wg_dir, 'wg0.conf'), newline='', encoding='latin-1')
-        live_ike = live_text(live_ike_conf)
+        live_peers = read(os.path.join(live_wg_dir, 'wg0.conf'), newline='', encoding='latin-1')
+        live_ike = read(live_ike_conf)
     if live_peers is not None:
-        live_peers = set(wg_values(live_peers, b'publickey'))
+        live_peers = wg_public_keys(live_peers)
     if live_ike is not None:
         secrets = set()
         for block in re.findall(r'(?ms)^\s*eap-\d+\s*\{(.*?)\}', live_ike):
@@ -232,7 +236,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         # Хвосты newcerts без строки в index остались от прежних restore.
         pki_certs, pki_ids = {}, set()
         if same_ca:
-            newcerts = os.path.join(LIVE_PKI, 'newcerts')
+            newcerts = os.path.join(live_pki, 'newcerts')
             for name in sorted(os.listdir(newcerts) if os.path.isdir(newcerts) else ()):
                 try:
                     pem = open(os.path.join(newcerts, name)).read()
@@ -244,7 +248,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
                 else:
                     subject = runner(['openssl', 'x509', '-noout', '-subject', '-nameopt', 'RFC2253'],
                                              input=pem, text=True, capture_output=True, check=False).stdout
-                    found = dev.search(subject.strip().partition('=')[2])
+                    found = DEV_CN.search(subject.strip().partition('=')[2])
                     if not found:
                         continue
                     device_id, valid = int(found[1]), True
@@ -252,9 +256,8 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
                 if valid and serial not in archive_serials:
                     pki_certs[serial] = (device_id, pem)
             pki_ids.update(device_id for device_id, _valid in indexed.values())
-        ccd = live_ccd
         ccd_ids = {int(m[1]) for m in (re.fullmatch(r'dev_(\d+)', name)
-                                       for name in (os.listdir(ccd) if os.path.isdir(ccd) else ())) if m}
+                                       for name in (os.listdir(live_ccd) if os.path.isdir(live_ccd) else ())) if m}
         absent_ids |= {n for n in pki_ids | ccd_ids if n not in archived}
         # Учётки IKEv2 нет и после прежнего restore, обнулившего креды перевыпущенного.
         # Удаление в панели оставляет ccd и пишет в него disable, у перевыпущенного
@@ -269,7 +272,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             what, gone, row = revoke[device_id]
             if not gone:
                 continue
-            text = live_text(os.path.join(ccd, f'dev_{device_id}'))
+            text = read(os.path.join(live_ccd, f'dev_{device_id}'))
             disabled = None if text is None else any(line.strip() == 'disable' for line in text.splitlines())
             if device_id in taken and not disabled:
                 replaced.add(device_id)
@@ -394,7 +397,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
                 rows[position[serial]] = row
             else:
                 rows.append(row)
-                source = os.path.join(LIVE_PKI, 'newcerts', row[3] + '.pem')
+                source = os.path.join(live_pki, 'newcerts', row[3] + '.pem')
                 target = os.path.join(newcerts, row[3] + '.pem')
                 if os.path.isfile(source) and os.path.isdir(newcerts) and not os.path.exists(target):
                     shutil.copy2(source, target)
@@ -403,7 +406,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             revoked_certs += 1
         rewrite(index_path, ''.join('\t'.join(r) + '\n' for r in rows))
         config = open(os.path.join(pki, 'openssl.cnf') if os.path.isfile(os.path.join(pki, 'openssl.cnf'))
-                      else os.path.join(LIVE_PKI, 'openssl.cnf')).read()
+                      else os.path.join(live_pki, 'openssl.cnf')).read()
         with tempfile.TemporaryDirectory(dir=pki) as work:
             cnf = os.path.join(work, 'restore.cnf')
             with open(cnf, 'w') as f:
@@ -429,7 +432,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             # Номера не должны повториться: следующий сертификат и CRL — после живых.
             for name in ('serial', 'crlnumber'):
                 values = []
-                for folder in (pki, LIVE_PKI):
+                for folder in (pki, live_pki):
                     try:
                         value = open(os.path.join(folder, name)).read().strip()
                     except OSError:

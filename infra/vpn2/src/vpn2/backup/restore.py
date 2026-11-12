@@ -7,14 +7,12 @@
 `--preflight` - проход деплоя перед открытием выпуска: все отказы до первого изменения узла теми же
 кодом и строкой, службы и данные не тронуты.
 """
-import calendar
 import contextlib
 import glob
 import hashlib
 import io
 import json
 import os
-import re
 import shlex
 import shutil
 import signal
@@ -26,6 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from vpn2 import wg
 from vpn2.backup import archive, check, env, revoke
 from vpn2.backup import run as run_backup
 
@@ -82,10 +81,7 @@ class StepFailed(Exception):
 class _Signalled(BaseException):
     """INT или TERM посреди замены: код и причина для отката."""
 
-    def __init__(self, rc, cause):
-        super().__init__(cause)
-        self.rc = rc
-        self.cause = cause
+    __init__ = StepFailed.__init__
 
 
 def _say(text):
@@ -133,11 +129,6 @@ def archive_ts(name):
     return match.group(1) if match else None
 
 
-def ts_epoch(ts):
-    """Метка вида 2026-05-22T020000Z в секунды эпохи (UTC)."""
-    return calendar.timegm(time.strptime(ts, '%Y-%m-%dT%H%M%SZ'))
-
-
 def age_text(seconds):
     """Возраст словами: 'N д M ч', 'N ч M мин' или 'N мин'."""
     if seconds >= 86400:
@@ -175,10 +166,10 @@ def resolve_latest(settings):
         pick, source, other, other_from = cloud, 'S3', local, 'local'
     elif cloud is not None and cloud != local:
         other, other_from = cloud, 'S3'
-    created = ts_epoch(archive_ts(pick))
+    created = archive.stamp_epoch(archive_ts(pick))
     _warn(f'latest = {pick} ({source}), создан {archive_ts(pick)}, {age_text(int(time.time()) - created)} назад')
     if other:
-        gap = age_text(created - ts_epoch(archive_ts(other)))
+        gap = age_text(created - archive.stamp_epoch(archive_ts(other)))
         _warn(f'  самый свежий {other_from}: {other} — старше выбранного на {gap}')
     return pick, source
 
@@ -315,8 +306,6 @@ def check_compat(manifest, bundle, work, source_root, allow=False):
                             f'(ни в контейнере anysda-vpn2, ни в {source_root})')
     try:
         _say(_schema(database, folder))
-    except RestoreError:
-        raise
     except Exception as exc:  # noqa: BLE001 - любой отказ сверки схемы означает несовместимость
         incompatible(str(exc) if isinstance(exc, ValueError) else f'{type(exc).__name__}: {exc}')
 
@@ -338,18 +327,6 @@ def check_bundle_report(bundle):
     print(text, file=sys.stderr, flush=True)
 
 
-def _private_key(conf):
-    """Ключ из [Interface] wg0.conf (последний побеждает); пусто - b''."""
-    key, interface = b'', False
-    for line in conf.replace(b'\0', b'').split(b'\n'):
-        line = re.sub(rb'[ \t\r\v\f]', b'', line.split(b'#', 1)[0])
-        if line.startswith(b'['):
-            interface = line.lower() == b'[interface]'
-        elif interface and line.lower().startswith(b'privatekey='):
-            key = line.split(b'=', 1)[1]
-    return key
-
-
 def wg_key_material(bundle):
     """Ключ WG в наборе: ссылки сняты, server.priv из wg0.conf, server.pub заново, оба 0600.
 
@@ -367,10 +344,10 @@ def wg_key_material(bundle):
         return
     if not _filled(priv):
         try:
-            data = _private_key(conf.read_bytes())
+            key = wg.private_key(conf.read_bytes().decode('latin-1'))
         except OSError as exc:
             raise RestoreError(1, f'anysda-restore: wg0.conf не прочитан: {exc.strerror}') from None
-        _write_private(priv, data + b'\n' if data else b'')
+        _write_private(priv, key.encode('latin-1') + b'\n' if key else b'')
     with open(priv, 'rb') as source:
         _write_private(pub, b'')
         with open(pub, 'wb') as target:
@@ -873,17 +850,13 @@ def smoke(source_root, env_file, presnap_final):
         raise RestoreError(7, f'anysda-restore: 99-verify FAILED — проверь руками; pre-restore снимок: {presnap_final}')
 
 
-def _settings(env_file):
+def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE):
+    """Восстановить узел из архива; ошибки шагов - RestoreError с кодом выхода и текстом для stderr."""
     try:
-        return env.settings(env.read_env(env_file), env_file, lazy_s3=True)
+        settings = env.settings(env.read_env(env_file), env_file, lazy_s3=True)
     except env.BackupEnvError as exc:
         text = f'anysda-restore: {env_file} не доступен' if exc.code == 2 else str(exc)
         raise RestoreError(exc.code, text) from None
-
-
-def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE):
-    """Восстановить узел из архива; ошибки шагов - RestoreError с кодом выхода и текстом для stderr."""
-    settings = _settings(env_file)
     args = parse_args(argv)
     if not settings.passphrase:
         raise RestoreError(2, NO_PASSPHRASE.format(env_file=env_file))

@@ -4,7 +4,6 @@
 есть пир WireGuard и учётка IKEv2, у отключённого и удалённого их нет. Коды: 0 - расхождений
 нет, 2 - каталог не набор (нет manifest.json), 3 - расхождения, 5 - сверку нечем выполнить.
 """
-import calendar
 import contextlib
 import json
 import pathlib
@@ -15,7 +14,7 @@ import sys
 import time
 
 from vpn2 import wg
-from vpn2.backup.archive import MANIFEST
+from vpn2.backup.archive import MANIFEST, stamp_epoch
 
 
 def _openssl(*args, data):
@@ -39,8 +38,7 @@ def _revoked(crl):
 def _timestamp(root):
     """Момент среза из манифеста; без него - сейчас."""
     try:
-        return calendar.timegm(time.strptime(
-            json.loads((root / MANIFEST).read_text())['timestamp'], '%Y-%m-%dT%H%M%SZ'))
+        return stamp_epoch(json.loads((root / MANIFEST).read_text())['timestamp'])
     except (OSError, ValueError, KeyError, TypeError):
         return time.time()
 

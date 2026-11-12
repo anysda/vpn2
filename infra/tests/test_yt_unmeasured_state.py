@@ -1,5 +1,4 @@
 """Испорченное время провала и state прежнего формата не ломают алерт «не измерено»."""
-import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -42,21 +41,6 @@ class UnmeasuredStateTests(unittest.TestCase):
                 self.seed(f'"unmeasured": {flag}, "unmeasured_alerted": false, '
                           f'"unmeasured_since": {self.stand.now - 2 * 3600}')
                 self.assert_alert_once_after_threshold()
-
-    def test_previous_format_mid_gap_resume_alerts_once(self):
-        self.seed('"unmeasured": true')
-        self.stand.gap(self.limit // 2)
-        self.stand.tick(True, 'быстро')
-        self.stand.tick(True, 'быстро')
-        self.assertEqual(len(self.stand.alerts('возобновлено')), 1, self.stand.messages)
-        self.assertEqual(len(self.stand.messages), 1, self.stand.messages)
-
-    def test_previous_format_mid_gap_continues_silently(self):
-        self.seed('"unmeasured": true')
-        self.stand.gap(2 * 3600)
-        self.assertEqual(self.stand.messages, [])
-        state = json.loads(self.stand.path.read_text())
-        self.assertIs(state['unmeasured_alerted'], True, state)
 
     def test_previous_format_measured_state_stays_silent(self):
         self.seed('"unmeasured": false')

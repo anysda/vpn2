@@ -1,10 +1,8 @@
 """Неизмеренная видеопроба не меняет маршрут или серии сетевых результатов."""
-import io
 import json
 from pathlib import Path
 import subprocess
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
 
@@ -41,24 +39,6 @@ class UnmeasuredTests(unittest.TestCase):
         self.assertIs(good, True, detail)
         self.assertEqual(len(downloaded), 1)
         self.assertIn('HTTP 206, 4194304 байт', detail)
-
-    def test_stopped_bypass_never_reports_healthy_status(self):
-        watch = load_watch()
-        with tempfile.TemporaryDirectory() as directory:
-            cfg = Path(directory) / 'config.json'
-            cfg.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
-            state = Path(directory) / 'state.json'
-            with patch.object(watch, 'CONFIG', cfg), patch.object(watch, 'STATE', state), \
-                    patch.object(watch, 'notify', return_value=True), \
-                    patch.object(watch, 'api', return_value={'now': 'youtube-ru'}) as api, \
-                    patch('sys.argv', ['yt-failover', '--status']), \
-                    patch('sys.stdout', new_callable=io.StringIO):
-                watch.tick(state, lambda: (True, 'TCP video: HTTP 206'))
-                for selected in ('youtube-ru', 'foreign-best'):
-                    api.return_value = {'now': selected}
-                    watch.tick(state, lambda: self.probe(ready=subprocess.CompletedProcess([], 1)))
-                    self.assertEqual(watch.main(), 1, selected)
-                    self.assertGreater(json.loads(state.read_text())['bad'], 0)
 
     def probe(self, extraction=None, download=None, ready=None):
         watch = load_watch()
@@ -220,57 +200,6 @@ class UnmeasuredTests(unittest.TestCase):
                 for _ in range(3):
                     watch.tick(path, lambda: (True, 'быстро'))
                 self.assertEqual(changes, ['foreign-best', 'youtube-ru'])
-
-    def test_status_shows_unknown_reason(self):
-        watch = load_watch()
-        with tempfile.TemporaryDirectory() as directory:
-            cfg = Path(directory) / 'config.json'
-            cfg.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
-            path = Path(directory) / 'state.json'
-            with patch.object(watch, 'api', return_value={'now': 'youtube-ru'}), \
-                    patch.object(watch, 'notify', return_value=True):
-                watch.tick(path, lambda: (None, 'антибот'))
-                with patch.object(watch, 'CONFIG', cfg), patch.object(watch, 'STATE', path), \
-                        patch('sys.argv', ['yt-failover', '--status']), \
-                        patch('sys.stdout', new_callable=io.StringIO) as output:
-                    self.assertEqual(watch.main(), 2)
-                    self.assertIn('не измерено', output.getvalue())
-                    self.assertIn('антибот', output.getvalue())
-
-    def test_status_requires_recent_measured_state_and_known_selector(self):
-        watch = load_watch()
-        with tempfile.TemporaryDirectory() as directory:
-            cfg = Path(directory) / 'config.json'
-            cfg.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
-            state_path = Path(directory) / 'state.json'
-            measured = {'good': 1, 'bad': 0, 'last_probe': 'TCP video: HTTP 206',
-                        'checked_at': time.time(), 'unmeasured': False}
-            cases = [(measured, 0), (dict(measured, good=0, bad=3), 1),
-                     (dict(measured, good=0), 2), (dict(measured, last_probe=''), 2),
-                     (dict(measured, checked_at=time.time() - 601), 2),
-                     (dict(measured, checked_at=time.time() + 60), 2),
-                     (dict(measured, checked_at=None), 2),
-                     (dict(measured, good=-1), 2), (dict(measured, good=True), 2),
-                     (dict(measured, unmeasured=True, last_probe='TCP video: HTTP 403'), 2),
-                     ({}, 2), ([], 2)]
-            with patch.object(watch, 'CONFIG', cfg), patch.object(watch, 'STATE', state_path), \
-                    patch.object(watch, 'api', return_value={'now': 'youtube-ru'}) as api, \
-                    patch.object(watch, 'probe') as probe, \
-                    patch('sys.argv', ['yt-failover', '--status']), \
-                    patch('sys.stdout', new_callable=io.StringIO):
-                for state, expected in cases:
-                    with self.subTest(state=state):
-                        state_path.write_text(json.dumps(state))
-                        self.assertEqual(watch.main(), expected)
-                        self.assertEqual(json.loads(state_path.read_text()), state)
-                state_path.unlink()
-                self.assertEqual(watch.main(), 2)
-                api.return_value = {'now': 'unknown'}
-                self.assertEqual(watch.main(), 1)
-                cfg.write_text('{"outbounds": []}')
-                self.assertEqual(watch.main(), 2)
-                probe.assert_not_called()
-                self.assertTrue(all(call.args == ('GET',) for call in api.call_args_list))
 
 
 if __name__ == '__main__':

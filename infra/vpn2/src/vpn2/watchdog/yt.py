@@ -222,14 +222,14 @@ def tick(path, sample):
     current = api('GET')['now']
     good, detail = sample()
     unmeasured, now = good is None, time.time()
-    since = state.get('unmeasured_since') if state.get('unmeasured') else None
+    since = state.get('unmeasured_since') if state.get('unmeasured') is True else None
     alerted = state.get('unmeasured_alerted') is True
     event = None
     if not unmeasured:
         if alerted:
             event = f'измерение возобновлено: {detail}. Автопереключение снова активно.'
         since, alerted = None, False
-    elif since is None:
+    elif type(since) not in (int, float) or not 0 < since <= now:
         since = now
     elif not alerted and now - since > UNMEASURED_ALERT_AFTER:
         event = f'не измерено: {detail}. Счётчики и маршрут сохранены ({current}).'

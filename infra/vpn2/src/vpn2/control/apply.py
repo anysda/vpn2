@@ -26,7 +26,8 @@ RESOURCES = {
     'sing-box': {'path': '/etc/sing-box/config.json', 'mode': 0o600, 'unit': 'sing-box'},
     'openvpn': {'path': '/etc/openvpn/server/server.conf', 'mode': 0o644, 'unit': 'openvpn-server@server'},
 }
-# The directives the openvpn role (entryvpn.OVPN_CONF) writes, in every version so far:
+# The directives the openvpn role writes to server.conf (containers.panel.OVPN_CONF),
+# in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
 # directive past the first word too (setenv opt, a BOM, config), and some run
 # while it parses (log, plugin, providers): only a known name is let through.

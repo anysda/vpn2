@@ -102,7 +102,7 @@ export async function enqueueAccess(input: AccessRequest & {
         const wg = wgKeypair()
         await tx.update(devices).set({
           ...(enabled.wg ? { wgPrivateKey: wg.privateKey, wgPublicKey: wg.publicKey, wgPresharedKey: randomBytes(32).toString('base64') } : {}),
-          ...(enabled.ikev2 ? { ikev2Password: generatePassword() } : {}),
+          ...(enabled.ikev2 ? { ikev2Password: randomBytes(20).toString('hex') } : {}),
           updatedAt: new Date(),
         }).where(eq(devices.id, d.id))
         if (enabled.openvpn) payload.rotateOvpn = [...unrotated, { id: d.id, cert: d.ovpnCert }]

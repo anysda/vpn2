@@ -1,11 +1,11 @@
 """config.yaml в той форме, в какой его пишет yaml.safe_dump."""
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 
-from test_deploy import ROOT, values, write_envs
+from test_deploy import values, write_envs
+from vpn2 import config as vpn2_config
 from vpn2.setup import merge_setup_config, parse_yaml
 
 
@@ -105,11 +105,7 @@ class SafeDumpConfigTests(unittest.TestCase):
         for tag, port in (('se', '2083'), ('nl', '2087')):
             with self.subTest(tag=tag), tempfile.TemporaryDirectory() as directory:
                 (Path(directory) / 'config.yaml').write_text(SAFE_DUMP)
-                result = subprocess.run([sys.executable, str(ROOT / 'infra/ansible/inventory.py'), '--set-port', tag, port],
-                                        capture_output=True, text=True, timeout=10, check=False,
-                                        env={'VPN2_CONFIG': f'{directory}/config.yaml', 'VPN2_STATE_DIR': f'{directory}/state',
-                                             'PYTHONPATH': str(ROOT / 'infra/vpn2/src'), 'PATH': '/usr/bin:/bin'})
-                self.assertEqual(result.returncode, 0, result.stderr)
+                vpn2_config.set_exit_port(Path(directory) / 'config.yaml', tag, port)
                 cfg = parse_yaml((Path(directory) / 'config.yaml').read_text())
                 ports = {entry['tag']: entry.get('hy2_direct_port') for entry in cfg['exits']}
                 other = {'se': 'nl', 'nl': 'se'}[tag]

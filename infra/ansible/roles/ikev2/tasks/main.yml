@@ -1,15 +1,12 @@
 ---
-# Сервер IKEv2/IPsec на strongSwan со swanctl: сервер предъявляет сертификат,
-# клиент входит по EAP-MSCHAPv2. Учётные записи устройств панель раскатывает в
-# /etc/swanctl/conf.d/anysda-clients.conf, трафик клиентов идёт через xfrm0 в ту
-# же цепочку TPROXY sing-box, что у WireGuard и OpenVPN.
+# IKEv2/IPsec на strongSwan (swanctl): сервер по сертификату, клиент по EAP-MSCHAPv2.
+# Учётные записи устройств - /etc/swanctl/conf.d/anysda-clients.conf панели, трафик через xfrm0 в TPROXY.
 - name: Каталог отметок стадий
   ansible.builtin.file:
     path: /var/anysda/.stamps
     state: directory
     mode: '0755'
 
-# python3-vici в Ubuntu нет ни в одном компоненте: счётчики читаются через swanctl.
 - name: Пакеты strongSwan
   ansible.builtin.apt:
     name: "{{ ikev2_packages }}"
@@ -28,36 +25,31 @@
     purge: true
     lock_timeout: 1200
 
-# В файле Caddy лежит цепочка, а swanctl берёт из certs только первый сертификат:
-# скрипт кладёт leaf в x509, остальное в x509ca. Его же зовёт path-юнит ротации.
-- name: Раскладка сертификата Caddy в swanctl
+# le-sync кладёт leaf Caddy в x509, цепочку в x509ca; start-scripts грузят swanctl при старте charon.
+- name: Раскладка сертификата Caddy, загрузка swanctl при старте и счётчики
   ansible.builtin.copy:
-    src: anysda-ikev2-le-sync.sh
-    dest: /usr/local/sbin/anysda-ikev2-le-sync.sh
-    mode: '0755'
-
-# starter сам swanctl.conf не читает: без start-scripts после перезагрузки
-# charon поднимается пустым и IKEv2 молчит до следующего деплоя.
-- name: Загрузка swanctl при старте charon
-  ansible.builtin.copy:
-    src: anysda-swanctl-load.conf
-    dest: /etc/strongswan.d/anysda-swanctl-load.conf
-    mode: '0644'
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - {src: anysda-ikev2-le-sync.sh, dest: /usr/local/sbin/anysda-ikev2-le-sync.sh, mode: '0755'}
+    - {src: anysda-swanctl-load.conf, dest: /etc/strongswan.d/anysda-swanctl-load.conf}
+    - {src: anysda-ikev2-sync.py, dest: /usr/local/sbin/anysda-ikev2-sync.py, mode: '0755'}
+    - {src: anysda-ikev2-sync.service, dest: /etc/systemd/system/anysda-ikev2-sync.service}
+    - {src: anysda-ikev2-sync.timer, dest: /etc/systemd/system/anysda-ikev2-sync.timer}
 
 - name: Служба strongswan-starter включена
   ansible.builtin.systemd_service:
     name: strongswan-starter
     enabled: true
 
-- name: Ресурсы charon
+- name: Ресурсы charon и счётчиков
   ansible.builtin.include_role:
     name: resources
   vars:
-    resources_units: [strongswan-starter]
+    resources_units: [strongswan-starter, anysda-ikev2-sync]
 
-# Один шаг под замком применения сертификата: режим, сертификаты, конфиг,
-# рестарт charon только при смене его входов, загрузка creds, пулов и conns,
-# отметки режима для панели.
+# Режим, сертификаты, конфиг, рестарт charon при смене входов, загрузка creds/pools/conns - под замком.
 - name: Сертификаты, конфиг swanctl и загрузка в charon
   ansible.builtin.command:
     argv: >-
@@ -67,8 +59,6 @@
   register: ikev2_step
   changed_when: "'vpn2: changed' in ikev2_step.stdout"
 
-# DNS клиентам отдаёт AdGuard на mgmt-адресе entry, для пакетов из xfrm0 это
-# форвардинг, а ufw по умолчанию routed=deny.
 - name: Порты IKE и DNS клиентов в ufw
   ansible.builtin.command:
     argv: "{{ ikev2_host + ['ufw', '--only-rules', ikev2_ufw | to_json] }}"
@@ -79,11 +69,7 @@
 # Loose RPF: policy-routing IPsec иначе режется reverse-path filter.
 - name: Пересылка пакетов и мягкий rp_filter
   ansible.builtin.command:
-    argv: [sysctl, -w, "{{ item }}"]
-  loop:
-    - net.ipv4.ip_forward=1
-    - net.ipv4.conf.all.rp_filter=2
-    - net.ipv4.conf.default.rp_filter=2
+    argv: [sysctl, -w, net.ipv4.ip_forward=1, net.ipv4.conf.all.rp_filter=2, net.ipv4.conf.default.rp_filter=2]
   changed_when: false
 
 - name: Внешний интерфейс по маршруту по умолчанию
@@ -102,37 +88,14 @@
               after: strongswan-starter.service, routes: "{{ ikev2_subnets }}", v6_reject: true,
               xfrm_dev: "{{ ikev2_route.stdout.split(' dev ')[1].split()[0] }}", subnet6: "{{ ikev2_subnet6 }}"}
 
-# Панель живёт в контейнере без swanctl и сокета charon. Применяет её
-# anysda-clients.conf этот таймер на узле: грузит конфиг в charon, рвёт SA
-# устройств со сменённым или удалённым паролем и выкладывает счётчики байт в
-# /etc/anysda/ikev2-status.json.
-- name: Применение учётных записей панели и счётчики
-  ansible.builtin.copy:
-    src: anysda-ikev2-sync.py
-    dest: /usr/local/sbin/anysda-ikev2-sync.py
-    mode: '0755'
-
-- name: Юнит и таймер anysda-ikev2-sync
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "/etc/systemd/system/{{ item }}"
-    mode: '0644'
-  loop: [anysda-ikev2-sync.service, anysda-ikev2-sync.timer]
-
-- name: Ресурсы anysda-ikev2-sync
-  ansible.builtin.include_role:
-    name: resources
-  vars:
-    resources_units: [anysda-ikev2-sync]
-
-- name: Таймер anysda-ikev2-sync включён
+- name: Таймер счётчиков IKEv2 включён
   ansible.builtin.systemd_service:
     name: anysda-ikev2-sync.timer
     enabled: true
     state: started
     daemon_reload: true
 
-- name: Первый проход anysda-ikev2-sync
+- name: Первый проход счётчиков IKEv2
   ansible.builtin.command:  # noqa: command-instead-of-module
     cmd: systemctl start anysda-ikev2-sync.service
   changed_when: false
@@ -144,21 +107,19 @@
     src: /etc/anysda/ikev2-domain
   register: ikev2_domain
 
+# Путь-юнит ставится и до появления каталога Caddy; таймер страхует пропущенные события и отказ charon.
 - name: Слежение за сертификатом Caddy
   when: ikev2_le_domain | length > 0
   vars:
     ikev2_le_cert: "{{ ikev2_caddy_certs }}/{{ ikev2_le_domain }}/{{ ikev2_le_domain }}.crt"
     ikev2_le_key: "{{ ikev2_caddy_certs }}/{{ ikev2_le_domain }}/{{ ikev2_le_domain }}.key"
   block:
-    # Drop-in до записи юнита: systemd читает его вместе с юнитом при reload.
     - name: Ресурсы anysda-ikev2-cert-sync
       ansible.builtin.include_role:
         name: resources
       vars:
         resources_units: [anysda-ikev2-cert-sync]
 
-    # Слежение ставится и когда каталога Caddy ещё нет. Таймер страхует пропущенные
-    # события, запись cert и key порознь и временный отказ charon.
     - name: Юниты anysda-ikev2-cert-sync
       ansible.builtin.template:
         src: "{{ item }}.j2"
@@ -180,19 +141,18 @@
         daemon_reload: true
       loop: [anysda-ikev2-cert-sync.path, anysda-ikev2-cert-sync.timer]
 
-- name: Без домена слежение за сертификатом снято
+- name: Без домена слежение за сертификатом выключено
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl disable --now anysda-ikev2-cert-sync.path anysda-ikev2-cert-sync.timer
+  changed_when: false
+  failed_when: false
   when: ikev2_le_domain | length == 0
-  block:
-    - name: Слежение и таймер выключены
-      ansible.builtin.command:  # noqa: command-instead-of-module
-        cmd: systemctl disable --now anysda-ikev2-cert-sync.path anysda-ikev2-cert-sync.timer
-      changed_when: false
-      failed_when: false
 
-    - name: Отпечаток применённого сертификата Caddy убран
-      ansible.builtin.file:
-        path: /etc/anysda/ikev2-cert.sha256
-        state: absent
+- name: Без домена отпечаток применённого сертификата Caddy убран
+  ansible.builtin.file:
+    path: /etc/anysda/ikev2-cert.sha256
+    state: absent
+  when: ikev2_le_domain | length == 0
 
 - name: Отметка стадии
   ansible.builtin.copy:

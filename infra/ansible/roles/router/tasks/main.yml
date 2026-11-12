@@ -33,6 +33,7 @@
   environment:
     PATH: "{{ router_path }}"
     VPN2_RELEASE_MANIFEST: "{{ vpn2_env.VPN2_RELEASE_MANIFEST | default('') }}"
+    VPN2_DEVELOPMENT: "{{ vpn2_env.VPN2_DEVELOPMENT | default('') }}"
   register: router_binary
   changed_when: "'уже установлен' not in router_binary.stdout"
 

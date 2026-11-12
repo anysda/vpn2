@@ -43,6 +43,7 @@ STAGE_LINES = {
     'yt_pot': ('lib/install-yt-pot.sh', 'pot_version={v}\n'),
     'yt_pot_sha256': ('lib/install-yt-pot.sh', '{v}'),
     'zapret2': ('vpn2/src/vpn2/zapret/stage.py', "ZAPRET_REF = '{v}'\n"),
+    'zapret2_sha256': ('vpn2/src/vpn2/zapret/stage.py', "ZAPRET_SHA256 = '{v}'\n"),
 }
 
 

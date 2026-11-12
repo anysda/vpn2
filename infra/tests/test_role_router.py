@@ -60,6 +60,8 @@ class RouterRoleTests(unittest.TestCase):
         self.assertEqual(task['environment']['PATH'], '{{ router_path }}')
         self.assertTrue(defaults['router_path'].startswith('/opt/vpn2/venv/bin:'))
         self.assertIn('VPN2_RELEASE_MANIFEST', task['environment'])
+        # Деплой экспортирует путь манифеста всегда; без флага разработки установщик ищет его и падает.
+        self.assertEqual(task['environment']['VPN2_DEVELOPMENT'], "{{ vpn2_env.VPN2_DEVELOPMENT | default('') }}")
 
     def test_steps_report_change_by_package_output(self):
         tasks = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())

@@ -60,7 +60,8 @@ def binary_specs(root):
     specs['yt-pot'] = spec(version, 'all', f'https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{version}.tar.gz',
                            pins['yt_pot_sha256'])
     version = pins['zapret2']
-    specs['zapret2-source'] = spec(version, 'all', f'https://github.com/bol-van/zapret2/archive/{version}.tar.gz')
+    specs['zapret2-source'] = spec(version, 'all', f'https://github.com/bol-van/zapret2/archive/{version}.tar.gz',
+                                  pins['zapret2_sha256'])
     return specs
 
 

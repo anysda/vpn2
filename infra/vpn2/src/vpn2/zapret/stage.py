@@ -22,6 +22,8 @@ from vpn2 import release, svc
 
 ZAPRET_REF = '038c97e5819df10f8e8c22a2f1fffe57f2f7379b'
 ZAPRET_REPO = 'https://github.com/bol-van/zapret2'
+# sha256 архива ZAPRET_REF с GitHub, тот же пин zapret2_sha256 в infra/versions.yml.
+ZAPRET_SHA256 = 'f31711fa2dc94135bd295542c8024e5db8f6adf71d4c542f7289f3e04347e29d'
 # Режет ClientHello. DPI провайдера берёт только split: fake и circular не берут.
 SPLIT = '--payload=tls_client_hello --lua-desync=multisplit:pos=10,midsld:seqovl=1'
 LUA_MODULES = ('zapret-lib', 'zapret-antidpi', 'zapret-auto')
@@ -119,8 +121,11 @@ def source(environ, cfg):
     base, ref, binary = Path(cfg['base']), cfg['ref'], cfg['bin']
     with tempfile.TemporaryDirectory() as work:
         archive = os.path.join(work, 'source.tar.gz')
-        if release.main(['--manifest', environ.get('VPN2_RELEASE_MANIFEST') or MANIFEST, 'artifact',
-                         'zapret2-source', archive, '--url', f"{cfg['repo']}/archive/{ref}.tar.gz"]):
+        # В режиме разработки манифеста выпуска нет: архив сверяется только с закреплённым хешем.
+        manifest = ([] if environ.get('VPN2_DEVELOPMENT', 'false') == 'true'
+                    else ['--manifest', environ.get('VPN2_RELEASE_MANIFEST') or MANIFEST])
+        if release.main([*manifest, 'artifact', 'zapret2-source', archive, '--sha256', ZAPRET_SHA256,
+                         '--url', f"{cfg['repo']}/archive/{ref}.tar.gz"]):
             raise StageError('архив zapret2 не получен')
         marker = base / '.release-ref'
         changed = not (marker.is_file() and marker.read_text().strip() == ref)

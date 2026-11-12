@@ -38,11 +38,11 @@ class FailoverRoleTests(unittest.TestCase):
         tasks = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())
         copied = {}
         for task in tasks:
-            copy = task.get('ansible.builtin.copy') or {}
-            for name in task.get('loop') or [copy.get('src')]:
-                if name in INSTALLED:
-                    dest = copy['dest'] + name if copy['dest'].endswith('/') else copy['dest']
-                    copied[name] = (dest, copy['mode'])
+            if 'ansible.builtin.copy' not in task:
+                continue
+            for item in task.get('loop', []):
+                dest = item['dest'] + item['src'] if item['dest'].endswith('/') else item['dest']
+                copied[item['src']] = (dest, item['mode'])
         self.assertEqual(copied, INSTALLED)
 
     def test_play_runs_role_on_entry_under_stage_tag(self):

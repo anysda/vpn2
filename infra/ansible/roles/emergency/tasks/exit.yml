@@ -97,28 +97,10 @@
 
 - name: Настройки TLS и сниппеты Caddy
   ansible.builtin.command:
-    argv:
-      - "{{ emergency_vpn2 }}"
-      - tls
-      - --prepare
-      - --role
-      - exit
-      - --host
-      - "{{ emergency_public_ip }}"
-      - --config
-      - /etc/vpn2/tls/config.json
-      - --caddy-dir
-      - /etc/caddy
-      - --output-dir
-      - /etc/vpn2/tls/ip
-      - --storage
-      - /var/lib/caddy/.local/share/caddy
-      - --cert-group
-      - vpn2-emergency
-      - --acme-url
-      - "{{ emergency_tls_acme_url }}"
-      - --acme-root
-      - "{{ emergency_tls_acme_root }}"
+    argv: ["{{ emergency_vpn2 }}", tls, --prepare, --role, exit, --host, "{{ emergency_public_ip }}",
+           --config, /etc/vpn2/tls/config.json, --caddy-dir, /etc/caddy, --output-dir, /etc/vpn2/tls/ip,
+           --storage, /var/lib/caddy/.local/share/caddy, --cert-group, vpn2-emergency,
+           --acme-url, "{{ emergency_tls_acme_url }}", --acme-root, "{{ emergency_tls_acme_root }}"]
   changed_when: false
 
 - name: Caddy идёт с текущими настройками
@@ -142,14 +124,7 @@
 
 - name: Первый сертификат на IP
   ansible.builtin.command:
-    argv:
-      - "{{ emergency_vpn2 }}"
-      - tls
-      - --initial
-      - --config
-      - /etc/vpn2/tls/config.json
-      - --wait
-      - "{{ emergency_tls_wait }}"
+    argv: ["{{ emergency_vpn2 }}", tls, --initial, --config, /etc/vpn2/tls/config.json, --wait, "{{ emergency_tls_wait }}"]
   changed_when: false
 
 - name: Таймер TLS идёт

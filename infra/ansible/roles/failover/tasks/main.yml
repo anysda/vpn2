@@ -18,23 +18,18 @@
   register: failover_env_step
   changed_when: "'changed=1' in failover_env_step.stdout"
 
-- name: Юниты сторожей
+# Сторож TPROXY раз в минуту проверяет то, без чего клиенты wg0, OpenVPN и
+# IKEv2 молча теряют интернет, и чинит на месте.
+- name: Сторожа и их юниты
   ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: /etc/systemd/system/
-    mode: '0644'
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
   loop:
-    - anysda-failover-watchdog.service
-    - anysda-tproxy-watchdog.service
-    - anysda-tproxy-watchdog.timer
-
-# Раз в минуту проверяет то, без чего клиенты wg0, OpenVPN и IKEv2 молча
-# теряют интернет, и чинит на месте.
-- name: Сторож TPROXY
-  ansible.builtin.copy:
-    src: anysda-tproxy-watchdog.sh
-    dest: /usr/local/sbin/anysda-tproxy-watchdog.sh
-    mode: '0755'
+    - {src: anysda-failover-watchdog.service, dest: /etc/systemd/system/, mode: '0644'}
+    - {src: anysda-tproxy-watchdog.service, dest: /etc/systemd/system/, mode: '0644'}
+    - {src: anysda-tproxy-watchdog.timer, dest: /etc/systemd/system/, mode: '0644'}
+    - {src: anysda-tproxy-watchdog.sh, dest: /usr/local/sbin/anysda-tproxy-watchdog.sh, mode: '0755'}
 
 - name: Ресурсы юнитов сторожей
   ansible.builtin.include_role:

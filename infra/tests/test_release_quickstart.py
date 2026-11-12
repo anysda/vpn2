@@ -17,6 +17,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 from vpn2 import release  # noqa: E402
+from test_deploy import function, values, write_envs  # noqa: E402
 
 HEAD = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'],
                       capture_output=True, text=True, check=True).stdout.strip()
@@ -95,11 +96,11 @@ class ReleaseQuickstartTests(unittest.TestCase):
         (self.work / 'bin/python3').symlink_to(sys.executable)
 
     def release_start(self, source):
-        script = f'''
-source {shlex.quote(str(ROOT / 'infra/lib/deploy-release.sh'))}
-install_prereqs() {{ echo UNEXPECTED_REMOTE_CHANGE; exit 99; }}
-release_start
-'''
+        deploy = (ROOT / 'infra/deploy.sh').read_text()
+        script = '\n'.join((re.search(r'^release_cli\(\) .*$', deploy, re.M)[0], function('release_start'),
+                            'die() { echo "$*" >&2; exit 1; }',
+                            'service() { echo UNEXPECTED_REMOTE_CHANGE; exit 99; }',
+                            f'REPO={shlex.quote(str(ROOT))} MANIFEST= TMP=$(mktemp -d)', 'release_start'))
         env = dict(os.environ, DEPLOY_ROOT=str(ROOT / 'infra'), VPN2_DEVELOPMENT='false',
                    VPN2_RELEASE_SOURCE=source, VPN2_STATE_DIR=str(self.work / 'state'),
                    PATH=f'{self.work / "bin"}:{os.environ["PATH"]}')
@@ -170,24 +171,17 @@ release_start
         self.assertIn('infra/scripts/30-frontend.sh', result.stderr)
         self.assertIn('git stash', result.stderr)
 
-    def test_image_pinned_by_previous_install_is_ignored_with_warning(self):
+    def test_image_from_config_only_in_development(self):
         config = (ROOT / 'config.example.yaml').read_text().replace(
             '  passphrase: ""', '  passphrase: test pass')
         config += '\npanel:\n  image: ghcr.io/anysda/vpn2/panel:1.0.0\ntgbot:\n  image: ghcr.io/anysda/vpn2/tgbot:1.0.0\n'
         (self.work / 'config.yaml').write_text(config)
-        for development, expected in (('false', None), ('true', "PANEL_IMAGE='ghcr.io/anysda/vpn2/panel:1.0.0'")):
-            result = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), str(self.work)],
-                                    env=dict(os.environ, VPN2_STATE_DIR=f'{self.work}/state', VPN2_DEVELOPMENT=development),
-                                    capture_output=True, text=True, timeout=60)
+        for development, expected in (('false', (None, None)),
+                                      ('true', ('ghcr.io/anysda/vpn2/panel:1.0.0', 'ghcr.io/anysda/vpn2/tgbot:1.0.0'))):
+            result = write_envs(self.work, env={'VPN2_DEVELOPMENT': development})
             self.assertEqual(result.returncode, 0, result.stderr)
-            env = (self.work / 'infra/envs/ru.env').read_text()
-            if expected is None:
-                self.assertNotRegex(env, re.compile('^(PANEL|TGBOT)_IMAGE=', re.M))
-                self.assertIn('panel.image: ghcr.io/anysda/vpn2/panel:1.0.0 не используется', result.stdout)
-                self.assertIn('tgbot.image', result.stdout)
-            else:
-                self.assertIn(expected, env)
-                self.assertNotIn('не используется', result.stdout)
+            env = values(self.work)
+            self.assertEqual((env.get('PANEL_IMAGE'), env.get('TGBOT_IMAGE')), expected)
 
     def test_readme_install_needs_no_manual_release_steps(self):
         readme = (ROOT / 'README.md').read_text()

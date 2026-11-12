@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -14,6 +13,7 @@ import yaml
 from adguard_support import Hub
 from containers_support import compose
 from vpn2 import containers
+from test_deploy import write_envs
 from zapret_support import render
 
 
@@ -45,14 +45,12 @@ class AdguardLiteralTests(unittest.TestCase):
     def test_sync_credentials(self):
         for value in VALUES:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                # Имя проходит весь путь: config.yaml, config2env, env стадии, конфиг AdGuard.
+                # Имя проходит весь путь: config.yaml, inventory.py --env, env узла, конфиг AdGuard.
                 config = ('entry:\n  host: entry.example.test\n  password: fake\n'
                           'exits:\n  - tag: test\n    host: exit.example.test\n'
                           '    password: fake\nadmin:\n  user: ' + json.dumps(value) + '\n')
                 (Path(work) / 'config.yaml').write_text(config)
-                converted = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), work],
-                                           text=True, capture_output=True, timeout=15,
-                                           env={**os.environ, 'VPN2_STATE_DIR': f'{work}/state'})
+                converted = write_envs(work)
                 self.assertEqual(converted.returncode, 0, converted.stderr)
                 user = run('source infra/envs/ru.env\nprintf %s "$ADMIN_USER"', work)
                 self.assertEqual(user.stdout, value, user.stderr)

@@ -1,11 +1,9 @@
 """Пустой backup.passphrase при включённом бэкапе отклоняется до записи env."""
-import os
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT
+from test_deploy import values, write_envs
 
 
 CONFIG = """entry:
@@ -28,9 +26,7 @@ def backup(enabled, passphrase_line):
 class BackupPassphraseTests(unittest.TestCase):
     def convert(self, config, directory):
         (Path(directory) / 'config.yaml').write_text(config)
-        return subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), directory],
-                              capture_output=True, text=True, timeout=10,
-                              env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state', 'HOME': directory})
+        return write_envs(directory, env={'HOME': directory})
 
     def env_text(self, directory):
         envs = Path(directory) / 'infra/envs'
@@ -55,9 +51,8 @@ class BackupPassphraseTests(unittest.TestCase):
             with self.subTest(line=line), tempfile.TemporaryDirectory() as directory:
                 result = self.convert(backup('true', line), directory)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                env = self.env_text(directory)
-                self.assertIn("BACKUP_ENABLED='true'", env)
-                self.assertIn(f"BACKUP_PASSPHRASE='{value}'", env)
+                env = values(directory)
+                self.assertEqual((env['BACKUP_ENABLED'], env['BACKUP_PASSPHRASE']), ('true', value))
 
     def test_missing_passphrase_rejected_when_enabled(self):
         self.assert_rejected(backup('true', None))
@@ -74,9 +69,8 @@ class BackupPassphraseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = self.convert(backup('true', "passphrase: 'long backup secret'"), directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            env = self.env_text(directory)
-            self.assertIn("BACKUP_ENABLED='true'", env)
-            self.assertIn("BACKUP_PASSPHRASE='long backup secret'", env)
+            env = values(directory)
+            self.assertEqual((env['BACKUP_ENABLED'], env['BACKUP_PASSPHRASE']), ('true', 'long backup secret'))
 
 
 if __name__ == '__main__':

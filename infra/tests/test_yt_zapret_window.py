@@ -5,11 +5,10 @@ VPN2_TEST_ROOT позволяет прогнать те же проверки н
 
 import os
 from pathlib import Path
-import subprocess
-import sys
 import tempfile
 import unittest
 
+from test_deploy import write_envs
 from zapret_support import stage
 
 
@@ -80,16 +79,13 @@ class WindowTests(unittest.TestCase):
                 config = (ROOT / 'config.example.yaml').read_text().replace(
                     '  passphrase: ""', '  passphrase: test pass')
                 (root / 'config.yaml').write_text(config + f'\nyoutube:\n  route: zapret\n  window_scale: {scale}\n')
-                result = subprocess.run(
-                    [sys.executable, str(ROOT / 'infra/lib/config2env.py'), directory],
-                    text=True, capture_output=True, check=False,
-                                        env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state'})
+                result = write_envs(directory)
                 if scale in ('15', '-1', '09', 'auto'):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn('youtube.window_scale', result.stderr)
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn(f'YT_ZAPRET_WINDOW_SCALE=' + (scale if scale.isdigit() else f"'{scale}'"), (root / 'infra/envs/ru.env').read_text())
+                    self.assertIn(f'\nYT_ZAPRET_WINDOW_SCALE={scale}\n', (root / 'infra/envs/ru.env').read_text())
 
 
 if __name__ == '__main__':

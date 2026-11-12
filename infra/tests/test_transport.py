@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 
+from test_deploy import write_envs
+
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
@@ -77,9 +79,7 @@ class HysteriaTests(unittest.TestCase):
                     '  passphrase: ""', '  passphrase: test pass')
                 (root / 'config.yaml').write_text(base.replace('    host: 5.6.7.8\n',
                     f'    host: 5.6.7.8\n    hy2_up_mbps: {up}\n    hy2_down_mbps: {down}\n'))
-                result = subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), tmp],
-                                        capture_output=True, text=True,
-                                        env={**os.environ, 'VPN2_STATE_DIR': f'{tmp}/state'})
+                result = write_envs(tmp)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('нужны обе скорости', result.stderr)
                 self.assertFalse((root / 'infra/envs').exists())

@@ -54,6 +54,12 @@ def write_envs(directory, env=None):
     return result
 
 
+def values(directory, node='ru'):
+    """Окружение узла из infra/envs/<узел>.env после write_envs: имя -> значение после разбора shell."""
+    text = (Path(directory) / f'infra/envs/{node}.env').read_text()
+    return dict(pair.split('=', 1) for pair in shlex.split(text))
+
+
 def bash(script, directory):
     return subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
                           cwd=directory, text=True, capture_output=True, timeout=15)

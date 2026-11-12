@@ -43,9 +43,9 @@ class FakeHy2:
     def active(self, directory):
         return self.read_state(directory)['active']
 
-    connections = poll_sessions = refresh_tls = staticmethod(lambda *a, **k: {})
-    settings = staticmethod(lambda *a: {'port': 18443})
-    listening = staticmethod(lambda port: False)
+    connections = poll_sessions = refresh_tls = staticmethod(lambda *_, **__: {})
+    settings = staticmethod(lambda *_: {'port': 18443})
+    listening = staticmethod(lambda _port: False)
 
 
 class Cluster:
@@ -58,13 +58,13 @@ class Cluster:
         self.hy2, self.sent, self.telegram, self.beats = FakeHy2(), [], True, 0
         self.entry, self.ready, self.down, self.cut, self.exits = True, True, set(), set(), {}
         api = types.SimpleNamespace(call=self.call)
-        for target, value in (('hy2', self.hy2), ('BotApi', lambda token: api)):
+        for target, value in (('hy2', self.hy2), ('BotApi', lambda _token: api)):
             patcher = patch.object(agent, target, value)
             patcher.start()
             test.addCleanup(patcher.stop)
         for target, value in ((agent.web, 'make_server'), (agent.readiness, 'reachable')):
             patcher = patch.object(target, value, self.server if value == 'make_server' else
-                                   lambda *a, **k: self.entry and self.ready)
+                                   lambda *_, **__: self.entry and self.ready)
             patcher.start()
             test.addCleanup(patcher.stop)
         for name in self.names:

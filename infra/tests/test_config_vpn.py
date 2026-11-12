@@ -1,12 +1,11 @@
 """Параметры VPN проходят от config.yaml до env сервера и панели."""
-import hashlib
 from pathlib import Path
 import tempfile
 import unittest
 
 import test_config_validation as validation
 from containers_support import FACTS, compose
-from test_deploy import bash, source
+from test_deploy import source, values
 
 PANEL_VPN = ('NUXT_WG_LISTEN_PORT', 'NUXT_WG_MTU', 'NUXT_WG_SPLIT_LOCAL', 'NUXT_OVPN_PORT', 'NUXT_OVPN_PROTO')
 
@@ -21,16 +20,12 @@ class VpnConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = self.convert(extra, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            result = bash("grep -hE '^(WG_LISTEN_PORT|OVPN_PORT|OVPN_PROTO|WG_MTU|WG_SPLIT_LOCAL)=' "
-                          'infra/envs/all.env infra/envs/ru.env', directory)
-            expected = ("WG_LISTEN_PORT=51830\nOVPN_PORT=1195\nOVPN_PROTO='tcp'\n"
-                        "WG_MTU=1380\nWG_SPLIT_LOCAL='false'\n")
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout, expected)
+            environ = values(directory)
+            self.assertEqual({name: environ[name] for name in ('WG_LISTEN_PORT', 'OVPN_PORT', 'OVPN_PROTO', 'WG_MTU',
+                                                               'WG_SPLIT_LOCAL')},
+                             {'WG_LISTEN_PORT': '51830', 'OVPN_PORT': '1195', 'OVPN_PROTO': 'tcp', 'WG_MTU': '1380',
+                              'WG_SPLIT_LOCAL': 'false'})
             # Те же значения доходят до окружения панели в compose.yaml.
-            result = bash('set -a\nsource infra/envs/all.env\nsource infra/envs/ru.env\nenv -0', directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            environ = dict(item.split('=', 1) for item in result.stdout.split('\0') if item)
             panel = compose.panel_environment({'AGH_PORT': '3000', **environ}, FACTS)
             self.assertEqual({name: panel[name] for name in panel if name in PANEL_VPN}, {
                 'NUXT_WG_LISTEN_PORT': '51830', 'NUXT_WG_MTU': '1380',
@@ -56,8 +51,7 @@ class VpnConfigTests(unittest.TestCase):
             with self.subTest(proto=proto), tempfile.TemporaryDirectory() as directory:
                 result = self.convert(f'openvpn:\n  proto: {proto}\n', directory)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                env = (Path(directory) / 'infra/envs/ru.env').read_text()
-                self.assertIn(f"OVPN_PROTO='{proto}'\n", env)
+                self.assertEqual(values(directory)['OVPN_PROTO'], proto)
 
     def test_numeric_boundaries_and_boolean_normalization(self):
         for port, mtu, split, expected in (('1', '1280', 'yes', 'true'),
@@ -67,10 +61,9 @@ class VpnConfigTests(unittest.TestCase):
                 result = self.convert(f'ports:\n  wireguard: {port}\n  openvpn: {port}\n'
                                       f'wireguard:\n  mtu: {mtu}\n  split_local: {split}\n', directory)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                env = (Path(directory) / 'infra/envs/ru.env').read_text()
-                for line in (f'WG_LISTEN_PORT={int(port)}', f'OVPN_PORT={int(port)}',
-                             f'WG_MTU={int(mtu)}', f"WG_SPLIT_LOCAL='{expected}'"):
-                    self.assertIn(line + '\n', env)
+                env = values(directory)
+                self.assertEqual([env[name] for name in ('WG_LISTEN_PORT', 'OVPN_PORT', 'WG_MTU', 'WG_SPLIT_LOCAL')],
+                                 [str(int(port)), str(int(port)), str(int(mtu)), expected])
 
     def test_invalid_values_leave_existing_env_and_state_untouched(self):
         cases = []

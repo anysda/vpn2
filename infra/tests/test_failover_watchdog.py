@@ -43,27 +43,27 @@ class Stand:
         fo.bot_event = lambda subject, detail: self.events.append((subject, detail))
         fo.restart_sing_box = lambda: self.restarts.append(self.t) or ''
         fo.entry_pressure = lambda: ''
-        fo._store = lambda name, data: None
-        fo._stored = lambda name: {}
+        fo._store = lambda _name, _data: None
+        fo._stored = lambda _name: {}
         fo.DISABLED_FILE = os.path.join(self.tmp.name, 'exits-disabled.json')
         self.dog = fo.Watchdog(api=self)
         self.dog.health.watch = lambda tags: setattr(self.dog.health, 'want', set(tags))
 
     # clash-api
-    def proxies(self, timeout=None):
+    def proxies(self, **_):
         return self.p
 
-    def connections(self, timeout=None):
+    def connections(self, **_):
         return self.conns
 
-    def select(self, group, name, timeout=None):
+    def select(self, group, name, **_):
         assert name in self.p[group]['all'], (group, name)
         self.p[group]['now'] = name
 
-    def close(self, conn_id, timeout=None):
+    def close(self, conn_id, **_):
         self.closed.append(conn_id)
 
-    def delay(self, tag, url, **_):
+    def delay(self, tag, _url, **_):
         return (40, '') if self.tg_ok is None or tag in self.tg_ok else (None, 'таймаут')
 
     def delay_many(self, tags, url, **_):

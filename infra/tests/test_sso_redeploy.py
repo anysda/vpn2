@@ -1,10 +1,8 @@
-import os
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT
+from test_deploy import values, write_envs
 
 
 class SsoRedeployTests(unittest.TestCase):
@@ -16,13 +14,10 @@ class SsoRedeployTests(unittest.TestCase):
                     'entry:\n  host: 192.0.2.1\n  password: test-only\n'
                     'exits:\n  - tag: se\n    host: 192.0.2.2\n    password: test-only\n'
                     'sso:\n  enabled: true\n  client_secret: ""\n' + seed)
-                result = subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), directory],
-                                        text=True, capture_output=True, timeout=10,
-                                        env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state'})
+                result = write_envs(directory)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                env = (root / 'infra/envs/ru.env').read_text()
-                self.assertIn("SSO_REQUESTED='true'", env)
-                self.assertIn("SSO_ENABLED='false'", env)
-                self.assertIn("SSO_AUTO_REDIRECT='false'", env)
-                self.assertIn("SSO_PASSWORD_LOGIN='true'", env)
-                self.assertIn("SSO_CLIENT_SECRET=''", env)
+                env = values(directory)
+                self.assertEqual({name: env.get(name) for name in ('SSO_REQUESTED', 'SSO_ENABLED', 'SSO_AUTO_REDIRECT',
+                                                                   'SSO_PASSWORD_LOGIN', 'SSO_CLIENT_SECRET')},
+                                 {'SSO_REQUESTED': 'true', 'SSO_ENABLED': 'false', 'SSO_AUTO_REDIRECT': 'false',
+                                  'SSO_PASSWORD_LOGIN': 'true', 'SSO_CLIENT_SECRET': ''})

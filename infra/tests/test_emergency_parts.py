@@ -201,7 +201,7 @@ class Notices(Temp):
             1: ('pending', ''), 2: ('blocked', notices.NO_CHANNEL), 3: ('blocked', 'срок доступа истёк'),
             4: ('blocked', 'нет устройств'), 5: ('blocked', 'нет аварийного профиля устройства')})
         api = Api()
-        api.call = lambda chat, part: (api.calls.append(part), Reply(True))[1]
+        api.call = lambda _chat, part: (api.calls.append(part), Reply(True))[1]
         spool.flush(self.directory, api, NOW)
         self.assertEqual([part['method'] for part in api.calls], ['sendMessage'] * 3 + ['sendDocument'])
         self.assertEqual(api.calls[1]['text'], 'hysteria2://a' + notices.footer('Амстердам', NOW))
@@ -226,7 +226,7 @@ class Runtime:
     def service(self, action):
         self.actions.append(action)
 
-    def probe(self, state_dir):
+    def probe(self, _state_dir):
         return self.ok
 
 
@@ -279,7 +279,7 @@ class Hy2(Temp):
     def test_connection_states_come_from_live_sessions_of_this_generation(self):
         self.start(5)
         clock = types.SimpleNamespace(now=NOW)
-        poll = lambda live: hy2.poll_sessions(self.directory, fetch=lambda state: live, clock=lambda: clock.now)  # noqa: E731
+        poll = lambda live: hy2.poll_sessions(self.directory, fetch=lambda _state: live, clock=lambda: clock.now)  # noqa: E731
         self.assertEqual(hy2.connections(self.directory, 5, clock=lambda: clock.now), {})
         poll({11, 99})
         self.assertEqual(hy2.connections(self.directory, 5, clock=lambda: clock.now), {11: 'connected', 12: 'never'})

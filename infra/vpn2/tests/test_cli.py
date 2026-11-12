@@ -37,7 +37,7 @@ def test_version_matches_pyproject():
 
 @pytest.mark.parametrize("failure", [RuntimeError("boom"), ImportError("no module")])
 def test_failing_command_is_code_1_and_names_itself(failure, monkeypatch, capsys):
-    def broken(argv):
+    def broken(_argv):
         raise failure
     monkeypatch.setattr(cli, "version", broken)
     assert cli.main(["version"]) == 1

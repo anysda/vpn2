@@ -144,11 +144,12 @@
 .clm .al.amb b{color:var(--amber)}
 /* QR своим размером (4 px на модуль), но не шире контента; на телефоне - на всю ширину. */
 .clm .qr{display:block;width:auto;height:auto;max-width:100%;image-rendering:pixelated;margin:16px auto 0;padding:12px;border-radius:18px;background:#fff;box-shadow:0 0 40px rgba(var(--glow),calc(.12*var(--gk)))}
-/* Телефон: окно с QR во всю ширину экрана, QR - во всю ширину окна, как прежняя шторка:
+/* Телефон: окно панели с QR во всю ширину экрана, QR - во всю ширину окна, как прежняя шторка:
    на 360 px худший конфиг WG не мельче 2,5 CSS px на модуль (VPN2-598). */
 @media (max-width:720px){
-  .clm:has(.qr){width:100vw;max-width:none}
-  .clm .qr{width:calc(100% + 32px);max-width:none;margin-inline:-16px;padding:0;border-radius:8px}
+  .clm .qr{width:100%}
+  [data-slot="content"].clm:has(.qr){width:100vw;max-width:none}
+  [data-slot="content"].clm .qr{width:calc(100% + 32px);max-width:none;margin-inline:-16px;padding:0;border-radius:8px}
 }
 .clm .kvr{display:grid;grid-template-columns:150px 1fr 30px;align-items:center;gap:10px;padding:10px 0;border-top:1px solid rgba(var(--fg),.05);font-size:12.5px}
 .clm .kvr:first-of-type{margin-top:12px}

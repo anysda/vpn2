@@ -4,6 +4,8 @@ import { useDb } from '../database/client'
 import { devices, routes } from '../database/schema'
 
 const Outbound = z.string().min(1).max(64)
+const routeEvent = (type: string, id: number, title: string, detail: string, actor: string) =>
+  recordEvent({ type, level: 'info', object: `route:${id}`, actor, title, detail: joinDetail(detail, actor) })
 const syncRoutes = () => syncRoutesFile().catch(err => useLogger().error({ err }, 'route sync failed'))
 
 // Снимок пишет роутер рядом с manual-routes.json, перечитываем по смене ревизии.
@@ -56,17 +58,10 @@ export default {
     const db = useDb()
     // libsql оборачивает ошибку UNIQUE так, что по тексту её не узнать: 409 даёт только SELECT заранее.
     const dup = await db.select({ id: routes.id }).from(routes).where(eq(routes.value, value)).limit(1)
-    if (dup.length > 0) {
-      throw createError({ statusCode: 409, statusMessage: 'route_exists', message: `Правило «${value}» уже существует` })
-    }
+    if (dup.length) throw createError({ statusCode: 409, statusMessage: 'route_exists', message: `Правило «${value}» уже существует` })
     const [row] = await db.insert(routes).values({ type, value, outbound: body.outbound }).returning()
     await syncRoutes()
-    if (row) {
-      await recordEvent({
-        type: 'route_added', level: 'info', object: `route:${row.id}`, actor: actorOf(user),
-        title: `Маршрут добавлен · ${row.value}`, detail: joinDetail(`через ${outboundLabel(row.outbound)}`, actorOf(user)),
-      })
-    }
+    await routeEvent('route_added', row!.id, `Маршрут добавлен · ${row!.value}`, `через ${outboundLabel(row!.outbound)}`, actorOf(user))
     return row
   }),
   'PATCH /routes/:id': admin(async (event, user) => {
@@ -79,11 +74,8 @@ export default {
     if (!row) throw notFound()
     await syncRoutes()
     if (before && before.outbound !== row.outbound) {
-      await recordEvent({
-        type: 'route_exit', level: 'info', object: `route:${row.id}`, actor: actorOf(user),
-        title: `Выход маршрута изменён · ${row.value}`,
-        detail: joinDetail(`${outboundLabel(before.outbound)} → ${outboundLabel(row.outbound)}`, actorOf(user)),
-      })
+      await routeEvent('route_exit', row.id, `Выход маршрута изменён · ${row.value}`,
+        `${outboundLabel(before.outbound)} → ${outboundLabel(row.outbound)}`, actorOf(user))
     }
     return row
   }),
@@ -92,10 +84,7 @@ export default {
     const [removed] = await useDb().delete(routes).where(eq(routes.id, id)).returning({ id: routes.id, value: routes.value, outbound: routes.outbound })
     if (!removed) throw notFound()
     await syncRoutes()
-    await recordEvent({
-      type: 'route_deleted', level: 'info', object: `route:${removed.id}`, actor: actorOf(user),
-      title: `Маршрут удалён · ${removed.value}`, detail: joinDetail(`был через ${outboundLabel(removed.outbound)}`, actorOf(user)),
-    })
+    await routeEvent('route_deleted', removed.id, `Маршрут удалён · ${removed.value}`, `был через ${outboundLabel(removed.outbound)}`, actorOf(user))
     return { ok: true }
   }),
 

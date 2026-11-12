@@ -60,18 +60,9 @@ def calculate(ram_mib, free_mib, overrides):
     result.update(retention_days=min(2 * step - 1, max(1, free_mib // 1024 - 1)),
                   adaway_enabled=step >= 3 and free_mib >= 2048,
                   querylog_size=(50, 100, 500, 1000)[step - 1])
-    unknown = overrides.keys() - result.keys()
-    if unknown:
-        raise ValueError(f'Неизвестные entry_resources: {sorted(unknown)}')
+    # Значения уже проверил разбор config.yaml (vpn2.config).
     for key, value in overrides.items():
-        if key == 'adaway_enabled':
-            if str(value).lower() not in ('true', 'false'):
-                raise ValueError(f'{key}: требуется true/false')
-            result[key] = str(value).lower() == 'true'
-        else:
-            if not str(value).isdigit() or (key == 'retention_days' and int(value) == 0):
-                raise ValueError(f"{key}: требуется целое {'> 0' if key == 'retention_days' else '>= 0'}")
-            result[key] = int(value)
+        result[key] = value.lower() == 'true' if key == 'adaway_enabled' else int(value)
     return result
 
 

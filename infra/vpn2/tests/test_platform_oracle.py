@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from vpn2 import resources
+from vpn2 import config, resources
 from vpn2.adguard import dns, stage
 from vpn2.containers import compose
 
@@ -47,11 +47,10 @@ def test_budgets_and_service_limits(key):
         assert (docker, runtime) == (old['ENTRY_DOCKER_ARGS'], old['ENTRY_RUNTIME_ARGS'])
 
 
-def test_bad_override_is_refused():
-    with pytest.raises(ValueError):
-        resources.calculate(2048, 8192, {'retention_days': '0'})
-    with pytest.raises(ValueError):
-        resources.calculate(2048, 8192, {'unknown': '1'})
+def test_bad_override_is_refused_by_config():
+    for line in ('  retention_days: 0', '  unknown: 1', '  adaway_enabled: maybe'):
+        with pytest.raises(config.ConfigError):
+            config.loads(f'entry_resources:\n{line}\n')
 
 
 @pytest.mark.parametrize('key', sorted(COMPOSE['cases']))

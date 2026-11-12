@@ -61,11 +61,11 @@ class SsoMissingSecretTests(unittest.TestCase):
                     self.assertEqual(env['NUXT_SSO_PASSWORD_LOGIN'], 'true')
 
     def test_notice_is_once_at_end_of_pipeline_or_frontend_stage(self):
+        functions = (function('print_summary') + function('elapsed') + function('do_all') + function('stage_nodes')
+                     + function('print_sso_notice'))
         deploy = source('infra/deploy.sh')
-        functions = function('print_summary') + function('do_all') + function('stage_nodes')
-        if 'print_sso_notice() {' in deploy:
-            functions += function('print_sso_notice')
-        dispatch = deploy.split('case "${1:-}" in', 1)[1]
+        module = next(line for line in deploy.splitlines() if line.startswith('vpn2_module() {')) + '\n'
+        main = deploy.split('case "${1:-}" in -h|--help) usage ;; esac\n', 1)[1]
         for mode in ('', '30-frontend ru', '23-emergency foreign', '99-verify all'):
             for runtime, enabled, secret in ((False, True, ''), (True, True, ''),
                                              (False, True, SECRET), (False, False, '')):
@@ -75,36 +75,35 @@ class SsoMissingSecretTests(unittest.TestCase):
                         (root / 'envs').mkdir()
                         (root / 'lib').mkdir()
                         real_site_tree(root)
-                        # Isolate notice placement; release acceptance is tested separately.
-                        (root / 'lib/deploy-release.sh').write_text(
-                            'release_start() { :; }\nrelease_complete() { :; }\n')
                         (root / 'envs/all.env').write_text('')
                         (root / 'envs/ru.env').write_text(
-                            f'SSO_ENABLED={str(enabled).lower()}\nSSO_CLIENT_SECRET={shlex.quote(secret)}\n')
+                            f'SSH_HOST=192.0.2.1\nSSO_ENABLED={str(enabled).lower()}\nSSO_CLIENT_SECRET={shlex.quote(secret)}\n')
                         if runtime:
                             (root / 'sso-runtime.json').write_text('{"enabled":true}')
-                        script = functions + '''
-DEPLOY_ROOT=$PWD
+                        script = functions + module + '''
+DEPLOY_ROOT=$PWD REPO=$PWD
+touch config.yaml
+inventory() { :; }
 C_G= C_B= C_END=
-load_env() { source "$DEPLOY_ROOT/envs/ru.env"; }
+# Isolate notice placement; release acceptance is tested separately.
+release_start() { :; }
+release_complete() { :; }
+envs_write() { ENVS=$DEPLOY_ROOT/envs; }
+on_exit() { :; }
 die() { echo "die: $*" >&2; exit 1; }
-ssh_exec() { bash -c "$1"; }
 print_banner() { :; }
 print_ikev2_notice() { :; }
-pause_entry_auto_updates() { :; }
 install_prereqs() { :; }
-do_check() { :; }
+nftables_preserve_rules() { :; }
+apt_auto_pause() { :; }
+step() { :; }
 preflight_ssh() { :; }
-prep_orchestrator_key() { :; }
-prep_entry_mgmt_key() { :; }
 run_stage() { echo "STAGE $*"; }
-run_tracks() { :; }
+play() { :; }
 expand_hosts() { case "$1" in ru) echo ru ;; all) echo ru exit ;; *) echo exit ;; esac; }
 verify_and_rotate_ports() { :; }
-prefetch_images() { _PREFETCH_PID=0; }
-wait() { :; }
 announce_deploy_done() { :; }
-''' + f'set -- {mode}\ncase "${{1:-}}" in' + dispatch
+''' + f'set -- {mode}\n' + main
                         result = bash(script.replace('/etc/anysda', directory), directory)
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         expected = enabled and not secret and not runtime and mode in ('', '30-frontend ru')

@@ -23,8 +23,9 @@ def function(name):
     """Функция bash по имени из оркестратора деплоя или его библиотек."""
     for path in [ROOT / 'infra/deploy.sh', *sorted((ROOT / 'infra/lib').glob('*.sh'))]:
         text = path.read_text()
-        if f'\n{name}() {{' in text:
-            return f'{name}() {{' + text.split(f'\n{name}() {{', 1)[1].split('\n}', 1)[0] + '\n}\n'
+        for start, end in ('{', '}'), ('(', ')'):
+            if f'\n{name}() {start}' in text:
+                return f'{name}() {start}' + text.split(f'\n{name}() {start}', 1)[1].split(f'\n{end}', 1)[0] + f'\n{end}\n'
     raise AssertionError(f'нет функции {name}')
 
 

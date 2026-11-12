@@ -2,6 +2,8 @@
 zapret_tmp: /tmp/anysda
 zapret_vpn2: /opt/vpn2/venv/bin/vpn2
 zapret_step: ["{{ zapret_vpn2 }}", zapret]
+# Значения шаблонов роли: JSON последней строки шага facts.
+zapret_v: "{{ zapret_facts.stdout_lines | last | from_json }}"
 zapret_units: /etc/systemd/system
 zapret_route: "{{ vpn2_env.YT_ROUTE | default('off', true) }}"
 zapret_quic: "{{ vpn2_env.YT_QUIC | default('block', true) }}"

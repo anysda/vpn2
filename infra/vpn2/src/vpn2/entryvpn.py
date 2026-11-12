@@ -86,22 +86,17 @@ def _quiet(run, argv):
     return run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
-def wg_live_addresses(*, run=subprocess.run):
-    """Глобальные адреса живого wg0, как их печатает `ip -o addr`."""
-    done = run(['ip', '-o', 'addr', 'show', 'dev', 'wg0', 'scope', 'global'], text=True,
-               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    return [line.split()[3] for line in done.stdout.splitlines() if len(line.split()) > 3]
-
-
 def wg_apply(say, *, conf=wg.CONF_PATH, run=subprocess.run):
     """wg0.conf в ядро: `wg syncconf` при прежних адресах, иначе рестарт wg-quick.
 
     Рестарт рвёт туннель всем клиентам, а на повторном деплое конфиг обычно прежний.
     True - служба перезапущена.
     """
+    live = run(['ip', '-o', 'addr', 'show', 'dev', 'wg0', 'scope', 'global'], text=True,
+               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.splitlines()
     if (_quiet(run, ['systemctl', 'is-active', '--quiet', 'wg-quick@wg0'])
             and _quiet(run, ['ip', 'link', 'show', 'wg0'])
-            and sorted(wg.addresses(_text(conf))) == sorted(wg_live_addresses(run=run))):
+            and sorted(wg.addresses(_text(conf))) == sorted(row.split()[3] for row in live if len(row.split()) > 3)):
         body = run(['wg-quick', 'strip', 'wg0'], check=True, stdout=subprocess.PIPE).stdout
         run(['wg', 'syncconf', 'wg0', '/dev/stdin'], input=body, check=True)
         say('адреса wg0 прежние — wg syncconf без рестарта')

@@ -79,3 +79,4 @@
 - {section: files, name: /var/anysda/.stamps/27-ikev2, field: '*', reason: стадия 27 не пишет отметку - её никто не читает}
 - {section: files, name: /var/anysda/.stamps/28-wireguard, field: '*', reason: стадия 28 не пишет отметку - её никто не читает}
 - {section: files, name: /var/anysda/.stamps/29-openvpn, field: '*', reason: стадия 29 не пишет отметку - её никто не читает}
+- {section: files, name: /etc/systemd/system/anysda-ikev2-cert-sync.timer, field: '*', reason: таймер ставится всегда, без домена он выключен}

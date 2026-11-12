@@ -66,10 +66,6 @@
   register: zapret_facts
   changed_when: false
 
-- name: Значения для шаблонов разобраны
-  ansible.builtin.set_fact:
-    zapret_v: "{{ zapret_facts.stdout_lines | last | from_json }}"
-
 - name: Цепочки nft десинка
   ansible.builtin.template:
     src: nftables-yt-zapret.conf.j2

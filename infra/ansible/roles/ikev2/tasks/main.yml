@@ -31,6 +31,7 @@
     - {src: anysda-ikev2-sync.py, dest: /usr/local/sbin/anysda-ikev2-sync.py, mode: '0755'}
     - {src: anysda-ikev2-sync.service, dest: /etc/systemd/system/anysda-ikev2-sync.service}
     - {src: anysda-ikev2-sync.timer, dest: /etc/systemd/system/anysda-ikev2-sync.timer}
+    - {src: anysda-ikev2-cert-sync.timer, dest: /etc/systemd/system/anysda-ikev2-cert-sync.timer}
 
 - name: Служба strongswan-starter включена
   ansible.builtin.systemd_service:
@@ -120,12 +121,6 @@
         dest: "/etc/systemd/system/{{ item }}"
         mode: '0644'
       loop: [anysda-ikev2-cert-sync.service, anysda-ikev2-cert-sync.path]
-
-    - name: Таймер anysda-ikev2-cert-sync
-      ansible.builtin.copy:
-        src: anysda-ikev2-cert-sync.timer
-        dest: /etc/systemd/system/anysda-ikev2-cert-sync.timer
-        mode: '0644'
 
     - name: Слежение и таймер включены
       ansible.builtin.systemd_service:

@@ -72,12 +72,10 @@ def ensure_warp_profile(etc, say, run=subprocess.run):
     return profile.is_file()
 
 
-def _field(text, key, *, first=False):
-    """Значение `Key = value` из профиля WireGuard; при повторах - как у awk."""
+def _field(text, key):
+    """Значение `Key = value` из профиля WireGuard; при повторах - строкой на каждое, как у awk."""
     found = [line.split(' = ', 1)[1] for line in text.splitlines()
              if line.startswith(key) and ' = ' in line]
-    if first:
-        found = found[:1]
     return '\n'.join(found).replace('\r', '')
 
 
@@ -139,7 +137,7 @@ def warp_values(etc, say, run=subprocess.run):
     endpoint = _field(profile, 'Endpoint').replace(' ', '')
     values = {
         'WGCF_PRIVKEY': _field(profile, 'PrivateKey'),
-        'WGCF_LOCAL_IPV4': _field(profile, 'Address', first=True).split(',')[0]
+        'WGCF_LOCAL_IPV4': _field(profile, 'Address').partition('\n')[0].split(',')[0]
                            .split('/')[0].replace(' ', ''),
         'WGCF_PEER_PUBKEY': _field(profile, 'PublicKey'),
         'WGCF_PEER_ENDPOINT_HOST': endpoint.rsplit(':', 1)[0],

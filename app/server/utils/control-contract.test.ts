@@ -259,7 +259,7 @@ describe('контракт control: живые вызовы панели шлю�
   it('settings.apply: ручные маршруты уходят строками базы', async () => {
     const rows = example('settings.apply', p => p.resource === 'routes').params.config as unknown[]
     dbResults.push(rows)
-    expect((await syncRoutesFile()).count).toBe(rows.length)
+    expect(await syncRoutesFile()).toBe(rows.length)
     expect(sentMethods()).toEqual(['settings.apply:routes'])
   })
 

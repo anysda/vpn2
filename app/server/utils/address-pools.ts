@@ -15,8 +15,7 @@ export function nextPoolAddress(protocol: Protocol, usedIps: Array<string | null
     }
   }
   throw createError({
-    statusCode: 409,
-    statusMessage: `${protocol}_pool_exhausted`,
+    statusCode: 409, statusMessage: `${protocol}_pool_exhausted`,
     message: `Нет свободных адресов ${pool.name}. Удалите неиспользуемое устройство или обратитесь к администратору`,
   })
 }

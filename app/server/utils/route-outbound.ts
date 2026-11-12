@@ -2,10 +2,6 @@
 // не применит. Сверяемся с тем же списком, что панель показывает в выборе outbound'а.
 export async function assertKnownOutbound(outbound: string): Promise<void> {
   const names = userVisibleOutbounds(await fetchProxies()).map(p => p.name)
-  if (names.length === 0) {
-    throw createError({ statusCode: 503, statusMessage: 'outbounds_unavailable', message: 'Список выходов недоступен: sing-box не отвечает' })
-  }
-  if (!names.includes(outbound)) {
-    throw createError({ statusCode: 400, statusMessage: 'unknown_outbound', message: `Выхода «${outbound}» нет`, data: { known: names } })
-  }
+  if (!names.length) throw createError({ statusCode: 503, statusMessage: 'outbounds_unavailable', message: 'Список выходов недоступен: sing-box не отвечает' })
+  if (!names.includes(outbound)) throw createError({ statusCode: 400, statusMessage: 'unknown_outbound', message: `Выхода «${outbound}» нет`, data: { known: names } })
 }

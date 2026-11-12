@@ -1,7 +1,7 @@
 """The panel opens only over HTTPS with a valid certificate.
 
 Real Caddy runs the Caddyfile rendered by stage 30 and the snippets written by
-vpn2_tls.py. Only the issuer policy (vpn2-tls.conf) is replaced by a stand-in
+vpn2 tls. Only the issuer policy (vpn2-tls.conf) is replaced by a stand-in
 certificate made with openssl, so the routes decide alone: a self-signed or
 expired certificate that Caddy still serves must not open the panel.
 """
@@ -131,7 +131,7 @@ def request(port, host, path, tls=False, sni=None):
 
 
 class Entry:
-    """Stage 30 TLS part rendered into a temporary root plus vpn2_tls.py runs against it."""
+    """Stage 30 TLS part rendered into a temporary root plus vpn2 tls runs against it."""
 
     def __init__(self, test, domain):
         self.test = test
@@ -148,6 +148,7 @@ class Entry:
         (stubs / 'caddy').write_text(f'#!/bin/sh\nexec {CADDY} "$@"\n')
         (stubs / 'caddy').chmod(0o755)
         self.env = dict(os.environ, PATH=f'{stubs}:{os.environ["PATH"]}', HOME=str(self.dir / 'home'),
+                        PYTHONPATH=str(ROOT / 'infra/vpn2/src'),
                         XDG_DATA_HOME=str(self.dir / 'validate-data'),
                         XDG_CONFIG_HOME=str(self.dir / 'validate-config'))
         self.render()
@@ -158,7 +159,7 @@ class Entry:
 
     def tick(self, initial=False):
         """One vpn2-tls.service run (timer) or the --initial run of the installation."""
-        command = [sys.executable, str(ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py'),
+        command = [sys.executable, '-m', 'vpn2.cli', 'tls',
                    '--config', str(self.dir / 'etc/vpn2/tls/config.json')]
         if initial:
             command += ['--initial', '--wait', '0']

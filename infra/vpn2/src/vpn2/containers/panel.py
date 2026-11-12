@@ -27,7 +27,7 @@ ETC = '/etc/anysda'
 CONFIG = f'{ETC}/anysda-config.yaml'
 TEMPLATE = '/tmp/anysda/anysda-config.yaml.tpl'
 SSO_RUNTIME = f'{ETC}/sso-runtime.json'
-TLS = '/usr/local/lib/vpn2/vpn2_tls.py'
+TLS = (sys.executable, '-m', 'vpn2.cli', 'tls')
 TLS_DIR = '/etc/vpn2/tls'
 TLS_CONFIG = '/etc/vpn2/tls/config.json'
 SECURE = '/etc/vpn2/tls/panel/secure'
@@ -355,7 +355,7 @@ def host_tls(environ, tx):
         say(f"  домен не задан — HTTPS на IP {entry} (Let's Encrypt, ~6 дней)")
     tx.guard_files([*CADDY, TLS_CONFIG, SECURE, MANAGED, OVPN_CONF])
     subprocess.run(
-        [sys.executable, TLS, '--prepare', '--role', 'panel', '--config', TLS_CONFIG, '--host', host,
+        [*TLS, '--prepare', '--role', 'panel', '--config', TLS_CONFIG, '--host', host,
          '--secure-file', SECURE, '--panel-container', PANEL, '--output-dir', out,
          '--acme-url', environ.get('TLS_ACME_URL') or 'https://acme-v02.api.letsencrypt.org/directory',
          '--acme-root', environ.get('TLS_ACME_ROOT') or ''], check=True)
@@ -363,7 +363,7 @@ def host_tls(environ, tx):
 
 
 def caddy(regated):
-    """Правила ufw и перезапуск Caddy при смене входов; вставку панели перечитывает сам vpn2_tls.py."""
+    """Правила ufw и перезапуск Caddy при смене входов; вставку панели перечитывает сам vpn2 tls."""
     from vpn2 import firewall
     firewall.ufw_reconcile('caddy HTTP + ACME challenge', ['80/tcp'], ['caddy HTTP панель'])
     firewall.ufw_reconcile('caddy HTTPS панель', ['443/tcp'])
@@ -489,7 +489,7 @@ def stage(environ, docker, tx, image):
     say(f'{STAGE} done')
     tx.finish()
     # Первый выпуск - после проверенной панели: неудача ACME выпуск не откатывает, Caddy повторит сам.
-    subprocess.run([sys.executable, TLS, '--initial', '--config', TLS_CONFIG, '--wait',
+    subprocess.run([*TLS, '--initial', '--config', TLS_CONFIG, '--wait',
                     environ.get('TLS_INITIAL_WAIT') or '60'], check=True)
     if subprocess.run(['systemctl', 'start', 'vpn2-tls.service'], check=False).returncode:
         say('vpn2-tls.service завершилась с ошибкой, подробности: journalctl -u vpn2-tls')

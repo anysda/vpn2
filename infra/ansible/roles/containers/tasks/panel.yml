@@ -14,17 +14,8 @@
   register: containers_caddy
   changed_when: "'changed=1' in containers_caddy.stdout"
 
-- name: Каталог библиотеки TLS
-  ansible.builtin.file:
-    path: "{{ containers_tls_lib | dirname }}"
-    state: directory
-    mode: '0755'
-
-- name: Библиотека TLS
-  ansible.builtin.copy:
-    src: "vpn2_tls.py"
-    dest: "{{ containers_tls_lib }}"
-    mode: '0755'
+- name: Библиотека TLS прошлых выпусков снята - её работу делает vpn2 tls
+  ansible.builtin.file: {path: /usr/local/lib/vpn2, state: absent}
 
 - name: Юниты срока сертификата
   ansible.builtin.copy:

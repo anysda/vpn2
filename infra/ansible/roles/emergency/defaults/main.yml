@@ -28,7 +28,6 @@ emergency_hy2_units: [vpn2-emergency-hy2.service, vpn2-emergency-hy2-probe.servi
 # запустить Hysteria2.
 emergency_packages: [qrencode, curl, openssl, nftables, polkitd]
 
-emergency_tls_lib: /usr/local/lib/vpn2/vpn2_tls.py
 emergency_tls_acme_url: "{{ vpn2_env.TLS_ACME_URL | default('https://acme-v02.api.letsencrypt.org/directory', true) }}"
 emergency_tls_acme_root: "{{ vpn2_env.TLS_ACME_ROOT | default('') }}"
 emergency_tls_wait: "{{ vpn2_env.TLS_INITIAL_WAIT | default('60', true) }}"

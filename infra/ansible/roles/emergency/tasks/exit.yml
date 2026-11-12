@@ -79,17 +79,8 @@
   register: emergency_caddy
   changed_when: "'changed=1' in emergency_caddy.stdout"
 
-- name: Каталог библиотеки TLS
-  ansible.builtin.file:
-    path: "{{ emergency_tls_lib | dirname }}"
-    state: directory
-    mode: '0755'
-
-- name: Библиотека TLS
-  ansible.builtin.copy:
-    src: "{{ role_path }}/../containers/files/vpn2_tls.py"
-    dest: "{{ emergency_tls_lib }}"
-    mode: '0755'
+- name: Библиотека TLS прошлых выпусков снята - её работу делает vpn2 tls
+  ansible.builtin.file: {path: /usr/local/lib/vpn2, state: absent}
 
 # Таймер стоит, пока настройки и сниппеты Caddy переписываются; последний шаг
 # запускает его снова. Пара «остановил - запустил» изменением не считается.
@@ -101,8 +92,8 @@
 - name: Настройки TLS и сниппеты Caddy
   ansible.builtin.command:
     argv:
-      - /usr/bin/python3
-      - "{{ emergency_tls_lib }}"
+      - "{{ emergency_vpn2 }}"
+      - tls
       - --prepare
       - --role
       - exit
@@ -161,8 +152,8 @@
 - name: Первый сертификат на IP
   ansible.builtin.command:
     argv:
-      - /usr/bin/python3
-      - "{{ emergency_tls_lib }}"
+      - "{{ emergency_vpn2 }}"
+      - tls
       - --initial
       - --config
       - /etc/vpn2/tls/config.json

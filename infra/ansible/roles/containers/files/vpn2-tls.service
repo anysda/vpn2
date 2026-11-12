@@ -3,6 +3,6 @@ Description=VPN2 TLS certificate export and notifications
 After=caddy.service
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /usr/local/lib/vpn2/vpn2_tls.py
+ExecStart=/opt/vpn2/venv/bin/vpn2 tls
 SyslogIdentifier=vpn2-tls
 TimeoutStartSec=120

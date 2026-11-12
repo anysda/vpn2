@@ -6,7 +6,6 @@ containers_tmp: /tmp/anysda
 containers_vpn2: /opt/vpn2/venv/bin/vpn2
 containers_bash: [/bin/bash, --norc, -euo, pipefail, -c]
 containers_units: /etc/systemd/system
-containers_tls_lib: /usr/local/lib/vpn2/vpn2_tls.py
 
 # Что шаг службы читает из /tmp/anysda кроме библиотеки ресурсов.
 containers_tools:

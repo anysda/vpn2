@@ -36,7 +36,7 @@ from support import import_bot  # noqa: E402
 from probe_io import read_to_close  # noqa: E402
 from containers_support import panel_tls  # noqa: E402
 
-spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py')
+spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/vpn2/src/vpn2/tls.py')
 tls = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tls)
 DOCKER = shlex.split(os.environ.get('DOCKER', 'docker'))
@@ -75,7 +75,7 @@ def get(url, context=None):
 
 
 class Caddy:
-    """Host Caddy process; its stderr is the journal vpn2_tls.py reads."""
+    """Host Caddy process; its stderr is the journal vpn2 tls reads."""
 
     def __init__(self, root, caddyfile):
         self.root, self.caddyfile, self.process, self.seen = root, caddyfile, None, 0
@@ -105,7 +105,7 @@ class Caddy:
         return parsed
 
     def services(self, original):
-        """systemctl/docker calls of vpn2_tls.py mapped onto this probe."""
+        """systemctl/docker calls of vpn2 tls mapped onto this probe."""
         def run(args, **kwargs):
             if args[0] == 'caddy':
                 args = [CADDY, *args[1:]]
@@ -255,11 +255,12 @@ def panel_scenario(root, ports, queue, bot_url, ca):
 
 def exit_scenario(root, ports, ca):
     http_port, local_port, admin_port = ports
-    subprocess.run(['python3', str(ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py'), '--prepare', '--role', 'exit',
+    subprocess.run([sys.executable, '-m', 'vpn2.cli', 'tls', '--prepare', '--role', 'exit',
                     '--config', f'{root}/config.json', '--caddy-dir', str(root), '--host', HOST,
                     '--storage', f'{root}/data/caddy', '--output-dir', f'{root}/ip',
                     '--acme-url', ca['url'], '--acme-root', str(ca['root']),
-                    '--local-port', str(local_port), '--cert-group', 'root'], check=True)
+                    '--local-port', str(local_port), '--cert-group', 'root'], check=True,
+                   env={**os.environ, 'PYTHONPATH': str(ROOT / 'infra/vpn2/src')})
     config = json.loads((root / 'config.json').read_text())
     caddyfile = (root / 'Caddyfile').read_text().replace('auto_https disable_redirects', (
         f'auto_https disable_redirects\n    admin {HOST}:{admin_port}\n    http_port {http_port}'))

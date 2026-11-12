@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-"""Let's Encrypt lifecycle on top of Caddy, shared by the entry and exits.
+"""vpn2 tls: Let's Encrypt lifecycle on top of Caddy, shared by the entry and exits.
 
 Caddy obtains and renews certificates (HTTP-01 on TCP 80; HTTP/3 stays off).
-This tool, run once a minute by vpn2-tls.timer:
+This command, run once a minute by vpn2-tls.timer:
   * pins the renewal window (IP: 5 days after issuance, domain: 7 days
     before expiry) from the lifetime of the certificate actually issued;
   * exports the current pair to <output_dir>/{fullchain,privkey}.pem;
@@ -405,13 +404,13 @@ def prepare(args):
         # HTTP only redirects; Caddy answers HTTP-01 before this route.
         atomic(caddy_dir / 'vpn2-http.conf', redirect(config), 0o644)
         if previous.get('host') != args.host or not (caddy_dir / 'vpn2-panel.conf').exists():
-            # Closed until vpn2_tls.py sees a CA certificate for this host.
+            # Closed until vpn2 tls sees a CA certificate for this host.
             atomic(caddy_dir / 'vpn2-panel.conf', PANEL_CLOSED, 0o644)
             atomic(args.secure_file, 'false\n', 0o644)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog='vpn2 tls', description=__doc__)
     parser.add_argument('--config', default='/etc/vpn2/tls/config.json')
     parser.add_argument('--prepare', action='store_true', help='write config and Caddy snippets')
     parser.add_argument('--initial', action='store_true', help='wait for the first certificate')
@@ -428,7 +427,7 @@ def main():
     parser.add_argument('--panel-container', default='')
     parser.add_argument('--cert-group', default='root')
     parser.add_argument('--local-port', type=int, default=8443)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.prepare:
         prepare(args)
         return
@@ -442,7 +441,3 @@ def main():
             while not current_certificate(config, time.time()) and time.monotonic() < deadline:
                 time.sleep(2)
         tick(config, state_path, args.initial)
-
-
-if __name__ == '__main__':
-    main()

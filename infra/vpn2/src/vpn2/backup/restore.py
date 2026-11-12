@@ -676,7 +676,8 @@ def _wireguard(rb):
         rb.must(['chmod', '600', f'{wg}/wg0.conf'])
     if os.path.isfile(f'{source}/server.priv'):
         rb.touched.append('etc/wireguard')
-        rb.must(['install', '-d', '-m', '700', wg, f'{wg}/keys'])
+        # Режим живого /etc/wireguard не трогаем: 700 только у keys/ (и у нового каталога по umask restore).
+        rb.must(['install', '-d', '-m', '700', f'{wg}/keys'])
         for key in ('server.priv', 'server.pub'):
             rb.must(['install', '-m', '600', f'{source}/{key}', f'{wg}/keys/{key}'])
             rb.must(['ln', '-sfn', f'keys/{key}', f'{wg}/{key}'])

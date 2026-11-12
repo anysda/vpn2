@@ -11,9 +11,9 @@ from . import api, config, events, handlers, monitor
 from .config import log
 
 
-async def serve(*routes) -> web.AppRunner:
+async def serve(*routes, outbox: bool = False) -> web.AppRunner:
     app = web.Application()
-    if any(route.path == '/event' for route in routes):
+    if outbox:
         app.cleanup_ctx.append(events.event_outbox)
     app.add_routes(routes)
     runner = web.AppRunner(app)
@@ -55,7 +55,7 @@ async def main() -> None:
     tgapp.add_handler(CommandHandler(handlers.COMMANDS, handlers.dispatch))
     tgapp.add_handler(CallbackQueryHandler(handlers.dispatch))
     tgapp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.dispatch))
-    runner = await serve(web.post('/event', events.handle_event), web.get('/health', events.handle_health))
+    runner = await serve(web.post('/event', events.handle_event), web.get('/health', events.handle_health), outbox=True)
     log.info('Event server on 127.0.0.1:%d', config.EVENT_PORT)
     tasks = [asyncio.create_task(restart_on_new_runtime()), asyncio.create_task(api.poll_watchdog())]
     try:

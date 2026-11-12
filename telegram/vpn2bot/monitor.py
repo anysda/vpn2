@@ -11,12 +11,9 @@ HITS = 2
 DOWN_SEC = 300
 # A load alert clears once the metric is this far below the threshold.
 HYSTERESIS = 10.0
-# On 1 vCPU or 2 GB a VPN node sits at 80-90 %: CPU 95 %, RAM 90 % and a 5 minute window there.
 ENV_CPU = os.environ.get('ALERT_CPU_PCT')
 ENV_RAM = os.environ.get('ALERT_RAM_PCT')
 ENV_WINDOW = os.environ.get('ALERT_WINDOW_SEC')
-SMALL_MEM_BYTES = 2 * 1024 ** 3
-SMALL_WINDOW_SEC = 300
 
 streak: dict[tuple, int] = {}
 alerted: set[tuple] = set()
@@ -25,14 +22,13 @@ node_size: dict[str, dict] = {}
 
 
 def thresholds(size: dict) -> tuple[float, float, int]:
-    cores, mem = size.get('cores'), size.get('memTotalBytes')
-    small_cpu = isinstance(cores, (int, float)) and cores <= 1
-    small_ram = isinstance(mem, (int, float)) and mem <= SMALL_MEM_BYTES
-    cpu = float(ENV_CPU) if ENV_CPU is not None else 95.0 if small_cpu else 80.0
-    ram = float(ENV_RAM) if ENV_RAM is not None else 90.0 if small_ram else 80.0
-    if ENV_WINDOW is not None:
-        return cpu, ram, max(1, int(ENV_WINDOW) // INTERVAL_SEC)
-    return cpu, ram, SMALL_WINDOW_SEC // INTERVAL_SEC if small_cpu or small_ram else HITS
+    """CPU %, RAM % and bad checks in a row; a 1 vCPU or 2 GB node sits at 80-90 %: 95/90 % over 5 minutes."""
+    small_cpu = size.get('cores', 2) <= 1
+    small_ram = size.get('memTotalBytes', 2 ** 40) <= 2 * 1024 ** 3
+    cpu = float(ENV_CPU or (95 if small_cpu else 80))
+    ram = float(ENV_RAM or (90 if small_ram else 80))
+    window = int(ENV_WINDOW or (300 if small_cpu or small_ram else HITS * INTERVAL_SEC))
+    return cpu, ram, max(1, window // INTERVAL_SEC)
 
 
 async def edge(key: tuple, bad: bool, recovered: bool, hits: int, alert: str, recovery: str) -> None:

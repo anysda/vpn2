@@ -28,20 +28,19 @@ def given(**fields) -> dict:
 
 async def telegram(method: str, payload: dict, files: dict | None = None) -> dict:
     """Bot API call raising on ok:false; Markdown that Telegram cannot parse goes again as plain text."""
-    while True:
-        if files is None:
-            r = await telegram_http.post(f'/{method}', json=payload, timeout=20)
-        else:
-            r = await telegram_http.post(f'/{method}', data=payload, files=files, timeout=30)
-        body = r.json()
-        desc = str(body.get('description', ''))
-        if body.get('ok') or (method == 'editMessageText' and 'message is not modified' in desc):
-            return body
-        if 'parse_mode' not in payload or "can't parse" not in desc:
-            retry_after = body.get('parameters', {}).get('retry_after', 0)
-            raise TelegramSendError(body.get('error_code', r.status_code),
-                                    float(retry_after) if isinstance(retry_after, (int, float)) else 0)
-        payload = {k: v for k, v in payload.items() if k != 'parse_mode'}
+    if files is None:
+        r = await telegram_http.post(f'/{method}', json=payload, timeout=20)
+    else:
+        r = await telegram_http.post(f'/{method}', data=payload, files=files, timeout=30)
+    body = r.json()
+    description = str(body.get('description', ''))
+    if body.get('ok') or (method == 'editMessageText' and 'message is not modified' in description):
+        return body
+    if 'parse_mode' in payload and "can't parse" in description:
+        plain = {key: value for key, value in payload.items() if key != 'parse_mode'}
+        return await telegram(method, plain, files)
+    retry_after = body.get('parameters', {}).get('retry_after', 0)
+    raise TelegramSendError(body.get('error_code', r.status_code), float(retry_after))
 
 
 async def send(chat_id: int, text: str, parse_mode: str | None = None,

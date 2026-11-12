@@ -48,8 +48,6 @@ class Outbox:
 
     def enqueue(self, payloads: list[dict], delivery_id: str | None = None) -> int:
         """All payloads or none; a repeated delivery_id with the same payloads returns the first id."""
-        if not payloads or len(payloads) > MAX_EVENTS:
-            raise QueueFull()
         for payload in payloads:
             text = payload['text']
             if not isinstance(text, str) or not text.strip() or len(text.encode('utf-16-le')) > 8192:
@@ -98,6 +96,7 @@ class Outbox:
     def remove(self, event_id: int) -> None:
         with self.db:
             self.db.execute('DELETE FROM events WHERE id = ?', (event_id,))
+
     async def run(self, send, on_rejected) -> None:
         while True:
             try:

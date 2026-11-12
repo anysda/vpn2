@@ -65,6 +65,23 @@ class AnsibleInventoryTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout)['exits']['hosts'], tags)
 
+    def test_prepare_keeps_release_mgmt_file_with_same_octets(self):
+        # Файл v1.1.5 со своей шапкой: обновление сверяет его с выпуском байт в байт.
+        release = '# тег → последний октет MGMT_IP (10.99.0.N), пишет config2env.py.\nnl 5\n'
+        second = '  - tag: de\n    host: 198.18.10.30\n    password: "stand-pass"\n'
+        for text, octets in ((render(), None), (render(second), ['de 2', 'nl 5'])):
+            with self.subTest(octets=octets), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'state/mgmt-ips.txt'
+                path.parent.mkdir()
+                path.write_text(release, encoding='utf-8')
+                result = run(directory, text, '--prepare')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                after = path.read_text(encoding='utf-8')
+                if octets is None:
+                    self.assertEqual(after, release)
+                else:
+                    self.assertEqual([line for line in after.splitlines() if not line.startswith('#')], octets)
+
 
 if __name__ == '__main__':
     unittest.main()

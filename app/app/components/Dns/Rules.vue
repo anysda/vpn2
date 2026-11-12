@@ -5,10 +5,11 @@ const text = ref('')
 watch(data, v => v && (text.value = v.text), { immediate: true })
 
 // Проверка домена; пустое поле сервер отклоняет с 400 - это не ошибка для тоста.
+// Ключ постоянный: ключ от query при immediate: false меняется без запроса.
 const q = ref('')
 const typed = useDebounced(q, 250)
 const name = computed(() => typed.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0] ?? '')
-const { data: res, error, refresh: check } = useFetch('/api/dns/check', { query: { name }, server: false, immediate: false, watch: [name] })
+const { data: res, error, refresh: check } = useFetch('/api/dns/check', { key: 'dns-check', query: { name }, server: false, immediate: false, watch: [name] })
 watch(error, e => e && e.statusCode !== 400 && toast.add({ title: errText(e), color: 'error' }))
 
 // AdGuard пересобирает фильтры в фоне и ещё ~0,5 с отвечает по старым правилам.

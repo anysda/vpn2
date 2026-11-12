@@ -1,12 +1,9 @@
 import { and, eq, gt, lte } from 'drizzle-orm'
-import { plural } from '../../shared/plural'
+import { DAY_MS, mskDate } from '../../shared/msk'
+import { inDaysRu } from '../../shared/plural'
 import { useDb } from '../database/client'
 import { clients } from '../database/schema'
 
-/** «через 3 дня» в журнале и в сообщении клиенту. @internal */
-export const expiryLeftText = (days: number) => `через ${days} ${plural(days, 'day')}`
-
-const DAY_MS = 86_400_000
 const EXPIRY_NOTICE_MS = 3 * DAY_MS
 
 /**
@@ -21,16 +18,15 @@ export async function remindExpiring(now = Date.now()): Promise<void> {
   for (const c of soon) {
     const ends = c.expiresAt!
     const days = Math.max(1, Math.ceil((ends.getTime() - now) / DAY_MS))
-    const left = expiryLeftText(days)
+    const left = inDaysRu(days)
     const telegram = Boolean(c.tgChatId) && botConfigured()
     const fresh = await recordEvent({
       type: 'client_expiring', level: 'warn', object: `client:${c.id}`, at: now, key: `expiring:${c.id}:${ends.getTime()}`,
       title: `Доступ истекает · ${c.name}`, detail: joinDetail(left, telegram && 'напоминание ушло в Telegram'),
     })
     if (!fresh || !telegram) continue
-    const date = ends.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })
     // Сбой постановки в очередь бота виден в журнале отдельной тревогой.
-    await notifyClient(c.tgChatId!, `⏳ Доступ к VPN закончится ${left} — ${date}. Чтобы продлить, напишите администратору.`, c.name)
+    await notifyClient(c.tgChatId!, `⏳ Доступ к VPN закончится ${left} — ${mskDate(ends)}. Чтобы продлить, напишите администратору.`, c.name)
       .catch(err => useLogger().warn({ err, client: c.id }, 'expiry reminder not queued'))
   }
 }

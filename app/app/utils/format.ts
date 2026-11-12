@@ -1,9 +1,7 @@
-import { plural } from '#shared/plural'
+import { DAY_MS, MSK, MSK_OFFSET_SEC, mskDate } from '#shared/msk'
 
 const MIB = 1024 * 1024
 const GIB = 1024 ** 3
-const MSK = 'Europe/Moscow'
-const DAY_MS = 86_400_000
 export const WD_MON = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
 const MONTHS_GEN = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 
@@ -53,16 +51,15 @@ export function formatRuDateUtc(iso: string | null | undefined): string {
 export const dateRuLocal = (iso: string) => new Date(iso).toLocaleDateString('ru-RU')
 export const expiryLabelLocal = (iso: string | null | undefined) => iso ? `до ${dateRuLocal(iso)}` : 'Бессрочный'
 
-const mskDayOf = (ms: number) => new Date(ms).toLocaleDateString('ru-RU', { timeZone: MSK })
 /** МСК: сегодня - «ЧЧ:ММ», раньше - «ДД.ММ». */
 export function timeOrDdmmMsk(ms: number, now: number): string {
   const d = new Date(ms)
-  if (mskDayOf(ms) === mskDayOf(now)) return d.toLocaleTimeString('ru-RU', { timeZone: MSK, hour: '2-digit', minute: '2-digit' })
+  if (mskDate(ms) === mskDate(now)) return d.toLocaleTimeString('ru-RU', { timeZone: MSK, hour: '2-digit', minute: '2-digit' })
   return d.toLocaleDateString('ru-RU', { timeZone: MSK, day: '2-digit', month: '2-digit' })
 }
 
 // Подписи по Москве: сдвиг на +3 ч и чтение как UTC.
-const mskShifted = (sec: number) => new Date((sec + 3 * 3600) * 1000)
+const mskShifted = (sec: number) => new Date((sec + MSK_OFFSET_SEC) * 1000)
 export const mskHourFromSec = (sec: number) => mskShifted(sec).getUTCHours()
 export const hourRangeRu = (h: number) => `${pad2(h)}:00–${pad2((h + 1) % 24)}:00`
 const weekdayDate = (t: Date) => `${WD_MON[(t.getUTCDay() + 6) % 7]}, ${t.getUTCDate()} ${MONTHS_GEN[t.getUTCMonth()]}`
@@ -93,4 +90,3 @@ export function expiringInDays(expiresAt: string | null, status: string, now = D
   const left = expiresAt && status === 'active' ? new Date(expiresAt).getTime() - now : 0
   return left > 0 && left <= 7 * DAY_MS ? Math.ceil(left / DAY_MS) : null
 }
-export const inDaysRu = (n: number) => `через ${n} ${plural(n, 'day')}`

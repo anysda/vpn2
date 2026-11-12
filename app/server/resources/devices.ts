@@ -2,14 +2,13 @@ import { and, eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import { useDb } from '../database/client'
-import { clients, devices } from '../database/schema'
+import { devices } from '../database/schema'
 import type { Client, Device } from '../database/schema'
 
 /** Проверки между разбором адреса и поиском в базе (протокол, секрет бота); результат отдаётся как `ready`. */
 type Preflight<T> = () => T | Promise<T>
 type Config = (device: Device, client: Client, endpoint: string) => Promise<string>
 
-const Name = z.string().trim().min(1).max(64)
 const ChatId = z.number().int()
 const unavailable = (statusMessage: string, message?: string) => createError({ statusCode: 503, statusMessage, message })
 const invalidParams = () => createError({ statusCode: 400, statusMessage: 'invalid_params' })
@@ -24,9 +23,7 @@ async function deviceOf(clientId: number, deviceId: number): Promise<Device> {
 async function panelDevice<T = undefined>(event: H3Event, preflight?: Preflight<T>) {
   const { id, deviceId } = recordIds(event, 'id', 'deviceId')
   const ready = await preflight?.() as T
-  const [client] = await useDb().select().from(clients).where(eq(clients.id, id)).limit(1)
-  if (!client) throw notFound()
-  return { client, device: await deviceOf(id, deviceId), ready }
+  return { client: await clientOr404(id), device: await deviceOf(id, deviceId), ready }
 }
 
 /** Девайс клиента, привязанного к чату, для маршрутов бота `bot/devices/:deviceId/*`. */
@@ -165,14 +162,10 @@ async function botAccess(event: H3Event, kind: 'delete' | 'reissue', chat: () =>
 export default {
   'POST /clients/:id/devices': admin(async (event) => {
     const clientId = idParam(event)
-    const { name } = await readBodyAs(event, z.object({ name: Name }))
+    const { name } = await readBodyAs(event, z.object({ name: NameSchema }))
     // Адресат уведомления - из строки клиента в транзакции вставки: бота могли отвязать.
     let owner!: Client
-    const { device, replay } = await addDevice(event, name, { source: 'panel', clientId, name }, async () => {
-      const [client] = await useDb().select().from(clients).where(eq(clients.id, clientId)).limit(1)
-      if (!client) throw notFound()
-      return client
-    }, { exists: `Девайс «${name}» у клиента уже есть`, limit: limit => `Достигнут лимит девайсов (${limit})` }, (fresh) => { owner = fresh })
+    const { device, replay } = await addDevice(event, name, { source: 'panel', clientId, name }, () => clientOr404(clientId), { exists: `Девайс «${name}» у клиента уже есть`, limit: limit => `Достигнут лимит девайсов (${limit})` }, (fresh) => { owner = fresh })
     // Повтор по ключу идемпотентности уже уведомил; сбой очереди бота - предупреждение, не ошибка.
     const warning = !replay && owner?.tgChatId
       ? await notifyWarning(notifyClient(owner.tgChatId,
@@ -228,7 +221,7 @@ export default {
   }),
 
   'POST /bot/devices': bot(async (event) => {
-    const { chatId, name } = await readBodyAs(event, z.object({ chatId: ChatId, name: Name }))
+    const { chatId, name } = await readBodyAs(event, z.object({ chatId: ChatId, name: NameSchema }))
     const { client } = await addDevice(event, name, { source: 'bot', chatId, name }, () => clientByChat(chatId), {
       exists: 'Девайс с таким названием уже есть',
       limit: () => 'Достигнут лимит устройств — обратитесь к администратору',

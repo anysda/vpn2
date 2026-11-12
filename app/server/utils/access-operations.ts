@@ -2,8 +2,9 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { and, desc, eq, exists, getTableColumns, lte, ne, notExists, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import type { H3Event } from 'h3'
-import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS } from '../../shared/access-operation'
+import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS, UNCONFIRMED } from '../../shared/access-operation'
 import type { AccessKind, AccessOperation } from '../../shared/access-operation'
+import { mskDate } from '../../shared/msk'
 import { useDb } from '../database/client'
 import { accessOperations, botOutbox, clients, devices, events } from '../database/schema'
 
@@ -15,7 +16,6 @@ interface AccessRequest { clientId: number, deviceId?: number, kind?: AccessKind
 const supersededPayload = sql`json_set(${accessOperations.payload}, '$.retired', json('[]'), '$.rotateOvpn', json('[]'))`
 const conflict = (message: string) => createError({ statusCode: 409, message })
 const keyReused = () => conflict('Ключ идемпотентности уже использован для другого запроса')
-const notFound = () => createError({ statusCode: 404, statusMessage: 'not_found' })
 const notSuperseded = ne(accessOperations.status, 'superseded')
 
 function requestFingerprint({ clientId, deviceId, kind, patch }: AccessRequest) {
@@ -91,7 +91,7 @@ export async function enqueueAccess(input: AccessRequest & {
     }
     if (input.patch?.expiresAt !== undefined && (before.expiresAt?.getTime() ?? null) !== (client.expiresAt?.getTime() ?? null)) {
       payload.notice = client.expiresAt
-        ? `Срок действия вашего ключа: до ${client.expiresAt.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}.`
+        ? `Срок действия вашего ключа: до ${mskDate(client.expiresAt)}.`
         : 'Срок действия ключа снят — доступ бессрочный.'
     }
     if (kind === 'delete' || kind === 'reissue') {
@@ -257,7 +257,7 @@ async function runOnce(adapter: AccessAdapter) {
           try { await adapter.apply(protocol, row, payload) }
           catch (error) {
             state.state = unreadable ? 'unknown' : 'failed'
-            unconfirmed(error, unreadable ? 'Состояние не подтверждено' : 'Не удалось применить изменение')
+            unconfirmed(error, unreadable ? UNCONFIRMED : 'Не удалось применить изменение')
             continue
           }
           if (!await current(row)) break
@@ -271,7 +271,7 @@ async function runOnce(adapter: AccessAdapter) {
       catch (error) {
         // Ни stdout команд, ни пути, ни ключи не выходят в статус и журнал.
         state.state = 'unknown'
-        unconfirmed(error, 'Состояние не подтверждено')
+        unconfirmed(error, UNCONFIRMED)
       }
     }
     await recordOutcome(row, payload, protocols, nextRetry)

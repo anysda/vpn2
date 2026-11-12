@@ -1,8 +1,7 @@
+import { MSK_OFFSET_SEC } from '../../shared/msk'
 import { parseOutbound } from '../../shared/outbounds'
 
-// Граница суток панели - 00:00 МСК (UTC+3 круглый год): суточный трафик нод и клиентов обнуляется в один момент.
-export const MSK_OFFSET_SEC = 3 * 3600
-
+/** Сутки панели с 00:00 МСК: суточный трафик нод и клиентов обнуляется в один момент. */
 export const mskDay = (ms: number) => Math.floor((ms / 1000 + MSK_OFFSET_SEC) / 86400)
 
 export const mskDayStartSec = (ms: number, daysBack = 0) =>

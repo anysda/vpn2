@@ -26,7 +26,6 @@ const NewList = z.object({
 })
 const Rewrite = z.object({ domain: z.string().min(1).max(253), answer: z.string().min(1).max(253) })
 
-const HOUR = 3_600_000
 const LOG_HOURS = [24, 168, 2160]
 const STATS_HOURS = [24, 168, 720]
 // Одно поле за раз, как в макете: переключатель, сегмент или «Изменить».

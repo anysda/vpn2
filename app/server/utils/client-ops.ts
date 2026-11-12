@@ -4,17 +4,18 @@ import { useDb } from '../database/client'
 import type { Client } from '../database/schema'
 import { clients, devices } from '../database/schema'
 import type { AccessOperation } from '../../shared/access-operation'
+import { mskDate } from '../../shared/msk'
 import { plural } from '../../shared/plural'
 
-const Name = z.string().trim().min(1).max(64)
+export const NameSchema = z.string().trim().min(1).max(64)
 const Limits = {
   expiresAt: z.iso.datetime().nullable().optional(),
   // null - безлимит.
   deviceLimit: z.number().int().min(1).max(999).nullable().optional(),
 }
-export const ClientCreate = z.object({ name: Name, filterTraffic: z.boolean().optional(), ...Limits })
+export const ClientCreate = z.object({ name: NameSchema, filterTraffic: z.boolean().optional(), ...Limits })
 export const ClientPatch = z.object({
-  name: Name.optional(),
+  name: NameSchema.optional(),
   ...Limits,
   frozenManual: z.boolean().optional(),
   // тег узла экзита (hy2-<тег>-direct должен существовать) или null - авто
@@ -25,7 +26,6 @@ export type ClientPatch = z.infer<typeof ClientPatch>
 type ClientUpdate = Partial<typeof clients.$inferInsert>
 
 export const deviceLimitBelowCountText = (have: number) => `У клиента уже ${have} ${plural(have, 'device')} — лимит не может быть меньше`
-const msk = (date: Date) => date.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })
 const time = (date: Date | null | undefined) => date?.getTime() ?? null
 const deviceCount = async (clientId: number) =>
   Number((await useDb().select({ n: count() }).from(devices).where(eq(devices.clientId, clientId)))[0]?.n ?? 0)
@@ -127,7 +127,7 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     })
   }
   if (time(before.expiresAt) !== time(row.expiresAt)) {
-    const term = row.expiresAt ? `до ${msk(row.expiresAt)}` : 'бессрочно'
+    const term = row.expiresAt ? `до ${mskDate(row.expiresAt)}` : 'бессрочно'
     await recordEvent({ type: 'client_term', level: 'info', object, actor, title: `Срок изменён · ${row.name}`, detail: joinDetail(term, actor) })
   }
 

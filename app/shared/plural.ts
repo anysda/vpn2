@@ -16,3 +16,5 @@ export function pluralRu(n: number, forms: [string, string, string]): string {
 export function plural(n: number, key: PluralKey): string {
   return pluralRu(n, table.plural[key] as [string, string, string])
 }
+
+export const inDaysRu = (n: number) => `через ${n} ${plural(n, 'day')}`

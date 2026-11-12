@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import '~/assets/css/clients.css'
-import { plural } from '#shared/plural'
+import { inDaysRu, plural } from '#shared/plural'
 import { parseOutbound } from '#shared/outbounds'
 import type { Client, ClientTraffic } from '~/composables/useClients'
 

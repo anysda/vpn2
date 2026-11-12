@@ -1,3 +1,4 @@
+import { MSK } from './msk'
 import { plural } from './plural'
 
 export interface BotDelivery {
@@ -9,7 +10,6 @@ export interface BotDelivery {
   created: number
 }
 
-const MSK = 'Europe/Moscow'
 const day = new Intl.DateTimeFormat('en-CA', { timeZone: MSK })
 const clock = new Intl.DateTimeFormat('ru-RU', { timeZone: MSK, hour: '2-digit', minute: '2-digit' })
 const date = new Intl.DateTimeFormat('ru-RU', { timeZone: MSK, day: '2-digit', month: '2-digit' })

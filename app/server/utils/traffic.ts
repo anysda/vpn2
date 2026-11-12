@@ -2,6 +2,7 @@ import { and, eq, lt, ne, sql, gte } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { useDb } from '../database/client'
 import { collectorState, deviceTrafficHourly, devices } from '../database/schema'
+import { MSK_OFFSET_SEC } from '../../shared/msk'
 
 // Сборщик: каждый прогон прибавляет дельты счётчиков WG, OpenVPN и IKEv2 к devices.rx_total/tx_total
 // и почасовой истории; rx - загрузка клиента, tx - отдача. Прошлый снимок WG/OpenVPN - в памяти
@@ -175,6 +176,20 @@ export async function periodTotalsByClient(sinceSec: number): Promise<Map<number
     .where(gte(deviceTrafficHourly.hour, sinceSec))
     .groupBy(devices.clientId)
   return new Map(rows.map(r => [r.clientId, { rx: Number(r.rx), tx: Number(r.tx) }]))
+}
+
+/** Число девайсов и трафик за всё время по клиентам. */
+export async function deviceTotalsByClient(): Promise<Map<number, { count: number, rx: number, tx: number }>> {
+  const rows = await useDb()
+    .select({
+      clientId: devices.clientId,
+      cnt: sql<number>`count(*)`,
+      rx: sql<number>`coalesce(sum(${devices.rxTotal}), 0)`,
+      tx: sql<number>`coalesce(sum(${devices.txTotal}), 0)`,
+    })
+    .from(devices)
+    .groupBy(devices.clientId)
+  return new Map(rows.map(r => [r.clientId, { count: Number(r.cnt), rx: Number(r.rx), tx: Number(r.tx) }]))
 }
 
 export async function recentBytesByClient(): Promise<Map<number, number>> {

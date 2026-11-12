@@ -2,8 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
-import { clients, devices } from '../database/schema'
-import { accessStatus } from '../../shared/access-operation'
+import { clients } from '../database/schema'
 
 /**
  * Bearer бота по TGBOT_SECRET, только напрямую с этой ноды: Caddy тоже ходит с 127.0.0.1,
@@ -41,18 +40,14 @@ export async function requireChatLinked(clientId: number, chatId: number): Promi
 
 /** Сводка клиента для бота: имя, лимит и список устройств. */
 export async function botClientView(clientId: number) {
-  const db = useDb()
-  const [c] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
-  if (!c) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  const devRows = await db.select().from(devices).where(eq(devices.clientId, clientId)).orderBy(...devicesOldestFirst)
-  const operation = await latestAccess(c.id)
+  const { client: c, devices, operation, accessStatus } = await clientCard(clientId)
   return {
     operation,
-    accessStatus: operation ? accessStatus(operation) : 'Состояние не подтверждено',
+    accessStatus,
     id: c.id,
     name: c.name,
     deviceLimit: c.deviceLimit,
     expiresAt: c.expiresAt,
-    devices: devRows.map(d => deviceView(c, d)),
+    devices: devices.map(d => deviceView(c, d)),
   }
 }

@@ -24,14 +24,17 @@ export interface AccessOperation {
 export const protocolNames: Record<AccessProtocol, string> = { wg: 'WireGuard', openvpn: 'OpenVPN', ikev2: 'IKEv2' }
 export const CONFIRMATION_FRESH_MS = 120_000
 
-export function accessStatus(op: AccessOperation): string {
+export const UNCONFIRMED = 'Состояние не подтверждено'
+
+export function accessStatus(op: AccessOperation | null): string {
+  if (!op) return UNCONFIRMED
   if (op.status === 'superseded') return 'Заменена'
   const states = accessProtocols.map(p => op.protocols[p])
-  if (states.some(s => s.state === 'unknown')) return 'Состояние не подтверждено'
+  if (states.some(s => s.state === 'unknown')) return UNCONFIRMED
   const failed = accessProtocols.filter(p => op.protocols[p].state === 'failed')
   if (failed.length) return `${op.kind === 'reissue' ? 'Перевыпуск не завершён' : `${op.kind === 'freeze' || op.kind === 'delete' ? 'Отключение' : 'Включение'} не завершено`}: ${failed.map(p => protocolNames[p]).join(', ')}`
   if (op.status === 'confirmed') {
-    if (states.some(s => s.state === 'confirmed' && (!s.checkedAt || Date.now() - s.checkedAt > CONFIRMATION_FRESH_MS))) return 'Состояние не подтверждено'
+    if (states.some(s => s.state === 'confirmed' && (!s.checkedAt || Date.now() - s.checkedAt > CONFIRMATION_FRESH_MS))) return UNCONFIRMED
     return op.kind === 'reissue' ? 'Ключи перевыпущены' : op.kind === 'unfreeze' ? 'Доступ включён' : 'Доступ отключён'
   }
   return op.kind === 'reissue' ? 'Перевыпуск выполняется' : op.kind === 'unfreeze' ? 'Включение выполняется' : 'Отключение выполняется'

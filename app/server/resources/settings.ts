@@ -3,8 +3,7 @@ import { and, count, eq, gte, isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../database/client'
 import { accounts, botOutbox, clients, users } from '../database/schema'
-
-const DAY = 24 * 60 * 60 * 1000
+import { DAY_MS } from '../../shared/msk'
 
 // Тревоги извне: от бота (Telegram отверг сообщение) и от скрипта бэкапа этой ноды.
 const BotEvent = z.discriminatedUnion('type', [
@@ -124,7 +123,7 @@ export default {
       countOf(db.select({ n: count() }).from(clients).where(isNotNull(clients.tgChatId))),
       countOf(db.select({ n: count() }).from(botOutbox).where(eq(botOutbox.status, 'queued'))),
       // Очередь панели хранит записи те же 24 часа.
-      countOf(db.select({ n: count() }).from(botOutbox).where(and(eq(botOutbox.status, 'accepted'), gte(botOutbox.created, Date.now() - DAY)))),
+      countOf(db.select({ n: count() }).from(botOutbox).where(and(eq(botOutbox.status, 'accepted'), gte(botOutbox.created, Date.now() - DAY_MS)))),
     ])
     return {
       configured: !!cfg.bot_token && !!cfg.chat_id,

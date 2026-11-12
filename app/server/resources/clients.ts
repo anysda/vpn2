@@ -1,10 +1,10 @@
 import { createClient, updateClient } from '../utils/client-ops'
-import { and, eq, ne, sql } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import { useDb } from '../database/client'
-import { clients, devices } from '../database/schema'
+import { clients } from '../database/schema'
 
 /** Привязка Telegram по паролю клиента (диплинк ?start=<password>). */
 const Link = z.object({ password: z.string().min(1), chatId: z.number().int(), username: z.string().optional() })
@@ -68,22 +68,18 @@ export default {
    * и за последние 5 минут; online - recentBytes ≥ ONLINE_MIN_BYTES.
    */
   'GET /clients/traffic': admin(async () => {
-    const [rows, day, recent] = await Promise.all([
-      useDb().select({
-        clientId: devices.clientId,
-        rx: sql<number>`coalesce(sum(${devices.rxTotal}), 0)`,
-        tx: sql<number>`coalesce(sum(${devices.txTotal}), 0)`,
-      }).from(devices).groupBy(devices.clientId),
+    const [totals, day, recent] = await Promise.all([
+      deviceTotalsByClient(),
       periodTotalsByClient(periodStartSec('day')),
       recentBytesByClient(),
     ])
-    return Object.fromEntries(rows.map((r) => {
-      const recentBytes = recent.get(r.clientId) ?? 0
-      return [r.clientId, {
-        rxBytes: Number(r.rx),
-        txBytes: Number(r.tx),
-        dayRx: day.get(r.clientId)?.rx ?? 0,
-        dayTx: day.get(r.clientId)?.tx ?? 0,
+    return Object.fromEntries([...totals].map(([clientId, t]) => {
+      const recentBytes = recent.get(clientId) ?? 0
+      return [clientId, {
+        rxBytes: t.rx,
+        txBytes: t.tx,
+        dayRx: day.get(clientId)?.rx ?? 0,
+        dayTx: day.get(clientId)?.tx ?? 0,
         recentBytes,
         online: recentBytes >= ONLINE_MIN_BYTES,
       }]
@@ -91,7 +87,7 @@ export default {
   }),
 
   'GET /clients/:id': admin(async (event) => {
-    const { client: c, devices, operation, status, tgLinked } = await clientCard(event)
+    const { client: c, devices, operation, status, tgLinked } = await clientCard(idParam(event))
     const sum = (key: 'rxTotal' | 'txTotal') => devices.reduce((total, d) => total + d[key], 0)
     return {
       operation,
@@ -119,8 +115,7 @@ export default {
   'POST /clients/:id/send-password-to-tg': admin(async (event) => {
     const id = idParam(event)
     botSecretOrThrow()
-    const [client] = await useDb().select().from(clients).where(eq(clients.id, id)).limit(1)
-    if (!client) throw notFound()
+    const client = await clientOr404(id)
     await sendBotEvent({ type: 'client_send_password', name: client.name, password: client.password })
     return { ok: true }
   }),
@@ -161,7 +156,7 @@ export default {
   'POST /bot/admin/clients': bot(async event => createClient(await readBodyAs(event, ClientCreate.pick({ name: true, filterTraffic: true })), BOT_ACTOR)),
   /** password - для диплинка-приглашения. */
   'GET /bot/admin/clients/:id': bot(async (event) => {
-    const { client: c, devices, operation, accessStatus, status, tgLinked } = await clientCard(event)
+    const { client: c, devices, operation, accessStatus, status, tgLinked } = await clientCard(idParam(event))
     return {
       operation,
       accessStatus,

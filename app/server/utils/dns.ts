@@ -181,7 +181,7 @@ interface DnsInfo {
 }
 interface RetentionConfig { interval: number, anonymize_client_ip?: boolean }
 
-const HOUR = 3_600_000
+export const HOUR = 3_600_000
 
 function blockValue(i: Pick<DnsInfo, 'blocking_mode' | 'blocking_ipv4'>): string {
   switch (i.blocking_mode) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { deviceLimitBelowCountText } from './client-ops'
-import { expiryLeftText } from './expiry-reminder'
+import { inDaysRu } from '../../shared/plural'
 
 describe('строки со склонением', () => {
   it.each([
@@ -22,6 +22,6 @@ describe('строки со склонением', () => {
     [11, 'через 11 дней'],
     [21, 'через 21 день']
   ])('напоминание о сроке %i', (n, text) => {
-    expect(expiryLeftText(n)).toBe(text)
+    expect(inDaysRu(n)).toBe(text)
   })
 })

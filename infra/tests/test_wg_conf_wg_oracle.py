@@ -27,7 +27,7 @@ from unittest.mock import patch
 
 from test_wg_conf_allowedips_prefix import OLD_LINES, conf as prefix_conf
 from test_wg_conf_lines import forms as line_forms
-from test_wg_conf_module import CANONICAL, FORMS, LIB, conf as module_conf
+from test_wg_conf_module import CANONICAL, CHECK, CHECK_ENV, FORMS, conf as module_conf
 from wg_root import as_root
 from wg_oracle import IP, WG, WG_QUICK, ns_wg, oracle  # noqa: F401
 
@@ -256,8 +256,8 @@ def backup(raw, rows):
         con.close()
         (root / 'etc-wireguard').mkdir()
         (root / 'etc-wireguard/wg0.conf').write_bytes(raw)
-        done = subprocess.run(['bash', str(LIB / 'anysda-backup.sh'), '--check-bundle', str(root)],
-                              env=os.environ | {'ANYSDA_LIB_DIR': str(LIB)}, capture_output=True, text=True,
+        done = subprocess.run([*CHECK, str(root)],
+                              env=os.environ | CHECK_ENV, capture_output=True, text=True,
                               timeout=120, check=False)
     return done.returncode, done.stdout.splitlines() + done.stderr.splitlines()
 

@@ -2,7 +2,7 @@
 
 Review 12 of 729cda0 (`--check-bundle` exit 5, the backup copy exits 4 with the event
 "сверка … не выполнена") found:
-1 deploy.sh do_backup printed "БД и конфиги VPN расходятся - перевыпусти" on every exit 4;
+1 do_backup (infra/lib/deploy-backup.sh) printed "БД и конфиги VPN расходятся - перевыпусти" on every exit 4;
 3 anysda-backup.sh put the reason into the event JSON as it came: tab, CR, \\x01, \\x1b
   and a non-UTF-8 byte broke the body, a reason over 200 characters made the panel
   (events.post.ts, zod max(200)) refuse the whole body, and curl hid it behind `|| true`;
@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import re
 import subprocess
 import sys
 import tempfile
@@ -74,10 +75,10 @@ print(json.dumps(vt.WireGuard().free))
 
 
 class DeployBackupTests(unittest.TestCase):
-    """1 deploy.sh do_backup on exit 4 of the copy: nothing to check with vs a real mismatch.
+    """1 do_backup (infra/lib/deploy-backup.sh) on exit 4 of the copy: nothing to check with vs a real mismatch.
 
     Review 13 of 77ceeec: exit 4 without a `warning:` line (sshpass "parse error" is 4 too,
-    ssh_exec passes it as it is) was "архив сохранён … перевыпусти" and 0, and the mktemp
+    the copy passes it as it is) was "архив сохранён … перевыпусти" and 0, and the mktemp
     file of the copy stayed behind on Ctrl-C. do_backup runs as `backup) do_backup ;;`
     of deploy.sh: last command under set -euo pipefail, its own TMPDIR.
     """
@@ -86,9 +87,13 @@ class DeployBackupTests(unittest.TestCase):
 
     @staticmethod
     def script(tmp, copy):
-        return f'export TMPDIR={tmp}\n' + function('do_backup') + \
-            'load_env() { :; }\nwarn() { printf "[ru] %s\\n" "$*" >&2; }\n' + \
-            'ssh_exec() {\n' + copy + '\n}\ndo_backup\n'
+        # Копию на entry снимает anysda-backup.sh; здесь его место занимает функция copy. Временные
+        # файлы живут в $TMP деплоя, его убирает on_exit с ловушками из infra/deploy.sh.
+        traps = '\n'.join(re.findall(r'(?m)^trap .*$', source('infra/deploy.sh')))
+        return f'export TMPDIR={tmp}\nTMP=$(mktemp -d) BEAT= PLAY= MUTATING=false OPENED=false\n' + \
+            function('on_exit') + traps + '\n' + function('do_backup').replace('/usr/local/bin/anysda-backup.sh', 'copy') + \
+            'warn() { printf "[ru] %s\\n" "$*" >&2; }\n' + \
+            'copy() {\n' + copy + '\n}\ndo_backup\n'
 
     def do_backup(self, copy, code=4):
         with tempfile.TemporaryDirectory() as directory:

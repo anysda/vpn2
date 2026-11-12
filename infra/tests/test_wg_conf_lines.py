@@ -1,12 +1,11 @@
-"""wg0.conf outside apply: a line wg does not recognize, the backup script's wg_conf.py on the node.
+"""wg0.conf outside apply: a line wg does not recognize.
 
 wg rejects the whole file on a line it does not recognize: an unknown name, a
 typo in a name, a line without `=`, an unknown section, a name with a
 non-ASCII letter next to the real one. wg-quick takes out only its own names
 in [Interface] (Address, DNS, MTU, Table, PreUp, PostUp, PreDown, PostDown,
 SaveConfig) before wg. The backup check (anysda-backup.sh --check-bundle)
-must fail on such a file like wg does, not read past the line. On the node the backup script lies in /usr/local/bin and takes
-wg_conf.py from /usr/local/lib/anysda, not from a wg_conf.py next to itself.
+must fail on such a file like wg does, not read past the line.
 """
 import json
 from pathlib import Path
@@ -168,7 +167,7 @@ def wg_reject(text):
 
 @as_root
 class WgConfLinesTests(unittest.TestCase):
-    """1 lines wg does not recognize, 2 wg_conf.py from the node's library directory, 0 the model."""
+    """1 lines wg does not recognize, 0 the model."""
 
     def test_0_reference_matches_wg(self):
         for (place, form), text in forms().items():

@@ -9,22 +9,17 @@ class SecretFileTests(unittest.TestCase):
     def test_partial_secret_collection_is_private(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = bash(function('prep_ru_router') + '''
+            result = bash(function('pull_secrets') + '''
 umask 022
-DEPLOY_ROOT=$PWD
+DEPLOY_ROOT=$PWD TMP=$PWD
 log() { :; }
 ok() { :; }
 warn() { :; }
 die() { echo "$*" >&2; exit 1; }
 exit_tags() { echo se; }
-load_env() { :; }
-ssh_exec() {
-  case $* in
-    *'echo "DIRECT='*) printf 'DIRECT=ABCDEFGHIJKLMNOP\nWARP=bad\n';;
-    *) return 1;;
-  esac
-}
-prep_ru_router
+expand_hosts() { echo se; }
+service() { printf 'DIRECT=ABCDEFGHIJKLMNOP\\n' > "$DEPLOY_ROOT/secrets/foreign-secrets.env"; return 1; }
+pull_secrets
 ''', directory)
             self.assertNotEqual(result.returncode, 0)
             secret = root / 'secrets/foreign-secrets.env'

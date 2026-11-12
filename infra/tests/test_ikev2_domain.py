@@ -205,8 +205,9 @@ export -f swanctl
                              ['ca.crt', 'ca.key', 'server.crt', 'server.key'])
 
     def test_summary_reads_actual_mode(self):
-        deploy = source('infra/deploy.sh')
-        self.assertTrue('print_ikev2_notice()' in deploy, 'deploy never reports IKEv2 mode')
+        # Итог деплоя (print_summary из infra/lib/deploy-report.sh) называет режим IKEv2.
+        self.assertRegex(source('infra/deploy.sh'), r'(?m)^\s+print_summary$')
+        self.assertIn('\n  print_ikev2_notice\n', function('print_summary'), 'deploy never reports IKEv2 mode')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'ikev2-mode').write_text('self-signed')

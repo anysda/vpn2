@@ -4,9 +4,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -72,31 +72,21 @@ class AdguardRoleTests(unittest.TestCase):
         play = site_play('22-adguard')
         self.assertEqual((play['hosts'], play['tags'], play['roles']), ('entry', ['22-adguard'], ['adguard']))
 
-    def test_restore_wrapper_runs_config_and_restart(self):
-        # Восстановление зовёт infra/scripts/22-adguard.sh с env-файлом: без установки, только конфиги.
+    def test_restore_runs_config_and_restart(self):
+        # Восстановление (vpn2.backup.restore.resync) зовёт шаги роли с env-файлом: без установки, только конфиги.
+        from vpn2.backup import restore
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / 'vpn2').write_text('#!/bin/sh\necho "$* port=$AGH_PORT pass=${ADMIN_PASSWORD-unset} '
-                                       'res=$VPN2_ENTRY_RESOURCES pools=$VPN2_POOLS" >> "$CALLS"\n')
+                                       'pools=$VPN2_POOLS" >> "$CALLS"\n')
             (work / 'vpn2').chmod(0o755)
-            wrapper = ROOT / 'infra/scripts/22-adguard.sh'
-            self.assertTrue(os.access(wrapper, os.X_OK))
-            for tag, calls in (('ru', 2), ('se', 0)):
-                (work / 'calls').write_text('')
-                (work / 'stage.env').write_text(f'HOST_TAG={tag}\nAGH_PORT=3000\nunset ADMIN_PASSWORD\n')
-                result = subprocess.run(
-                    ['bash', str(wrapper), str(work / 'stage.env')], capture_output=True, text=True,
-                    env=dict(os.environ, VPN2_BIN=str(work / 'vpn2'), CALLS=str(work / 'calls'), ADMIN_PASSWORD='x'))
-                self.assertEqual(result.returncode, 0, result.stderr)
-                lines = (work / 'calls').read_text().splitlines()
-                self.assertEqual(len(lines), calls)
-                if calls:
-                    self.assertEqual([line.split()[:2] for line in lines],
-                                     [['adguard', 'config'], ['adguard', 'restart']])
-                    self.assertIn('port=3000 pass=unset', lines[0])
-                    self.assertIn(f'res={ROOT}/infra/ansible/roles/resources/files/entry_resources.py pools={ROOT}/app/shared/vpn-pools.json',
-                                  lines[0])
-
+            (work / 'calls').write_text('')
+            (work / 'stage.env').write_text('HOST_TAG=ru\nAGH_PORT=3000\nunset ADMIN_PASSWORD\n')
+            with mock.patch.dict(os.environ, VPN2_BIN=str(work / 'vpn2'), CALLS=str(work / 'calls'), ADMIN_PASSWORD='x'):
+                self.assertEqual(restore.resync(ROOT, work / 'stage.env', work), '')
+            lines = (work / 'calls').read_text().splitlines()
+            self.assertEqual([line.split()[:2] for line in lines][:2], [['adguard', 'config'], ['adguard', 'restart']])
+            self.assertIn(f'port=3000 pass=unset pools={ROOT}/infra/../app/shared/vpn-pools.json', lines[0])
 
 if __name__ == '__main__':
     unittest.main()

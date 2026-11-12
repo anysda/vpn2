@@ -1,12 +1,9 @@
-"""wg0.conf outside apply: a [Peer] section without a public key, the wg_conf.py module on the node.
+"""wg0.conf outside apply: a [Peer] section without a public key.
 
 wg rejects the whole file when a [Peer] section has `PublicKey =` with no
 value or no PublicKey at all. The backup check (anysda-backup.sh
---check-bundle) must fail like wg does, not drop the
-section with its addresses. The backup role installs wg_conf.py where the node keeps
-its libraries, /usr/local/lib/anysda/, before the backup script that imports
-it, and restore runs the check with the module from there wherever restore
-itself lies.
+--check-bundle, that is `vpn2 backup`) must fail like wg does, not drop the
+section with its addresses.
 """
 import json
 import os
@@ -14,6 +11,7 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -23,7 +21,9 @@ from test_wg_conf_allowedips_prefix import (
 from wg_root import as_root
 
 LIB = ROOT / 'infra/lib'
-NODE_LIB = '/usr/local/lib/anysda'
+# Сверка набора бэкапа: anysda-backup.sh на узле - это `vpn2 backup`.
+CHECK = [sys.executable, '-B', '-m', 'vpn2.cli', 'backup', '--check-bundle']
+CHECK_ENV = {'PYTHONPATH': str(ROOT / 'infra/vpn2/src')}
 # Sections after the header: (PublicKey value or None for no line, PresharedKey or None, AllowedIPs line).
 BASE = [(PEER, PSK_ONE, '10.66.66.2/32, fd66:66::2/128'), (GONE, PSK_GONE, f'{G4}, {G6}'),
         (OLD, PSK_TWO, f'{A4}, {A6}')]
@@ -94,17 +94,17 @@ def bundle(directory, text):
 
 
 def backup_check(text):
-    """anysda-backup.sh --check-bundle with ANYSDA_LIB_DIR=infra/lib: (exit code, stdout lines)."""
+    """vpn2 backup --check-bundle: (exit code, stdout lines)."""
     with tempfile.TemporaryDirectory() as directory:
-        done = subprocess.run(['bash', str(LIB / 'anysda-backup.sh'), '--check-bundle', str(bundle(directory, text))],
-                              env=os.environ | {'ANYSDA_LIB_DIR': str(LIB)}, capture_output=True, text=True,
+        done = subprocess.run([*CHECK, str(bundle(directory, text))],
+                              env=os.environ | CHECK_ENV, capture_output=True, text=True,
                               timeout=60, check=False)
     return done.returncode, done.stdout.splitlines(), done.stderr
 
 
 @as_root
 class WgConfModuleTests(unittest.TestCase):
-    """1 a [Peer] section without a public key, 2 wg_conf.py in the node's library directory, 0 the model."""
+    """1 a [Peer] section without a public key, 0 the model."""
 
     def test_0_reference_matches_wg(self):
         for form, wanted in WG_ORACLE.items():
@@ -123,13 +123,6 @@ class WgConfModuleTests(unittest.TestCase):
     def test_1c_file_as_written_passes(self):
         code, lines, err = backup_check(conf(CANONICAL))
         self.assertEqual((code, lines), (0, []), err)
-
-    def test_2a_backup_role_installs_module_in_node_lib_before_backup(self):
-        role = ROOT / 'infra/ansible/roles/backup'
-        self.assertIn('\n  - lib/wg_conf.py\n', (role / 'defaults/main.yml').read_text().split('backup_node_lib:', 1)[1])
-        tasks = (role / 'tasks/install.yml').read_text()
-        module = tasks.index(f'dest: "{NODE_LIB}/{{{{ item | basename }}}}"')
-        self.assertLess(module, tasks.index('dest: "/usr/local/bin/{{ item }}"'))
 
 
 if __name__ == '__main__':

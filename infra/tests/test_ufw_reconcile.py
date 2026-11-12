@@ -45,21 +45,6 @@ DNS_VALUES = {role: {f'{role}_dns': '10.99.0.1', f'{role}_subnets': ['198.51.100
 
 
 class UfwReconcileTests(unittest.TestCase):
-    def run_commands(self, commands, rules):
-        with tempfile.TemporaryDirectory() as directory:
-            state = Path(directory, 'rules.json')
-            state.write_text(json.dumps(rules))
-            ufw = Path(directory, 'ufw')
-            ufw.write_text(FAKE_UFW)
-            ufw.chmod(0o755)
-            env = dict(os.environ, PATH=directory + ':' + os.environ['PATH'], UFW_STATE=str(state),
-                       PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
-            for command in commands:
-                result = subprocess.run([sys.executable, '-B', '-m', 'vpn2.cli', 'ufw', 'sync', *command],
-                                        env=env, capture_output=True, text=True, timeout=30)
-                self.assertEqual(result.returncode, 0, result.stderr)
-            return json.loads(state.read_text())
-
     def test_vpn_roles_remove_owned_stale_rules(self):
         for role, values, comment, desired in [
                 ('wireguard', {'wireguard_port': '51820'}, 'wireguard listener', '51820/udp'),
@@ -125,8 +110,9 @@ class UfwReconcileTests(unittest.TestCase):
     def test_unchanged_and_manual_rules_are_not_rewritten(self):
         rules = [['allow', '51820/udp', 'comment', 'manual listener'],
                  shlex.split('allow from 198.51.100.0/24 to 192.0.2.53 port 53 proto udp') + ['comment', 'DNS']]
-        result = self.run_commands([['wireguard listener', '51820/udp'],
-                                    ['DNS', 'proto udp from 198.51.100.0/24 to 192.0.2.53 port 53']], rules)
+        result = vpn_roles.ufw_apply([{'comment': 'wireguard listener', 'rules': ['51820/udp']},
+                                      {'comment': 'DNS', 'rules': ['proto udp from 198.51.100.0/24 to 192.0.2.53 port 53']}],
+                                     rules, FAKE_UFW)
         self.assertEqual(result, rules)
 
 

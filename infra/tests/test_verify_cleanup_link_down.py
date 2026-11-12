@@ -43,10 +43,8 @@ class CleanupLinkDownTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            with mock.patch.multiple(vt, run=run, clean_iptables=lambda: None,
-                                     manual_markers=mock.Mock(), echo_addresses=lambda: [],
-                                     CCD=tmp / 'ccd', SWAN_FILE=tmp / 'swan.conf', WORK=tmp / 'work',
-                                     MANUAL_DIR=tmp / 'manual'), \
+            with mock.patch.multiple(vt, run=run, manual_markers=mock.Mock(), server_peers=set,
+                                     CCD=tmp / 'ccd', SWAN_FILE=tmp / 'swan.conf', WORK=tmp / 'work'), \
                     mock.patch.object(vt.time, 'sleep', sleep):
                 vt.cleanup()
         return calls

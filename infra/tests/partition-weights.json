@@ -311,7 +311,6 @@
  "test_release.ReleaseTests[5]": 1,
  "test_release.ReleaseTests[6]": 1,
  "test_release_stores[general]": 1,
- "test_remote_shell[general]": 1,
  "test_route_pin_stuck_exit.TestManualRouteEdges[1]": 1,
  "test_router_client_block.ClientBlockTests[1]": 1,
  "test_router_client_block[general]": 1,

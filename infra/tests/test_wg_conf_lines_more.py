@@ -1,4 +1,4 @@
-"""wg0.conf outside apply: a wg name with no value, wg-quick names as wg-quick reads them, the module's directory.
+"""wg0.conf outside apply: a wg name with no value, wg-quick names as wg-quick reads them.
 
 wg (config.c) takes a name only with a value after `=`: `PresharedKey =`, `Endpoint=`,
 a value that is only a comment - `Line unrecognized`, the whole file rejected.
@@ -6,8 +6,7 @@ wg-quick takes its own names out only in a section whose header is `[Interface]`
 as a whole (any case) and trims a name only at its ends: after `[ Interface ]`
 and in `Post Up = ...` the line stays for wg, which rejects it. The backup check
 (anysda-backup.sh --check-bundle) decides like wg after
-wg-quick. The backup check takes wg_conf.py only from the library directory,
-never from the directory it is run from.
+wg-quick.
 """
 import unittest
 

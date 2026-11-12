@@ -20,7 +20,7 @@ import tempfile
 import time
 import unittest
 
-from test_wg_conf_module import BASE, LIB, bundle, conf
+from test_wg_conf_module import BASE, CHECK, CHECK_ENV, bundle, conf
 from test_wg_conf_wg_oracle import A, S, backup, mk, oracle
 import vpn_roles
 from wg_root import as_root
@@ -99,11 +99,11 @@ class WgCheckEdgeTests(unittest.TestCase):
             (top / 'stub').mkdir()
             (top / 'bundle').mkdir()
             path = stub_wg(top / 'stub', mark)
-            env = os.environ | {'PATH': path + os.pathsep + os.environ['PATH'], 'ANYSDA_LIB_DIR': str(LIB),
+            env = os.environ | {'PATH': path + os.pathsep + os.environ['PATH'], **CHECK_ENV,
                                 'PYTHONDONTWRITEBYTECODE': '1'}
             root = bundle(top / 'bundle', conf(BASE))
             (root / 'etc-wireguard/wg0.conf').write_bytes(mk())
-            callers = {'backup --check-bundle': ['bash', str(LIB / 'anysda-backup.sh'), '--check-bundle', str(root)]}
+            callers = {'backup --check-bundle': [*CHECK, str(root)]}
             for who, command in callers.items():
                 for sig in (signal.SIGTERM, signal.SIGKILL):
                     with self.subTest('no netns holds the key after the kill, the next check works',

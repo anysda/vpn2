@@ -28,7 +28,7 @@ jobs:
       - name: мастер на Python из Debian 12
         run: |
           python3 --version
-          pip install --quiet pytest
+          pip install --quiet pytest PyYAML
           PYTHONPATH=infra/vpn2/src python3 -m pytest infra/vpn2/tests/test_setup.py -p no:cacheprovider
 
   python-lint:
@@ -210,7 +210,7 @@ jobs:
           docker build -q -t vpn2-backup-restore - <<'EOF'
           FROM debian:13
           RUN timeout 300 apt-get update -qq && timeout 300 apt-get install -y -qq --no-install-recommends \
-            python3 sqlite3 age expect curl git wireguard-tools openssl iproute2
+            python3 python3-yaml sqlite3 age expect curl git wireguard-tools openssl iproute2
           EOF
       - name: SQLite WAL и полный цикл backup/restore
         # Копия и restore проверяют wg0.conf настоящим wg во временном netns, как
@@ -541,7 +541,7 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: openvpn wireguard-tools
-      - run: pip install ./infra/vpn2 pytest pytest-xdist
+      - run: pip install ./infra/vpn2 pytest pytest-xdist jinja2
       - run: vpn2 version
       - name: pytest
         run: |

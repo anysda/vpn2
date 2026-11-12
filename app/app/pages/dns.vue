@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import '~/assets/css/dns.css'
 import { DnsClients, DnsFilters, DnsLog, DnsRewrites, DnsRules, DnsServices, DnsSettings, DnsSummary } from '#components'
 
 useHead({ title: 'DNS — anysda-vpn2' })
@@ -15,28 +14,18 @@ const SUBS = [
   { value: 'cl', label: 'Клиенты', view: DnsClients },
   { value: 'set', label: 'Настройки DNS', view: DnsSettings },
 ] as const
-type Sub = typeof SUBS[number]['value']
-
-const sub = ref<Sub>('sum')
-// Подраздел монтируется при первом заходе и дальше живёт, чтобы не терять состояние.
-const seen = reactive(new Set<Sub>(['sum']))
-
-async function pick(v: Sub, dir: 'fwd' | 'back') {
-  await subTransition(dir, async () => {
-    seen.add(v)
-    sub.value = v
-    await nextTick()
-    cascade(document.querySelector<HTMLElement>('.dns .dpan.on'))
-  })
-}
+const sub = ref<typeof SUBS[number]['value']>('sum')
+// Подраздел монтируется при первом заходе и дальше живёт со своим состоянием.
+const seen = reactive(new Set([sub.value]))
+watch(sub, v => seen.add(v))
 </script>
 
 <template>
   <main class="tab on dns">
     <div class="head">
-      <DnsSeg v-model="sub" class="dseg" :options="SUBS" @pick="pick" />
+      <Seg v-model="sub" :options="SUBS" class="max-w-full" />
     </div>
-    <section v-for="s in SUBS.filter(x => seen.has(x.value))" :key="s.value" class="dpan" :class="{ on: sub === s.value }">
+    <section v-for="s in SUBS.filter(x => seen.has(x.value))" v-show="sub === s.value" :key="s.value">
       <component :is="s.view" />
     </section>
   </main>

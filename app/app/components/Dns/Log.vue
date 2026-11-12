@@ -1,33 +1,19 @@
 <script setup lang="ts">
-// Журнал запросов: фильтр, поиск по домену и клиенту, блокировка и
-// разблокировка из строки своим правилом AdGuard.
 type Kind = 'ok' | 'blk' | 'rw' | 'safe'
-type Filter = 'all' | 'blk' | 'ok' | 'rw'
 interface Row { time: string, domain: string, type: string, kind: Kind, detail: string, client: string, ip: string }
 
-const FILTERS = [
-  { value: 'all', label: 'Все' },
-  { value: 'blk', label: 'Заблокированные' },
-  { value: 'ok', label: 'Разрешённые' },
-  { value: 'rw', label: 'Перезаписанные' },
-] as const
-const TAGS: Record<Kind, { cls: string, text: string }> = {
-  ok: { cls: 'tag ok', text: 'разрешён' },
-  blk: { cls: 'tag badt', text: 'заблокирован' },
-  rw: { cls: 'tag', text: 'перезаписан' },
-  safe: { cls: 'tag badt', text: 'угроза' },
-}
+const FILTERS = [{ value: 'all', label: 'Все' }, { value: 'blk', label: 'Заблокированные' }, { value: 'ok', label: 'Разрешённые' }, { value: 'rw', label: 'Перезаписанные' }] as const
+const TAGS: Record<Kind, [string, string]> = { ok: ['ok', 'разрешён'], blk: ['badt', 'заблокирован'], rw: ['', 'перезаписан'], safe: ['badt', 'угроза'] }
 
 const { toast, busy, act } = useAct()
-const f = ref<Filter>('all')
+const f = ref<typeof FILTERS[number]['value']>('all')
 const q = ref('')
 const rows = ref<Row[]>([])
 const older = ref<string | null>(null)
 const loading = ref(false)
 const error = ref('')
-const list = ref<HTMLElement>()
-const pill = ref<HTMLElement>()
-let seq = 0
+const today = new Date().toDateString()
+let seq = 0, timer: ReturnType<typeof setTimeout> | undefined
 
 async function load(more = false) {
   const my = ++seq
@@ -48,105 +34,73 @@ async function load(more = false) {
     if (my === seq) loading.value = false
   }
 }
-
-function wave() {
-  requestAnimationFrame(() => [...(list.value?.children ?? [])].slice(0, 12).forEach((r, i) =>
-    rise(r, { duration: 300, delay: i * 28 })))
-}
-
-async function reload() {
+onMounted(load)
+watch(f, () => load())
+watch(q, () => {
+  clearTimeout(timer)
+  timer = setTimeout(load, 300)
+})
+async function refresh() {
   await load()
-  await nextTick()
-  wave()
-}
-
-watch(q, debounce(() => void load(), 300))
-watch(f, () => void reload())
-
-async function refreshLog() {
-  const b = pill.value
-  if (b) {
-    b.classList.remove('spin')
-    void b.offsetWidth
-    b.classList.add('spin')
-  }
-  await reload()
   if (!error.value) toast.add({ title: 'Журнал обновлён' })
 }
-
+// Подгрузка старых записей у конца списка: прокрутка списка на ПК, страницы - на телефоне.
+const list = ref<HTMLElement>()
 function onScroll() {
   const el = list.value
   if (!el || loading.value || !older.value) return
-  if (el.scrollTop + el.clientHeight > el.scrollHeight - 200) void load(true)
+  const nearOwnEnd = el.scrollTop + el.clientHeight > el.scrollHeight - 200
+  const nearPageEnd = el.getBoundingClientRect().bottom < innerHeight + 200
+  if (nearOwnEnd && nearPageEnd) void load(true)
 }
-
-// На телефоне список без своей прокрутки, подгрузка — по прокрутке страницы.
-const mobile = useMobile()
-function onPageScroll() {
-  const el = list.value
-  if (!mobile.value || !el?.offsetHeight || loading.value || !older.value) return
-  if (el.getBoundingClientRect().bottom < innerHeight + 200) void load(true)
-}
-onMounted(() => addEventListener('scroll', onPageScroll, { passive: true }))
-onUnmounted(() => removeEventListener('scroll', onPageScroll))
+onMounted(() => addEventListener('scroll', onScroll, { passive: true }))
+onUnmounted(() => removeEventListener('scroll', onScroll))
 
 function rule(r: Row) {
   const block = r.kind === 'ok'
   return act(r.domain, async () => {
     await $fetch('/api/dns/log-rule', { method: 'POST', body: { domain: r.domain, block, client: r.ip } })
-    for (const x of rows.value) {
-      if (x.domain === r.domain && x.kind !== 'rw') Object.assign(x, { kind: block ? 'blk' : 'ok', detail: 'Свои правила' })
-    }
+    for (const x of rows.value) if (x.domain === r.domain && x.kind !== 'rw') Object.assign(x, { kind: block ? 'blk' : 'ok', detail: 'Свои правила' })
   }, `${r.domain}: ${block ? 'заблокирован' : 'разблокирован'} своим правилом`)
 }
-
-const today = new Date().toDateString()
-
-onMounted(() => void load())
 </script>
 
 <template>
   <div>
-    <div class="tbar">
+    <div class="mb-3 flex flex-wrap items-center gap-2">
       <label class="inp">
         <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg>
         <input v-model="q" placeholder="Домен или клиент" aria-label="Домен или клиент">
       </label>
-      <!-- «Обновить» в разметке сразу за поиском: на телефоне там и стоит, на ПК уходит в конец ряда (dns.css) -->
-      <button ref="pill" type="button" class="pill" @click="refreshLog">
-        <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>Обновить
+      <Seg v-model="f" :options="FILTERS" small />
+      <button type="button" class="pill md:ml-auto" @click="refresh">
+        Обновить
       </button>
-      <DnsSeg v-model="f" :options="FILTERS" small @pick="v => f = v" />
     </div>
-    <div class="card logc">
-      <div class="lt">
-        <div class="th">
-          <span>Время</span><span>Запрос</span><span>Ответ</span><span>Клиент</span><span />
+    <div ref="list" class="card scroll max-h-[70vh] max-md:max-h-none" @scroll.passive="onScroll">
+      <div
+        v-for="(r, i) in rows" :key="`${r.time}|${r.domain}|${r.ip}|${i}`"
+        class="grid grid-cols-[80px_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_130px] items-center gap-3 border-b border-(--line) py-2 text-sm max-md:grid-cols-[minmax(0,1fr)_auto]">
+        <time class="mono text-xs text-(--t3) max-md:hidden" :datetime="r.time">{{ hmsOrDdmmHmLocal(r.time, today) }}</time>
+        <div class="min-w-0">
+          <b class="block truncate font-medium" :class="{ 'text-(--red-t)': r.kind === 'blk' || r.kind === 'safe' }">{{ r.domain }}</b>
+          <small class="text-xs text-(--t3)">{{ r.type }}<span class="md:hidden"> · {{ hmsOrDdmmHmLocal(r.time, today) }} · {{ r.client }}</span></small>
         </div>
+        <div class="min-w-0 max-md:hidden">
+          <span class="tag" :class="TAGS[r.kind][0]">{{ TAGS[r.kind][1] }}</span>
+          <small class="block truncate text-xs text-(--t3)">{{ r.detail }}</small>
+        </div>
+        <div class="min-w-0 max-md:hidden">
+          <span class="block truncate">{{ r.client }}</span><small class="mono text-xs text-(--t3)">{{ r.ip }}</small>
+        </div>
+        <span v-if="r.kind === 'rw'" />
+        <button v-else type="button" class="pill" :disabled="busy.has(r.domain)" @click="rule(r)">
+          {{ r.kind === 'ok' ? 'Заблокировать' : 'Разблокировать' }}
+        </button>
       </div>
-      <div ref="list" class="lt scroll" @scroll.passive="onScroll">
-        <div v-for="(r, i) in rows" :key="`${r.time}|${r.domain}|${r.ip}|${i}`" :class="{ blk: r.kind === 'blk' || r.kind === 'safe' }">
-          <time :datetime="r.time">{{ hmsOrDdmmHmLocal(r.time, today) }}</time>
-          <div style="min-width:0">
-            <b>{{ r.domain }}</b><small>{{ r.type }}</small>
-            <small class="lm"><span class="mono">{{ hmsOrDdmmHmLocal(r.time, today) }}</span> · {{ r.type }} · {{ r.client }}</small>
-          </div>
-          <div class="rs">
-            <span :class="TAGS[r.kind].cls">{{ TAGS[r.kind].text }}</span>
-            <div><small style="margin:0">{{ r.detail }}</small></div>
-          </div>
-          <div style="min-width:0">
-            <b style="font-weight:400">{{ r.client }}</b><small class="mono" style="font-size:11px!important">{{ r.ip }}</small>
-          </div>
-          <span v-if="r.kind === 'rw'" />
-          <button v-else type="button" class="pill ac" :disabled="busy.has(r.domain)" @click="rule(r)">
-            {{ r.kind === 'ok' ? 'Заблокировать' : 'Разблокировать' }}
-          </button>
-        </div>
-        <div v-if="!rows.length && !loading">
-          <span /><span style="color:var(--t3)">{{ error || 'ничего не нашлось' }}</span>
-        </div>
-      </div>
+      <p v-if="!rows.length && !loading" class="py-4 text-center text-sm text-(--t3)">
+        {{ error || 'ничего не нашлось' }}
+      </p>
     </div>
   </div>
 </template>

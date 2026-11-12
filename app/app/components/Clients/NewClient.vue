@@ -1,72 +1,29 @@
 <script setup lang="ts">
-import { parseRuDateUtc } from '~/utils/format'
-import { maskRuDate } from '~/utils/ru-date-mask'
-
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ created: [id: number] }>()
-
-const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
+const { canSend, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
-const DEFAULT_DEVICE_LIMIT = 3
-
-const name = ref('')
-const expires = ref('')
-const limit = ref<number | string>(DEFAULT_DEVICE_LIMIT)
-const unlimited = ref(false)
-const filterTraffic = ref(true)
-const sendBot = ref(false)
+const form = reactive({ name: '', expires: '', limit: 3 as number | string, unlimited: false, filter: true, bot: false })
 const busy = ref(false)
-
-watch(open, (now) => {
-  if (!now) return
-  name.value = ''
-  expires.value = ''
-  limit.value = DEFAULT_DEVICE_LIMIT
-  unlimited.value = false
-  filterTraffic.value = true
-  sendBot.value = false
-})
-
-function onExpiresInput(e: Event) {
-  const el = e.target as HTMLInputElement
-  el.value = maskRuDate(el.value)
-  expires.value = el.value
-}
+watch(open, now => now && Object.assign(form, { name: '', expires: '', limit: 3, unlimited: false, filter: true, bot: false }))
 
 async function submit() {
-  const n = name.value.trim()
-  if (!n) {
-    toast.add({ title: 'Укажите имя', color: 'error' })
-    return
-  }
-  let expiresAt: string | null = null
-  if (expires.value.trim()) {
-    expiresAt = parseRuDateUtc(expires.value)
-    if (!expiresAt) {
-      toast.add({ title: 'Дата — в формате ДД.ММ.ГГГГ', color: 'error' })
-      return
-    }
-  }
+  const name = form.name.trim()
+  if (!name) return toast.add({ title: 'Укажите имя', color: 'error' })
+  const expiresAt = form.expires.trim() ? parseRuDateUtc(form.expires) : null
+  if (form.expires.trim() && !expiresAt) return toast.add({ title: 'Дата — в формате ДД.ММ.ГГГГ', color: 'error' })
   busy.value = true
   try {
-    const client = await createClient({
-      name: n,
-      filterTraffic: filterTraffic.value,
-      expiresAt,
-      deviceLimit: unlimited.value ? null : Math.max(1, Math.floor(Number(limit.value) || 1)),
-    })
+    const deviceLimit = form.unlimited ? null : Math.max(1, Math.floor(Number(form.limit) || 1))
+    const client = await createClient({ name, filterTraffic: form.filter, expiresAt, deviceLimit })
     open.value = false
-    toast.add(doneToast(`Клиент «${n}» создан`, client.warning))
+    toast.add(doneToast(`Клиент «${name}» создан`, client.warning))
     emit('created', client.id)
-    if (sendBot.value && canSendTg.value) {
-      try {
-        await sendBotAccess(client.id)
-        toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' })
-      }
-      catch {
-        toast.add({ title: 'Клиент создан, но пароль не отправлен в Telegram', color: 'warning' })
-      }
+    if (form.bot && canSend.value) {
+      await sendBotAccess(client.id).then(
+        () => toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' }),
+        () => toast.add({ title: 'Клиент создан, но пароль не отправлен в Telegram', color: 'warning' }))
     }
   }
   catch (e) {
@@ -79,48 +36,41 @@ async function submit() {
 </script>
 
 <template>
-  <PanelModal v-model:open="open" class="clm" title="Новый клиент" closable ok="Создать" :ok-disabled="busy" @ok="submit">
-    <label class="fl2">
-      <span>Имя</span>
-      <input v-model="name" class="in" placeholder="Иван Иванов" @keydown.enter="submit">
-    </label>
+  <Dlg v-model:open="open" title="Новый клиент" ok="Создать" :busy="busy" @ok="submit">
+    <label class="fl2"><span>Имя</span><input v-model="form.name" class="in" placeholder="Иван Иванов" @keydown.enter="submit"></label>
     <label class="fl2">
       <span>Срок действия</span>
       <input
-        :value="expires"
-        class="in"
-        placeholder="ДД.ММ.ГГГГ"
-        inputmode="numeric"
-        maxlength="10"
-        @input="onExpiresInput"
-        @keydown.enter="submit">
-      <small class="sub2" style="margin:0">пусто = бессрочно</small>
+        v-model="form.expires" class="in" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" maxlength="10"
+        @input="form.expires = maskRuDate(form.expires)" @keydown.enter="submit">
+      <small class="sub2">пусто = бессрочно</small>
     </label>
     <div class="fl2">
       <span>Лимит девайсов</span>
-      <div class="arow" style="margin:0">
-        <input v-model="limit" class="in" type="number" min="1" style="width:120px" aria-label="Лимит девайсов" :disabled="unlimited">
+      <div class="flex items-center gap-2">
+        <input v-model="form.limit" class="in w-[120px]!" type="number" min="1" aria-label="Лимит девайсов" :disabled="form.unlimited">
         <button
-          type="button"
-          class="pill"
-          :class="{ on: unlimited }"
-          title="Безлимитно"
-          aria-label="Безлимитно"
-          :aria-pressed="unlimited"
-          @click="unlimited = !unlimited">
+          type="button" class="pill" :class="{ on: form.unlimited }" title="Безлимитно" aria-label="Безлимитно" :aria-pressed="form.unlimited"
+          @click="form.unlimited = !form.unlimited">
           ∞
         </button>
       </div>
     </div>
-    <div class="crw" style="margin-top:18px">
+    <div class="crw mt-4">
       <span>Фильтровать трафик (AdGuard)</span>
-      <ToggleSwitch :on="filterTraffic" label="Фильтровать трафик (AdGuard)" @click="filterTraffic = !filterTraffic" />
+      <button type="button" role="switch" class="tog" :class="{ on: form.filter }" :aria-checked="form.filter" aria-label="Фильтровать трафик (AdGuard)" @click="form.filter = !form.filter">
+        <i />
+      </button>
     </div>
     <div class="crw">
       <span>Отправить доступ к боту</span>
-      <span :title="canSendTg ? undefined : tgReason">
-        <ToggleSwitch :on="sendBot && canSendTg" label="Отправить доступ к боту" :disabled="!canSendTg" @click="sendBot = !sendBot" />
+      <span :title="tgReason || undefined">
+        <button
+          type="button" role="switch" class="tog" :class="{ on: form.bot && canSend }" :aria-checked="form.bot && canSend" aria-label="Отправить доступ к боту"
+          :disabled="!canSend" @click="form.bot = !form.bot">
+          <i />
+        </button>
       </span>
     </div>
-  </PanelModal>
+  </Dlg>
 </template>

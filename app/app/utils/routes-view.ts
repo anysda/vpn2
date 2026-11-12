@@ -1,5 +1,6 @@
-import type { Outbound } from '~/composables/useRoutes'
 import { parseOutbound } from '#shared/outbounds'
+
+export interface Outbound { name: string, type: string, delay: number | null, isWarp: boolean, isDirectRu: boolean }
 
 export interface Cell {
   outbound: string

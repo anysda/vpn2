@@ -1,278 +1,124 @@
 <script setup lang="ts">
 import '~/assets/css/clients.css'
 import { plural } from '#shared/plural'
+import { parseOutbound } from '#shared/outbounds'
 import type { Client, ClientTraffic } from '~/composables/useClients'
-import { accessProtocols } from '#shared/access-operation'
-import type { AccessOperation } from '#shared/access-operation'
-import type { Filter } from '~/components/Clients/FilterTabs.vue'
-import { expiringInDays, inDaysRu, initials } from '~/utils/clients-view'
-import { expiryLabelLocal, sizeBinRu } from '~/utils/format'
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
-
-const { clients: fetched, refresh: refreshClients, status: clientsStatus, error: clientsError } = useClients()
-// Удалённые клиенты, которых ещё может вернуть ответ списка, начатый до удаления:
-// их не показывать и не выбирать снова, иначе карточка запросит удалённого и получит 404.
-const removed = ref<number[]>([])
-const clients = computed(() => fetched.value.filter(c => !removed.value.includes(c.id)))
-watch(fetched, (list) => {
-  if (removed.value.some(id => !list.some(c => c.id === id))) removed.value = removed.value.filter(id => list.some(c => c.id === id))
-})
-const exitTags = useExitTags()
-
-const { data: trafficMap, refresh: refreshTraffic } = useFetch<Record<number, ClientTraffic>>('/api/clients/traffic', {
-  default: () => ({}),
-  server: false,
-})
-useEvery(refreshTraffic, 3000)
-useVisibleRefresh(refreshTraffic)
-
-// Список грузится только в браузере. До первого ответа «Пока нет клиентов» и
-// «0 клиентов» были бы неправдой; опрос потом пустоту уже не прячет. Флаг -
-// на каждое открытие страницы: до ответа в списке лежит прошлый визит. sync:
-// наблюдатель списка ниже видит флаг уже в том же такте, что и первый список.
-const listed = ref(false)
-// Причина сбоя держится до удачного ответа, а не мигает на каждом повторе:
-// до первого списка - вместо него, после - над прежним списком.
-const loadError = ref('')
-type FetchFail = { message?: string, name?: string, response?: { status?: number }, cause?: FetchFail }
-/**
- * Причина сбоя словами панели, без английского текста сервера. useFetch кладёт
- * ошибку ofetch в cause: с ответом - код, без ответа - таймаут или нет связи.
- */
-function failReason(err: unknown) {
-  const e = err as FetchFail | undefined
-  const code = (e?.response ?? e?.cause?.response)?.status
-  if (code) return `ошибка сервера (код ${code})`
-  const text = [e, e?.cause, e?.cause?.cause].map(x => `${x?.name ?? ''} ${x?.message ?? ''}`).join(' ')
-  return /timeout|timed out/i.test(text) ? 'сервер не ответил вовремя' : 'нет связи с сервером'
-}
-watch(clientsStatus, (s) => {
-  if (s === 'success') {
-    listed.value = true
-    loadError.value = ''
-  }
-  else if (s === 'error') {
-    loadError.value = failReason(clientsError.value)
-  }
-}, { flush: 'sync' })
-
-const subtitle = computed(() => {
-  if (!listed.value) return ''
-  const n = clients.value.length
-  const d = clients.value.reduce((sum, c) => sum + c.deviceCount, 0)
-  return `${n} ${plural(n, 'client')} · ${d} ${plural(d, 'device')}`
-})
 definePageMeta({ title: 'Клиенты и ключи' })
-usePageSub(subtitle)
 
 const route = useRoute()
 const router = useRouter()
+const mobile = useMobile()
+const { clients: fetched, refresh, status, error } = useClients()
+// Удалённые, которых ещё может вернуть ответ списка, начатый до удаления.
+const removed = ref<number[]>([])
+const clients = computed(() => fetched.value.filter(c => !removed.value.includes(c.id)))
 
-// Фильтр живёт в адресе (?f=exp|frz), кнопки - ссылки: клик до гидратации - обычный
-// переход, и сервер отдаёт страницу уже с фильтром. Смена фильтра историю не плодит.
-const filterQuery = (f: Filter) => ({ ...route.query, f: f === 'all' ? undefined : f })
-const filter = computed<Filter>({
-  get: () => {
-    const f = route.query.f
-    return f === 'exp' || f === 'frz' ? f : 'all'
-  },
-  set: (f) => { void router.replace({ query: filterQuery(f) }) },
+const { data: traffic, refresh: refreshTraffic } = useFetch<Record<number, ClientTraffic>>('/api/clients/traffic', { default: () => ({}), server: false })
+usePoll(refreshTraffic, 3000)
+const { data: outbounds } = useFetch<{ name: string }[]>('/api/routes/outbounds', { default: () => [], server: false })
+const exits = computed(() => [...new Set(outbounds.value.map(o => parseOutbound(o.name))
+  .filter(p => p?.variant === 'direct' && p.tag !== 'ru').map(p => p!.tag))].sort())
+
+// До первого ответа на этом открытии «Пока нет клиентов» и «0 клиентов» были бы неправдой.
+const listed = ref(false)
+const loadError = ref('')
+watch(status, (s) => {
+  if (s === 'success') [listed.value, loadError.value] = [true, '']
+  const code = (error.value as { statusCode?: number } | null)?.statusCode
+  if (s === 'error') loadError.value = code ? `ошибка сервера (код ${code})` : /timeout/i.test(String(error.value)) ? 'сервер не ответил вовремя' : 'нет связи с сервером'
+}, { flush: 'sync' })
+
+const subtitle = computed(() => {
+  const n = clients.value.length, d = clients.value.reduce((s, c) => s + c.deviceCount, 0)
+  return listed.value ? `${n} ${plural(n, 'client')} · ${d} ${plural(d, 'device')}` : ''
 })
+usePageSub(() => subtitle.value)
+
+type Filter = 'all' | 'exp' | 'frz'
+const FILTERS = [['all', 'Все'], ['exp', 'Истекают'], ['frz', 'Заморожены']] as const
+const filter = computed<Filter>(() => route.query.f === 'exp' || route.query.f === 'frz' ? route.query.f : 'all')
+const filterTo = (f: Filter) => ({ query: { ...route.query, f: f === 'all' ? undefined : f } })
 const search = ref('')
-
-const traffic = (id: number) => trafficMap.value?.[id] ?? null
+const t = (id: number) => traffic.value[id] ?? null
 const expiring = (c: Client) => expiringInDays(c.expiresAt, c.status)
-
 const counts = computed(() => ({
   all: clients.value.length,
   exp: clients.value.filter(c => expiring(c) !== null).length,
   frz: clients.value.filter(c => c.status === 'frozen').length,
 }))
 
-// Сверху — кто «в сети» (трафик за 5 мин), дальше по объёму за сутки, затем по имени.
-const sorted = computed(() => {
-  const day = (id: number) => (traffic(id)?.dayRx ?? 0) + (traffic(id)?.dayTx ?? 0)
-  return [...clients.value].sort((a, b) =>
-    Number(traffic(b.id)?.online ?? false) - Number(traffic(a.id)?.online ?? false)
-    || day(b.id) - day(a.id)
-    || a.name.localeCompare(b.name, 'ru'),
-  )
-})
-
-/** Клиент виден в списке при текущих фильтре и поиске. */
 function visible(c: Client) {
   const q = search.value.trim().toLowerCase()
-  return (filter.value === 'all' || (filter.value === 'exp' ? expiring(c) !== null : c.status === 'frozen'))
-    && (!q || `${c.name}${c.tgUsername ? `@${c.tgUsername}` : ''}`.toLowerCase().includes(q))
+  const inFilter = filter.value === 'all' || (filter.value === 'exp' ? expiring(c) !== null : c.status === 'frozen')
+  return inFilter && (!q || `${c.name}${c.tgUsername ? `@${c.tgUsername}` : ''}`.toLowerCase().includes(q))
 }
-const rows = computed(() => sorted.value.filter(visible))
-// Удаления, начатые здесь и ещё не подтверждённые: клиент -> операция.
-const deletions = new Map<number, string>()
-// Удаления, на которых экзит дал сбой: клиент снова можно открыть (статус и «Повторить»).
-const stalled = ref<number[]>([])
-/** Клиента можно выбрать вместо пропавшего: его удаление не идёт или сбилось. */
-const choosable = (c: Client) => !deletions.has(c.id) || stalled.value.includes(c.id)
-
-// Телефон: список и карточка клиента — два экрана. Открытый клиент — ?id= в
-// адресе и запись в истории: системный «назад» и «Назад» в шапке ведут к списку,
-// ссылка и обновление страницы открывают карточку.
-const mobile = useMobile()
-const screen = computed(() => (route.query.id ? 'client' : 'list'))
-watch(screen, () => { if (mobile.value) scrollTo(0, 0) })
-const stack = useBackStack()
-/** Адрес раздела с карточкой клиента `id` или без неё — список. */
-const urlOf = (id?: number) => {
-  const query = { ...route.query, id: id ? String(id) : undefined }
-  return router.resolve({ path: route.path, query }).fullPath
-}
-const toList = () => stack.leave(urlOf())
-
-// Выбранный клиент: из ссылки ?id= (топ на Обзоре), иначе первый в списке.
-const selectedId = ref<number | null>(Number(route.query.id) || null)
-watch(() => route.query.id, (id) => { if (Number(id)) selectedId.value = Number(id) })
-/**
- * Кого выбрать вместо пропавшего `id`: того, кто стоял под ним в прежнем списке
- * и остался в новом, а если ниже никого - того, кто стоял над ним.
- */
-function neighbor(id: number | null, before: readonly Client[], now: readonly Client[]) {
-  const at = before.findIndex(c => c.id === id)
-  const left = (c: Client) => now.some(n => n.id === c.id)
-  const near = at < 0 ? undefined : before.slice(at + 1).find(left) ?? before.slice(0, at).reverse().find(left)
-  return (near ?? now[0])?.id ?? null
-}
-// Выбор уходит с пропавшего клиента: удалён здесь (список без него мог прийти
-// раньше ответа на удаление), другим админом или впервые загружен список.
-watch(sorted, (list, before) => {
-  // До первого ответа на этом открытии ?id= из ссылки не сбрасывать: в списке
-  // пока прошлый визит, нового клиента в нём ещё нет.
-  if (!listed.value) return
-  if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
-  // Сосед - из того, что админ видит слева: скрытого поиском или фильтром не открывать,
-  // того, чьё удаление ещё идёт, - никогда: выбрать некого - справа пусто.
-  const free = list.filter(c => visible(c) && choosable(c))
-  selectedId.value = free.length ? neighbor(selectedId.value, (before ?? []).filter(visible), free) : null
-  // Открытый на телефоне клиент пропал из списка (удалён, в том числе последний, или
-  // ушёл из фильтра): карточка с ним уже снята, и её «удалён» до страницы не дойдёт.
-  if (mobile.value && screen.value === 'client') void toList()
-}, { immediate: true })
-
-const headerBack = useHeaderBack()
-watchEffect(() => {
-  headerBack.value = { path: route.path, to: mobile.value && screen.value === 'client' ? urlOf() : '' }
+// Сверху - кто в сети (трафик за 5 мин), дальше по объёму за сутки, затем по имени.
+const rows = computed(() => {
+  const day = (id: number) => (t(id)?.dayRx ?? 0) + (t(id)?.dayTx ?? 0)
+  return clients.value.filter(visible).sort((a, b) => Number(t(b.id)?.online ?? false) - Number(t(a.id)?.online ?? false)
+    || day(b.id) - day(a.id) || a.name.localeCompare(b.name, 'ru'))
 })
-onUnmounted(() => { headerBack.value = { path: '', to: '' } })
 
+// Выбранный клиент - ?id= в адресе (ссылка с Обзора, «назад» телефона), иначе первый в списке.
+const selectedId = ref<number | null>(Number(route.query.id) || null)
+watch(() => route.query.id, id => Number(id) && (selectedId.value = Number(id)))
+const screen = computed(() => route.query.id ? 'client' : 'list')
 function select(id: number) {
   selectedId.value = id
-  if (mobile.value) void stack.push(urlOf(id))
+  if (mobile.value) void router.push({ query: { ...route.query, id } })
 }
+// Пропавшего (удалён, скрыт поиском) сменяет тот, кто стоял на его месте.
+let lastIndex = 0
+watch(rows, (list) => {
+  const at = list.findIndex(c => c.id === selectedId.value)
+  if (at >= 0) lastIndex = at
+  if (!listed.value || at >= 0) return
+  selectedId.value = list[Math.min(lastIndex, list.length - 1)]?.id ?? null
+  if (mobile.value && screen.value === 'client') void router.replace({ query: { ...route.query, id: undefined } })
+})
 
 async function onCreated(id: number) {
-  await refreshClients()
-  // Новый клиент скрыт поиском или фильтром: сбросить их, чтобы строка была видна.
-  const created = clients.value.find(c => c.id === id)
-  if (created && !visible(created)) {
+  await refresh()
+  const c = clients.value.find(x => x.id === id)
+  if (c && !visible(c)) {
     search.value = ''
-    filter.value = 'all'
+    await router.replace(filterTo('all'))
   }
   selectedId.value = id
 }
-
-// Удаление здесь: соседа взять из видимого слева до DELETE. Пока удаление идёт,
-// список отдаёт удаляемого промежуточным статусом, он выпадает из фильтра, и
-// наблюдатель списка уже не нашёл бы его место. Выбор уходит, как только удаление
-// принято; ошибка DELETE оставляет выбор на клиенте.
-async function onDeleting(id: number, accepted: Promise<{ operation: AccessOperation }>) {
-  const before = rows.value
-  let operation: AccessOperation
-  try { ({ operation } = await accepted) }
-  catch { return }
-  deletions.set(id, operation.id)
-  if (selectedId.value !== id) return
-  wasOpen.add(id)
-  selectedId.value = neighbor(id, before, rows.value.filter(choosable))
-  if (mobile.value && screen.value === 'client') void toList()
+async function onGone(id: number) {
+  removed.value = [...removed.value, id]
+  await refresh()
 }
-
-// Удаляемые, открытые в момент удаления: при сбое удаления открыть снова, если справа пусто.
-const wasOpen = new Set<number>()
-function forget(id: number) {
-  deletions.delete(id)
-  wasOpen.delete(id)
-  stalled.value = stalled.value.filter(s => s !== id)
+function onDeleting(id: number) {
+  const list = rows.value.filter(c => c.id !== id)
+  selectedId.value = list[Math.min(lastIndex, list.length - 1)]?.id ?? null
+  if (mobile.value) void router.replace({ query: { ...route.query, id: undefined } })
 }
-
-// Карточка удаляемого уже закрыта: подтверждение удаления ждёт страница, чтобы
-// убрать клиента, даже если запоздалый список ещё несёт его, и замечает сбой,
-// чтобы снова дать открыть клиента с его статусом и «Повторить».
-async function checkDeletions() {
-  for (const [id, operationId] of deletions) {
-    if (!fetched.value.some(c => c.id === id)) {
-      forget(id)
-      continue
-    }
-    const operation = await $fetch<AccessOperation>(`/api/access-operations/${operationId}`).catch(() => null)
-    if (!operation) continue
-    if (operation.status === 'pending') {
-      const failed = accessProtocols.some(p => operation.protocols[p].state === 'failed')
-      if (failed === stalled.value.includes(id)) continue
-      stalled.value = failed ? [...stalled.value, id] : stalled.value.filter(s => s !== id)
-      if (failed && selectedId.value === null && wasOpen.has(id) && rows.value.some(c => c.id === id)) selectedId.value = id
-      continue
-    }
-    forget(id)
-    if (operation.status === 'confirmed') await onRemoved(id)
-  }
-}
-useEvery(checkDeletions, 3000)
-
-// Клиент удалён здесь или другим админом (карточка получила 404): убрать его
-// из списка, без тоста; соседа выберет наблюдатель списка выше.
-async function onRemoved(id: number) {
-  if (!removed.value.includes(id)) removed.value = [...removed.value, id]
-  await refreshClients()
-}
-
-// Строки списка появляются каскадом при смене фильтра или поиска.
-const rowsEl = ref<HTMLElement>()
-watch([filter, search], () => nextTick(() => {
-  ;[...(rowsEl.value?.querySelectorAll('.crow') ?? [])].slice(0, 12).forEach((r, i) =>
-    rise(r, { duration: 320, delay: i * 28 }))
-}))
 
 const newOpen = ref(false)
-
-/** Точка на аватаре: в сети, не в сети (янтарная у истекающего); у замороженного её нет. */
 function dot(c: Client) {
   if (c.status === 'frozen') return null
-  const t = traffic(c.id)
-  if (t?.online) return { cls: 'on', title: `В сети · за 5 мин ${sizeBinRu(t.recentBytes)}` }
-  return {
-    cls: '',
-    color: expiring(c) !== null ? 'var(--amber)' : 'var(--t4)',
-    title: 'Не в сети · за 5 мин нет трафика',
-  }
+  const tr = t(c.id)
+  if (tr?.online) return { cls: 'on', title: `В сети · за 5 мин ${sizeBinRu(tr.recentBytes)}` }
+  return { cls: '', color: expiring(c) !== null ? 'var(--amber)' : 'var(--t4)', title: 'Не в сети · за 5 мин нет трафика' }
 }
-
-/** Трафик клиента за сутки и за всё время. */
-function usage(c: Client) {
-  const t = traffic(c.id)
-  const [rx, tx] = [t?.dayRx ?? 0, t?.dayTx ?? 0]
+const usage = (c: Client) => {
+  const [rx, tx] = [t(c.id)?.dayRx ?? 0, t(c.id)?.dayTx ?? 0]
   return {
     day: sizeBinRu(rx + tx),
     split: rx + tx > 0 ? `↓ ${sizeBinRu(rx)} ↑ ${sizeBinRu(tx)}` : undefined,
-    total: sizeBinRu((t?.rxBytes ?? c.rxTotal) + (t?.txBytes ?? c.txTotal)),
+    total: sizeBinRu((t(c.id)?.rxBytes ?? c.rxTotal) + (t(c.id)?.txBytes ?? c.txTotal)),
   }
 }
 const exitText = (c: Client) => c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто'
-const tgText = (c: Client) => (c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram')
-/** Мета строки на телефоне: «3/3 · NL · @nick». */
-const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${exitText(c)} · ${tgText(c)}`
+const tgText = (c: Client) => c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram'
 </script>
 
 <template>
-  <main class="tab on clp" :class="mobile ? `m-${screen}` : undefined">
+  <main class="tab on clp" :class="`m-${screen}`">
     <div class="head">
       <div>
         <h1>Клиенты и ключи</h1>
@@ -289,7 +135,11 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${exi
       </div>
     </div>
 
-    <ClientsFilterTabs :filter="filter" :counts="counts" :to="f => ({ query: filterQuery(f) })" />
+    <div class="seg">
+      <NuxtLink v-for="[f, label] in FILTERS" :key="f" :to="filterTo(f)" replace role="button" :aria-pressed="filter === f" :class="{ on: filter === f }">
+        {{ label }} <b>{{ counts[f] }}</b>
+      </NuxtLink>
+    </div>
 
     <section class="cgrid">
       <div class="ccol">
@@ -297,35 +147,18 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${exi
           <div class="thead">
             <span>Клиент</span><span>Устройства</span><span>Сегодня</span><span>Выход</span><span>Доступ до</span>
           </div>
-          <div v-if="loadError && listed" role="alert" class="al red">
-            <b>Не удалось обновить список клиентов</b>
-            Пока показан список последней загрузки. {{ loadError }}
+          <div v-if="loadError" role="alert" class="al red">
+            <b>{{ listed ? 'Не удалось обновить список клиентов' : 'Не удалось загрузить клиентов' }}</b>
+            {{ listed ? `Пока показан список последней загрузки. ${loadError}` : loadError }}
           </div>
-          <div v-else-if="loadError" role="alert" class="al red">
-            <b>Не удалось загрузить клиентов</b>{{ loadError }}
-          </div>
-          <div ref="rowsEl" class="crows scroll">
+          <div class="crows scroll">
             <template v-if="listed">
-              <div v-if="!clients.length" class="more">
-                Пока нет клиентов
+              <div v-if="!rows.length" class="more">
+                {{ clients.length ? 'Ничего не найдено' : 'Пока нет клиентов' }}
               </div>
-              <div v-else-if="!rows.length" class="more">
-                Ничего не найдено
-              </div>
-              <!-- телефон: аватар, имя с метой, справа трафик за сутки над сроком (стилями) -->
               <div
-                v-for="c in rows"
-                v-else
-                :key="c.id"
-                class="crow"
-                :class="{ on: !mobile && c.id === selectedId }"
-                role="button"
-                tabindex="0"
-                :aria-pressed="c.id === selectedId"
-                data-testid="client-row"
-                @click="select(c.id)"
-                @keydown.enter.prevent="select(c.id)"
-                @keydown.space.prevent="select(c.id)">
+                v-for="c in rows" :key="c.id" class="crow" :class="{ on: !mobile && c.id === selectedId }" role="button" tabindex="0"
+                :aria-pressed="c.id === selectedId" data-testid="client-row" @click="select(c.id)" @keydown.enter.prevent="select(c.id)" @keydown.space.prevent="select(c.id)">
                 <div class="who">
                   <span class="av" :title="dot(c)?.title">
                     {{ initials(c.name) }}
@@ -334,14 +167,10 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${exi
                   <div>
                     <b>
                       <span>{{ c.name }}</span>
-                      <span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена">
-                        <svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg>
-                      </span>
-                      <span v-if="c.tgLinked" title="Привязан к Telegram">
-                        <svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg>
-                      </span>
+                      <svg v-if="c.filterTraffic" class="i bi2" viewBox="0 0 24 24"><title>Фильтрация рекламы и трекеров включена</title><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg>
+                      <svg v-if="c.tgLinked" class="i bi2" viewBox="0 0 24 24"><title>Привязан к Telegram</title><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg>
                     </b>
-                    <small>{{ mobile ? meta(c) : tgText(c) }}</small>
+                    <small>{{ mobile ? `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${exitText(c)} · ${tgText(c)}` : tgText(c) }}</small>
                   </div>
                 </div>
                 <span class="cdn">{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
@@ -360,14 +189,8 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${exi
       </div>
       <div class="card cdet lit" data-testid="client-detail">
         <ClientsDetail
-          v-if="selectedId !== null && (!mobile || screen === 'client')"
-          :client-id="selectedId"
-          :traffic="traffic(selectedId)"
-          :exits="exitTags"
-          @changed="refreshClients"
-          @deleting="onDeleting"
-          @deleted="onRemoved"
-          @gone="onRemoved" />
+          v-if="selectedId !== null && (!mobile || screen === 'client')" :client-id="selectedId" :traffic="t(selectedId)" :exits="exits"
+          @changed="refresh" @deleting="onDeleting" @gone="onGone" />
         <div v-else class="more">
           Выбери клиента в списке
         </div>

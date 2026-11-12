@@ -10,3 +10,7 @@ declare module 'nitropack/types' {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface InternalApi extends Routes {}
 }
+declare module '#app' {
+  /** Заголовок и постоянный подзаголовок раздела для шапки телефона. */
+  interface PageMeta { title?: string, sub?: string }
+}

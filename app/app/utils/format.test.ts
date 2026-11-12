@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
-  bytesToGbDec, ddmmLocal, dateRuLocal, expiryLabelLocal, formatRuDateUtc, gbDecNumRu, gbDecRound1, gbDecRu,
+  dateRuLocal, expiryLabelLocal, formatRuDateUtc, gbDecNumRu, gbDecRu,
   gibLatin, gibTotalLatin, hmsOrDdmmHmLocal, hourRangeRu, mskDayNumLabel, mskHourFromSec, mskWeekdayDateFromSec,
   pad2, parseRuDateUtc, sizeBinRu, timeOrDdmmMsk, todayYesterdayHmLocal, WD_MON,
 } from './format'
@@ -18,10 +18,6 @@ describe('объём', () => {
     const in_ = [null, undefined, 0, -2e9, 5e8, 1234567890, 1e10 - 1, 1e10, 12345678901, 1.5e12]
     expect(in_.map(gbDecRu)).toEqual(['—', '—', '0,0 ГБ', '-2,0 ГБ', '0,5 ГБ', '1,2 ГБ', '10,0 ГБ', '10 ГБ', '12 ГБ', '1 500 ГБ'])
     expect([0, 1e10 - 1, 1e10, 1.5e12].map(gbDecNumRu)).toEqual(['0,0', '10,0', '10', '1 500'])
-    expect(bytesToGbDec(2.5e9)).toBe(2.5)
-  })
-  it('gbDecRound1: ГБ до 0,1 числом', () => {
-    expect([0, 4e7, 5e7, 1e9, 1.26e9, 12345678901].map(gbDecRound1)).toEqual([0, 0, 0.1, 1, 1.3, 12.3])
   })
   it('gibLatin / gibTotalLatin: диск, база 1024, латиница', () => {
     expect([0, GIB, 10.4 * GIB, 10.6 * GIB].map(gibLatin)).toEqual(['0 GB', '1 GB', '10 GB', '11 GB'])
@@ -74,12 +70,11 @@ for (const tz of ['UTC', 'Europe/Moscow']) {
       expect([...in_, '2026-11-09T21:00:00.000Z'].map(u => todayYesterdayHmLocal(u, now())))
         .toEqual(['сегодня 00:00', 'вчера 23:59', 'вчера 00:00', '08.11 23:59', msk ? 'сегодня 00:00' : 'вчера 21:00'])
     })
-    it('hmsOrDdmmHmLocal / ddmmLocal / pad2', () => {
+    it('hmsOrDdmmHmLocal / pad2', () => {
       const today = new Date(2026, 10, 10, 12, 0).toDateString()
       const in_ = [new Date(2026, 10, 10, 0, 0, 5), new Date(2026, 10, 9, 23, 59, 59)].map(d => d.toISOString())
       expect([...in_, '2026-11-09T21:00:00.000Z'].map(t => hmsOrDdmmHmLocal(t, today)))
         .toEqual(['00:00:05', '09.11 23:59', msk ? '00:00:00' : '09.11 21:00'])
-      expect([new Date(2026, 0, 5), new Date(2026, 11, 31)].map(ddmmLocal)).toEqual(['05.01', '31.12'])
       expect([0, 7, 12].map(pad2)).toEqual(['00', '07', '12'])
     })
   })

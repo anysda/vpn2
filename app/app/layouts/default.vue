@@ -1,182 +1,87 @@
 <script setup lang="ts">
-
+const TABS = [
+  { path: '/', label: 'Обзор' },
+  { path: '/clients', label: 'Клиенты' },
+  { path: '/routes', label: 'Маршруты' },
+  { path: '/dns', label: 'DNS' },
+  { path: '/settings', label: 'Настройки' },
+]
 const { user, clear } = useAuthSession()
 const route = useRoute()
-const loggingOut = ref(false)
-const pop = useHeaderPop()
-// Телефон: заголовок раздела и период Обзора — в шапке, вкладки — в таб-баре снизу.
-const mobile = useMobile()
+const colorMode = useColorMode()
 const pageSub = usePageSub()
-const head = computed(() => ({
-  title: route.meta.title ?? '',
-  sub: pageSub.value.path === route.path ? pageSub.value.text : route.meta.sub,
-}))
-const period = useOverviewPeriod()
-const stack = useBackStack()
-// «Назад» экрана поверх раздела (карточка клиента) — первым в шапке, как на экране.
-const headerBack = useHeaderBack()
-const backTo = computed(() => (mobile.value && headerBack.value.path === route.path ? headerBack.value.to : ''))
+const period = useState<'day' | 'week'>('ov-period', () => 'day')
+const name = computed(() => user.value?.username ?? 'admin')
+const loggingOut = ref(false)
 
 async function logout() {
-  if (loggingOut.value) return
-  pop.value = null
   loggingOut.value = true
-  // Снять интервалы и отменить useFetch до удаления сессии: иначе запрос,
-  // начавшийся на главной, догоняет sign-out и получает ложный 401.
+  // Снять опросы страницы до удаления сессии, иначе запрос догоняет sign-out ложным 401.
   await nextTick()
-  try {
-    await $fetch('/api/auth/sign-out', { method: 'POST', body: {} })
-  }
-  finally {
-    clear()
-    // Сначала шаг назад закрытой шторки меню, иначе он вернёт со входа обратно.
-    await stack.idle()
-    // ?direct=1, а не просто /login: сессия в самом Authentik живёт дальше, и
-    // без этого авторедирект внёс бы обратно тем же кликом — «выйти» выглядело
-    // бы как «ничего не произошло».
-    await navigateTo('/login?direct=1')
-  }
+  await $fetch('/api/auth/sign-out', { method: 'POST', body: {} }).catch(() => {})
+  clear()
+  // ?direct=1: сессия в Authentik живёт дальше, авторедирект внёс бы обратно тем же кликом.
+  await navigateTo('/login?direct=1')
 }
 
-const name = computed(() => user.value?.username ?? 'admin')
-const initial = computed(() => name.value.charAt(0).toUpperCase())
-
-// Пункты меню профиля одни на ПК и в шторке телефона.
-const PROFILE_LINKS = [
-  { to: '/settings', label: 'Мой профиль' },
-]
-
-function toggleMenu() {
-  pop.value = pop.value === 'me' ? null : 'me'
-}
-
-// Скользящая пилюля под активной вкладкой, как в макете: в шапке и в таб-баре.
-const nav = ref<HTMLElement>()
-const glided = ref(false)
-const bar = ref<HTMLElement>()
-const barGlided = ref(false)
-function glide(jump = false) {
-  glided.value = placeGlide(nav.value, glided.value, jump)
-  barGlided.value = placeGlide(bar.value, barGlided.value, jump)
-}
-const onResize = () => glide(true)
-
-// Телефон: шапка и таб-бар фиксированы, и отступ контента идёт за настоящей
-// высотой шапки (подзаголовок, «Назад», вырез экрана), а не за константой.
-// --mh (шапка) и --mb (таб-бар) на корне: от них же отступ прокрутки к фокусу
-// и якорям (main.css), чтобы элемент не уходил под панель.
-const headEl = ref<HTMLElement>()
-const barEl = ref<HTMLElement>()
-let panelRo: ResizeObserver | undefined
-watch(() => route.path, () => nextTick(() => requestAnimationFrame(() => glide())))
-
-function onDocClick(e: MouseEvent) {
-  if (!(e.target as Element).closest?.('.pop, .bsh')) pop.value = null
-  else if ((e.target as Element).closest('a')) pop.value = null
-}
-function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') pop.value = null
-}
-onMounted(() => {
-  glide(true)
-  panelRo = new ResizeObserver((entries) => {
-    for (const e of entries) {
-      const name = e.target === headEl.value ? '--mh' : '--mb'
-      const h = e.borderBoxSize[0]?.blockSize
-      if (h) document.documentElement.style.setProperty(name, `${h}px`)
-      else document.documentElement.style.removeProperty(name)
-    }
-  })
-  for (const el of [headEl.value, barEl.value]) if (el) panelRo.observe(el, { box: 'border-box' })
-  void document.fonts?.ready.then(() => glide(true))
-  addEventListener('resize', onResize)
-  document.addEventListener('click', onDocClick)
-  document.addEventListener('keydown', onKey)
-})
-onUnmounted(() => {
-  panelRo?.disconnect()
-  document.documentElement.style.removeProperty('--mh')
-  document.documentElement.style.removeProperty('--mb')
-  removeEventListener('resize', onResize)
-  document.removeEventListener('click', onDocClick)
-  document.removeEventListener('keydown', onKey)
-})
+const THEMES = [['system', 'Как в системе'], ['light', 'Светлая'], ['dark', 'Тёмная']] as const
+const menu = computed(() => [
+  [{ label: 'Мой профиль', to: '/settings' }],
+  THEMES.map(([value, label]) => ({
+    label: `Тема: ${label.toLowerCase()}`,
+    type: 'checkbox' as const,
+    checked: colorMode.preference === value,
+    onSelect: () => { colorMode.preference = value },
+  })),
+  [{ label: 'Выйти', color: 'error' as const, onSelect: logout }],
+])
 </script>
 
 <template>
   <div v-if="!loggingOut">
     <div class="light" />
     <div class="wrap">
-      <header ref="headEl">
-        <button v-if="backTo" type="button" class="ib cbk" aria-label="Назад" @click="stack.leave(backTo)">
+      <header>
+        <NuxtLink v-if="route.path === '/clients' && route.query.id" to="/clients" class="ib cbk" aria-label="Назад">
           <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
-        </button>
+        </NuxtLink>
         <div class="logo">
           <span>anysda-vpn2</span>
         </div>
-        <div v-if="mobile" class="mhead">
-          <h1>{{ head.title }}</h1>
-          <p v-if="head.sub">
-            {{ head.sub }}
+        <div class="mhead">
+          <h1>{{ route.meta.title }}</h1>
+          <p v-if="pageSub || route.meta.sub">
+            {{ pageSub || route.meta.sub }}
           </p>
         </div>
-        <button v-if="mobile && route.path === '/'" type="button" class="pill mper" @click="period = period === 'day' ? 'week' : 'day'">
-          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4" /></svg>{{ period === 'day' ? 'Сутки' : 'Неделя' }}
+        <button v-if="route.path === '/'" type="button" class="pill mper" @click="period = period === 'day' ? 'week' : 'day'">
+          {{ period === 'day' ? 'Сутки' : 'Неделя' }}
         </button>
-        <nav ref="nav" class="tabs" :class="{ gl: glided }">
-          <NuxtLink
-            v-for="t in TAB_PAGES" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }"
-            :aria-current="route.path === t.path ? 'page' : undefined">
+        <nav class="tabs">
+          <NuxtLink v-for="t in TABS" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }">
             {{ t.label }}
           </NuxtLink>
-          <span class="glide now" aria-hidden="true" />
         </nav>
         <div class="hr">
-          <BotDeliveryStatus />
-          <div class="pw">
-            <button
-              type="button" class="me" :aria-expanded="pop === 'me'" aria-haspopup="menu" :aria-label="mobile ? `Меню @${name}` : undefined"
-              @click.stop="toggleMenu">
-              <i aria-hidden="true">{{ initial }}</i>
+          <BotBell />
+          <UDropdownMenu :items="menu" :content="{ align: 'end' }">
+            <button type="button" class="me" :aria-label="`Меню @${name}`">
+              <i aria-hidden="true">{{ name.charAt(0).toUpperCase() }}</i>
               <div>@{{ name }}</div>
-              <svg class="i cv" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" /></svg>
             </button>
-            <div class="card pop menu" :class="{ on: pop === 'me' }" role="menu" :aria-hidden="pop !== 'me'" :inert="pop !== 'me'">
-              <NuxtLink v-for="l in PROFILE_LINKS" :key="l.to" :to="l.to" role="menuitem">
-                {{ l.label }}
-              </NuxtLink>
-              <ThemeSwitch />
-              <hr>
-              <a class="out" role="menuitem" tabindex="0" @click="logout" @keydown.enter="logout">Выйти</a>
-            </div>
-          </div>
+          </UDropdownMenu>
         </div>
       </header>
       <slot />
-      <div ref="barEl" class="mbar">
-        <nav ref="bar" class="tabs" :class="{ gl: barGlided }" aria-label="Разделы">
-          <NuxtLink
-            v-for="t in TAB_PAGES" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }"
-            :aria-current="route.path === t.path ? 'page' : undefined">
+      <div class="mbar">
+        <nav class="tabs" aria-label="Разделы">
+          <NuxtLink v-for="t in TABS" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }">
             {{ t.label }}
           </NuxtLink>
-          <span class="glide now" aria-hidden="true" />
         </nav>
       </div>
-      <BottomSheet v-if="mobile" :open="pop === 'me'" label="Меню профиля" @close="pop = null">
-        <div class="bsu">
-          <i aria-hidden="true">{{ initial }}</i>@{{ name }}
-        </div>
-        <div class="menu" role="menu">
-          <NuxtLink v-for="l in PROFILE_LINKS" :key="l.to" :to="l.to" role="menuitem">
-            {{ l.label }}
-          </NuxtLink>
-          <ThemeSwitch />
-          <hr>
-          <a class="out" role="menuitem" tabindex="0" @click="logout" @keydown.enter="logout">Выйти</a>
-        </div>
-      </BottomSheet>
     </div>
+    <AskDialog />
   </div>
   <p v-else role="status" class="p-6">
     Выход…

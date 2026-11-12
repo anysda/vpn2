@@ -1,152 +1,70 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
 
-// Активность: недели столбцами, дни строками, как в GitHub. «Онлайн» —
-// клиентов в сети за сутки, «Трафик» — ГБ всех клиентов за сутки (МСК).
+// Недели столбцами, дни строками. «Онлайн» - клиентов в сети за сутки, «Трафик» - ГБ всех клиентов за сутки МСК.
 interface Day { day: number, online: number, bytes: number }
 const { data, refresh } = useFetch<{ today: number, days: Day[] }>('/api/ops/activity', { server: false })
-useEvery(refresh, 300_000)
+usePoll(refresh, 300_000)
 
-type Mode = 'on' | 'tr'
-const mode = ref<Mode>('on')
-const D = WD_MON
+const MODES = [{ value: 'on', label: 'Онлайн' }, { value: 'tr', label: 'Трафик' }] as const
 const MO = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
-// номер суток МСК → дата, читаемая через getUTC*
-const date = (day: number) => new Date(day * 864e5)
-const wd = (day: number) => (date(day).getUTCDay() + 6) % 7
-
-const byDay = computed(() => new Map((data.value?.days ?? []).map(d => [d.day, d])))
-const val = (day: number) => {
-  const d = byDay.value.get(day)
-  if (!d) return 0
-  return mode.value === 'on' ? d.online : gbDecRound1(d.bytes)
-}
-// оттенок — от сырого значения: день с десятками мегабайт не пустой, хотя пишется «0,0 ГБ»
-const raw = (day: number) => {
-  const d = byDay.value.get(day)
-  return d ? mode.value === 'on' ? d.online : d.bytes : 0
-}
 const SHADE = [0.05, 0.14, 0.28, 0.5, 0.9]
-// на телефоне всегда 14 недель: клетки делят ширину, как в макете
+const mode = ref<'on' | 'tr'>('on')
 const mobile = useMobile()
+const date = (day: number) => new Date(day * 864e5)
+const raw = (d?: Day) => d ? (mode.value === 'on' ? d.online : d.bytes) : 0
 
-// размер клетки — от ширины сетки, как в макете
-const grid = ref<HTMLElement>()
-const width = ref(0)
-let ro: ResizeObserver | undefined
-onMounted(() => {
-  ro = new ResizeObserver(([e]) => { width.value = Math.round(e!.contentRect.width) })
-  if (grid.value) ro.observe(grid.value)
-})
-onBeforeUnmount(() => ro?.disconnect())
+// Ступени по квартилям ненулевых дней; различимых значений не больше четырёх - каждому своя, наибольшее темнее всех.
+function scale(values: number[]) {
+  const s = values.filter(v => v > 0).sort((a, b) => a - b), u = [...new Set(s)]
+  if (u.length <= 4) return (v: number) => v > 0 ? (u.length === 1 ? 4 : 1 + Math.round(u.indexOf(v) * 3 / (u.length - 1))) : 0
+  const th = [1, 2, 3].map(k => s[Math.floor(k * s.length / 4)]!)
+  return (v: number) => v > 0 ? 1 + th.filter(t => v >= t).length : 0
+}
 
-const geo = computed(() => {
-  const W = width.value
-  if (W < 120 || !data.value) return null
-  const N = mobile.value ? 14 : Math.floor((W - 26) / 22), c = (W - 26) / N - 4
-  const today = data.value.today, start = today - wd(today) - 7 * (N - 1)
-  const cells: Array<{ w: number, d: number, day: number, v: number, a: number }> = []
-  for (let w = 0; w < N; w++) for (let d = 0; d < 7; d++) {
-    const day = start + w * 7 + d
-    if (day <= today) cells.push({ w, d, day, v: raw(day), a: 0 })
-  }
-  const step = activityScale(cells.map(x => x.v))
-  for (const x of cells) x.a = SHADE[step(x.v)]!
-  const months: Array<{ w: number, m: string }> = []
-  let lastM = -1
-  for (let w = 0; w < N; w++) {
+const grid = computed(() => {
+  if (!data.value) return null
+  const weeks = mobile.value ? 14 : 26, today = data.value.today
+  const byDay = new Map(data.value.days.map(d => [d.day, d]))
+  const start = today - (date(today).getUTCDay() + 6) % 7 - 7 * (weeks - 1)
+  const days = Array.from({ length: weeks * 7 }, (_, i) => start + i).filter(day => day <= today)
+  const step = scale(days.map(d => raw(byDay.get(d))))
+  const months: { w: number, m: string }[] = []
+  for (let w = 0, last = -1; w < weeks - 2; w++) {
     const t = date(start + w * 7)
-    if (t.getUTCMonth() !== lastM && w < N - 2) {
-      if (lastM >= 0 || t.getUTCDate() <= 7) months.push({ w, m: MO[t.getUTCMonth()]! })
-      lastM = t.getUTCMonth()
-    }
+    if (t.getUTCMonth() === last) continue
+    if (last >= 0 || t.getUTCDate() <= 7) months.push({ w, m: MO[t.getUTCMonth()]! })
+    last = t.getUTCMonth()
   }
-  const mx = Math.max(0, ...cells.map(x => x.v))
-  const pk = mx > 0 ? cells.find(x => x.v === mx)!.day : null
-  return { N, c, cells, months, pk }
+  const peak = days.reduce((p, d) => raw(byDay.get(d)) > raw(byDay.get(p)) ? d : p, today)
+  return { weeks, byDay, peak, months, cells: days.map((day, i) => ({ day, w: Math.floor(i / 7), d: i % 7, a: SHADE[step(raw(byDay.get(day)))]! })) }
 })
-
-// выбранный день: по умолчанию пик, наведение или тап переносит выбор
 const sel = ref<number | null>(null)
-const selDay = computed(() => {
-  const g = geo.value
-  if (!g) return null
-  return sel.value != null && g.cells.some(x => x.day === sel.value) ? sel.value : g.pk ?? data.value!.today
-})
 const read = computed(() => {
-  const day = selDay.value
-  if (day == null) return null
-  const v = val(day)
-  return {
-    when: mskDayNumLabel(day),
-    v: mode.value === 'on' ? String(v) : ru(v, 1),
-    unit: mode.value === 'on' ? `${plural(v, 'client')} в сети` : 'ГБ',
-  }
+  const g = grid.value
+  if (!g) return null
+  const day = sel.value ?? g.peak, d = g.byDay.get(day)
+  if (mode.value === 'on') return { when: mskDayNumLabel(day), v: d?.online ?? 0, unit: `${plural(d?.online ?? 0, 'client')} в сети` }
+  return { when: mskDayNumLabel(day), v: ru((d?.bytes ?? 0) / 1e9, 1), unit: 'ГБ' }
 })
-
-// сетка накатывает неделями, слева направо: в сцене пробуждения и при смене режима
-const wake = useWake()
-function ripple(delay = 0) {
-  grid.value?.querySelectorAll<HTMLElement>(':scope>i').forEach((c) => {
-    const w = Number.parseInt(c.style.gridColumn) || 0
-    anim(c, [{ opacity: 0, transform: 'scale(.55)' }, { opacity: 1, transform: 'none' }], { duration: 380, delay: delay + Math.min(w * 16, 620) })
-  })
-}
-let rippled = false
-watch(geo, (g) => {
-  if (rippled || !g) return
-  rippled = true
-  if (wake.on) nextTick(() => ripple(wake.at(900)))
-}, { immediate: true })
-
-// пилюля сегмента скользит к выбранной кнопке
-const seg = ref<HTMLElement>()
-const glided = ref(false)
-function moveGlide(jump: boolean) {
-  if (placeGlide(seg.value, glided.value, jump)) glided.value = true
-}
-const onResize = () => moveGlide(true)
-onMounted(() => {
-  requestAnimationFrame(() => moveGlide(true))
-  void document.fonts?.ready.then(() => moveGlide(true))
-  addEventListener('resize', onResize)
-})
-onBeforeUnmount(() => removeEventListener('resize', onResize))
-
-function pick(m: Mode) {
-  if (m === mode.value) return
-  mode.value = m
-  nextTick(() => {
-    requestAnimationFrame(() => moveGlide(false))
-    ripple()
-  })
-}
 </script>
 
 <template>
-  <div class="card act ov-activity">
+  <div class="card flex flex-col">
     <div class="fhead">
       <h3>Активность</h3>
-      <div ref="seg" class="seg sm" :class="{ gl: glided }" role="group" aria-label="Что показывать">
-        <button type="button" :class="{ on: mode === 'on' }" :aria-pressed="mode === 'on'" @click="pick('on')">Онлайн</button>
-        <button type="button" :class="{ on: mode === 'tr' }" :aria-pressed="mode === 'tr'" @click="pick('tr')">Трафик</button>
-        <span class="glide now" />
-      </div>
+      <Seg v-model="mode" :options="MODES" small />
     </div>
-    <div
-      ref="grid" class="agrid"
-      :style="geo ? { gridTemplateColumns: `22px repeat(${geo.N},${geo.c}px)`, gridTemplateRows: `14px repeat(7,${geo.c}px)` } : undefined">
-      <template v-if="geo">
-        <span v-for="d in [0, 2, 4]" :key="`d${d}`" class="hd" :style="{ gridRow: d + 2, gridColumn: 1 }">{{ D[d] }}</span>
-        <span v-for="m in geo.months" :key="`m${m.w}`" class="hh" :style="{ gridRow: 1, gridColumn: `${m.w + 2}/span 4` }">{{ m.m }}</span>
-        <i
-          v-for="x in geo.cells" :key="x.day" :data-day="x.day" :class="{ pk: x.day === geo.pk, sel: x.day === selDay }"
-          :style="{ '--a': x.a, gridRow: x.d + 2, gridColumn: x.w + 2 }" @mouseenter="sel = x.day" @click="sel = x.day" />
-      </template>
+    <div v-if="grid" class="mt-3 grid items-center gap-1 text-[11px] text-(--t3)" :style="{ gridTemplateColumns: `22px repeat(${grid.weeks},minmax(0,1fr))` }">
+      <span v-for="m in grid.months" :key="`m${m.w}`" class="h-3.5 whitespace-nowrap" :style="{ gridRow: 1, gridColumn: `${m.w + 2}/span 4` }">{{ m.m }}</span>
+      <span v-for="d in [0, 2, 4]" :key="`d${d}`" :style="{ gridRow: d + 2, gridColumn: 1 }">{{ WD_MON[d] }}</span>
+      <i
+        v-for="c in grid.cells" :key="c.day" class="aspect-square cursor-pointer rounded" :class="{ 'ring-2 ring-(--acc)': c.day === (sel ?? grid.peak) }"
+        :style="{ background: `rgba(var(--fg),${c.a})`, gridRow: c.d + 2, gridColumn: c.w + 2 }" @mouseenter="sel = c.day" @click="sel = c.day" />
     </div>
-    <div class="afoot">
-      <div class="aleg"><span>меньше</span><i style="--a:.05" /><i style="--a:.14" /><i style="--a:.28" /><i style="--a:.5" /><i style="--a:.9" /><span>больше</span></div>
-      <span v-if="read" class="aread">{{ read.when }} · <b>{{ read.v }}</b> {{ read.unit }}</span>
+    <div class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2.5 text-xs text-(--t3)">
+      <span class="flex items-center gap-1">меньше<i v-for="a in SHADE" :key="a" class="size-2.5 rounded-[3px]" :style="{ background: `rgba(var(--fg),${a})` }" />больше</span>
+      <span v-if="read">{{ read.when }} · <b class="font-medium text-(--t1)">{{ read.v }}</b> {{ read.unit }}</span>
     </div>
   </div>
 </template>

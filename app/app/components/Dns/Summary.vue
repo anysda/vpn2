@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// Сводка DNS: цифры, график за сутки, серверы выше и частые — всё из API AdGuard.
 interface Summary {
   units: 'hours' | 'days'
   queries: number
@@ -19,93 +18,84 @@ interface Summary {
   blocks: Array<[string, number]>
 }
 
-const root = ref<HTMLElement>()
 const { data, error, refresh } = useFetch<Summary>('/api/dns/summary', { server: false, lazy: true })
-// Первые цифры приходят после показа раздела — тогда и лесенка карточек.
-watch(data, (v, old) => {
-  if (v && !old) void nextTick(() => cascade(root.value))
-})
-useEvery(refresh, 60_000)
-useVisibleRefresh(refresh)
+usePoll(refresh, 60_000)
 
-const dec = (v: number) => (Math.round(v * 10) / 10).toString().replace('.', ',')
-const ms = (v: number) => v < 10 ? dec(v) : String(Math.round(v))
+const ms = (v: number) => v < 10 ? ru(v, 1) : ru(v)
 const period = computed(() => data.value?.units === 'days' ? `за ${data.value.q.length} дн.` : 'за сутки')
 const upMax = computed(() => Math.max(1, ...(data.value?.upstreams ?? []).map(u => u.pct)))
-const lists = computed(() => data.value
-  ? [
-      { title: 'Частые клиенты', unit: 'запросов', rows: data.value.clients, red: false },
-      { title: 'Частые запросы', unit: 'раз', rows: data.value.domains, red: false },
-      { title: 'Частые блокировки', unit: 'раз', rows: data.value.blocks, red: true },
-    ]
-  : [])
+const cards = computed(() => {
+  const d = data.value!
+  return [
+    { title: 'Запросы DNS', big: ru(d.queries), tag: period.value, line: d.q },
+    { title: 'Заблокировано фильтрами', big: ru(d.blocked), tag: `${ru(d.blockedPct, 1)}%`, line: d.b, lit: true },
+    { title: 'Заблокировано угроз', big: ru(d.threats), tag: 'фишинг, вредонос', line: d.t, red: true },
+    { title: 'Время ответа', big: `${ms(d.avgMs)} мс`, tag: d.cachedPct === null ? '' : `${d.cachedPct}% из кэша`, line: d.ms },
+  ]
+})
+const lists = computed(() => [
+  { title: 'Частые клиенты', unit: 'запросов', rows: data.value!.clients },
+  { title: 'Частые запросы', unit: 'раз', rows: data.value!.domains },
+  { title: 'Частые блокировки', unit: 'раз', rows: data.value!.blocks, red: true },
+])
+// Подпись точки графика: час или день, считая от текущего.
+function when(i: number) {
+  const back = data.value!.q.length - 1 - i
+  if (data.value!.units === 'days') return new Date(Date.now() - back * 864e5).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+  return hourRangeRu((new Date().getHours() - back + 24 * 4) % 24)
+}
 </script>
 
 <template>
-  <div ref="root">
+  <div>
     <div v-if="error && !data" class="card">
-      <h3>{{ (error.data as { message?: string } | undefined)?.message ?? error.statusMessage ?? 'AdGuard недоступен' }}</h3>
+      <h3>{{ errText(error, 'AdGuard недоступен') }}</h3>
     </div>
     <template v-else-if="data">
-      <div class="dk">
-        <div class="card">
-          <h3>Запросы DNS</h3>
-          <div class="nums">
-            <span class="big">{{ ru(data.queries) }}</span><span class="tag">{{ period }}</span>
+      <div class="grid gap-3 md:grid-cols-4">
+        <div v-for="c in cards" :key="c.title" class="card" :class="{ lit: c.lit }">
+          <h3>{{ c.title }}</h3>
+          <div class="my-3 flex items-end justify-between gap-2">
+            <span class="big">{{ c.big }}</span><span v-if="c.tag" class="tag" :class="{ badt: c.red }">{{ c.tag }}</span>
           </div>
-          <DnsSpark :data="data.q" />
-        </div>
-        <div class="card lit">
-          <h3>Заблокировано фильтрами</h3>
-          <div class="nums">
-            <span class="big">{{ ru(data.blocked) }}</span><span class="tag">{{ dec(data.blockedPct) }}%</span>
-          </div>
-          <DnsSpark :data="data.b" />
-        </div>
-        <div class="card">
-          <h3>Заблокировано угроз</h3>
-          <div class="nums">
-            <span class="big">{{ ru(data.threats) }}</span><span class="tag badt">фишинг, вредонос</span>
-          </div>
-          <DnsSpark :data="data.t" col="var(--red-t)" />
-        </div>
-        <div class="card">
-          <h3>Время ответа</h3>
-          <div class="nums">
-            <span class="big">{{ ms(data.avgMs) }}<small>мс</small></span>
-            <span v-if="data.cachedPct !== null" class="tag">{{ data.cachedPct }}% из кэша</span>
-          </div>
-          <DnsSpark :data="data.ms.length ? data.ms : [0, 0]" />
+          <Chart :data="c.line.length > 1 ? c.line : [0, 0]" :h="40" :col="c.red ? 'var(--red-t)' : undefined" />
         </div>
       </div>
-      <div class="d2">
-        <DnsQChart :q="data.q" :b="data.b" :units="data.units" />
-        <div class="card ups">
+      <div class="mt-3 grid gap-3 md:grid-cols-[2fr_1fr]">
+        <div class="card">
+          <div class="fhead">
+            <h3>{{ data.units === 'hours' ? 'Запросы за сутки' : `Запросы за ${data.q.length} дн.` }}</h3>
+            <span class="text-xs text-(--t3)"><span class="dot bg-(--acc)" /> Все запросы · <span class="dot bg-(--red)" /> Заблокированные</span>
+          </div>
+          <Chart :data="data.q" :extra="data.b" :h="200" :tip="i => `${ru(data!.q[i] ?? 0)} запросов · ${ru(data!.b[i] ?? 0)} заблок. · ${when(i)}`" />
+        </div>
+        <div class="card">
           <div class="fhead">
             <h3>Серверы выше</h3><span class="tag">{{ data.mode }}</span>
           </div>
-          <div class="upl">
-            <div v-for="u in data.upstreams" :key="u.url" class="up">
-              <div class="u1">
-                <b class="mono">{{ u.url }}</b><span>{{ u.pct }}%</span><em>{{ ms(u.ms) }}<small style="font-size:11px;color:var(--t3)"> мс</small></em>
-              </div>
-              <div class="bar">
-                <i :style="{ width: `${u.pct / upMax * 92}%` }" />
-              </div>
+          <div v-for="u in data.upstreams" :key="u.url" class="mt-3 text-sm">
+            <div class="flex gap-2">
+              <b class="mono min-w-0 flex-1 truncate font-normal">{{ u.url }}</b><span>{{ u.pct }}%</span><em class="not-italic text-(--t2)">{{ ms(u.ms) }} мс</em>
+            </div>
+            <div class="mt-1 h-1 rounded bg-(--line)">
+              <i class="block h-full rounded bg-(--acc)" :style="{ width: `${u.pct / upMax * 92}%` }" />
             </div>
           </div>
         </div>
       </div>
-      <div class="d3">
-        <div v-for="l in lists" :key="l.title" class="card tl">
+      <div class="mt-3 grid gap-3 md:grid-cols-3">
+        <div v-for="l in lists" :key="l.title" class="card">
           <div class="fhead">
             <h3>{{ l.title }}</h3><span class="tag">{{ l.unit }}</span>
           </div>
-          <ul :class="{ red: l.red }">
-            <li v-for="[name, c] in l.rows" :key="name">
-              <span>{{ name }}</span><b>{{ ru(c) }}</b><span class="tb"><i :style="{ width: `${c / (l.rows[0]?.[1] || 1) * 100}%` }" /></span>
-            </li>
-          </ul>
+          <div v-for="[name, c] in l.rows" :key="name" class="mt-2 text-sm">
+            <div class="flex gap-2">
+              <span class="min-w-0 flex-1 truncate">{{ name }}</span><b class="font-medium">{{ ru(c) }}</b>
+            </div>
+            <div class="mt-1 h-1 rounded bg-(--line)">
+              <i class="block h-full rounded" :class="l.red ? 'bg-(--red)' : 'bg-(--g2)'" :style="{ width: `${c / (l.rows[0]?.[1] || 1) * 100}%` }" />
+            </div>
+          </div>
         </div>
       </div>
     </template>

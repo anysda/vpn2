@@ -187,20 +187,10 @@ def render_interface(addresses, port, private, *, note=None):
         f'[Interface]\nAddress = {", ".join(addresses)}\nListenPort = {port}\nPrivateKey = {private}\n'
 
 
-def render_peers(peers, *, omit_empty=False):
-    """Пиры [{key, preshared_key, allowed}]: каждый с пустой строки перед [Peer].
-
-    omit_empty=False (панель) пишет PresharedKey и AllowedIPs всегда; True (проверка
-    трафика) опускает пустые: пустое значение wg отвергает.
-    """
-    out = ''
-    for peer in peers:
-        out += f'\n[Peer]\nPublicKey = {peer["key"]}\n'
-        if peer['preshared_key'] or not omit_empty:
-            out += f'PresharedKey = {peer["preshared_key"]}\n'
-        if peer['allowed'] or not omit_empty:
-            out += f'AllowedIPs = {", ".join(peer["allowed"])}\n'
-    return out
+def render_peers(peers):
+    """Пиры [{key, preshared_key, allowed}]: каждый с пустой строки перед [Peer], все три ключа всегда."""
+    return ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\nPresharedKey = {peer["preshared_key"]}\n'
+                   f'AllowedIPs = {", ".join(peer["allowed"])}\n' for peer in peers)
 
 
 def peer_addresses(ip):

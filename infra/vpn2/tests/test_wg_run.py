@@ -88,13 +88,12 @@ def test_render_interface_bytes():
         f'[Interface]\nAddress = 192.0.2.1/24\nListenPort = 1\nPrivateKey = {S}\n')
 
 
-def test_render_peers_panel_and_check_forms():
+def test_render_peers():
     peers = [{'key': A, 'preshared_key': C, 'allowed': ['192.0.2.2/32', 'fd66:66::2/128']},
              {'key': B, 'preshared_key': '', 'allowed': []}]
     full = f'\n[Peer]\nPublicKey = {A}\nPresharedKey = {C}\nAllowedIPs = 192.0.2.2/32, fd66:66::2/128\n'
     assert wg.render_peers(peers) == full + f'\n[Peer]\nPublicKey = {B}\nPresharedKey = \nAllowedIPs = \n'
-    assert wg.render_peers(peers, omit_empty=True) == full + f'\n[Peer]\nPublicKey = {B}\n'
-    assert wg.render_peers([]) == '' == wg.render_peers([], omit_empty=True)
+    assert wg.render_peers([]) == ''
 
 
 @pytest.mark.parametrize(('ip', 'expected'), [

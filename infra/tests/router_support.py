@@ -87,9 +87,15 @@ def exit_cert():
 def generate(**overrides):
     result = run_generator(**overrides)
     if result.returncode:
-        raise subprocess.CalledProcessError(result.returncode, result.args,
-                                            result.stdout, result.stderr)
+        raise GeneratorError(result.returncode, result.args, result.stdout, result.stderr)
     return result.stdout
+
+
+class GeneratorError(subprocess.CalledProcessError):
+    """Отказ генератора с выводом ansible-playbook в тексте ошибки."""
+
+    def __str__(self):
+        return f'{super().__str__()}\n{self.stderr}'
 
 
 def run_generator(**overrides):

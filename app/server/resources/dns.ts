@@ -66,16 +66,10 @@ const upstreamList = (text: string) => {
 
 /** Как применить каждую настройку DNS в AdGuard; значение уже проверено схемой `Setting`. */
 const APPLY: Record<string, (value: never, cur: State) => Promise<unknown>> = {
-  upstreams: async (text: string) => {
-    try {
-      await dnsConfig({ upstream_dns: upstreamList(text) })
-    }
-    catch (e) {
-      const x = e as { statusMessage?: string, message?: string }
-      if (x.statusMessage !== 'agh_rejected') throw e
-      throw badSetting(upstreamError(x.message ?? ''))
-    }
-  },
+  upstreams: (text: string) => dnsConfig({ upstream_dns: upstreamList(text) }).catch((e: { statusMessage?: string, message?: string }) => {
+    if (e.statusMessage !== 'agh_rejected') throw e
+    throw badSetting(upstreamError(e.message ?? ''))
+  }),
   mode: (mode: string) => dnsConfig({ upstream_mode: mode }),
   bootstrap: (text: string) => {
     const r = parseBootstrap(text)
@@ -285,10 +279,7 @@ export default {
     if (unknown) throw createError({ statusCode: 422, statusMessage: 'unknown_service', message: `Сервиса «${unknown}» нет в AdGuard` })
     await put('blocked_services/update', { ids, schedule: (await blockedServices()).schedule })
     const now = (await blockedServices()).ids ?? []
-    if (now.length !== ids.length || ids.some(id => !now.includes(id))) {
-      throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: 'AdGuard не применил изменение: блокировка сервисов' })
-    }
-    return { blocked: now }
+    return { blocked: await confirmAgh(now, n => n.length === ids.length && ids.every(id => n.includes(id)), 'блокировка сервисов') }
   }),
 
   'GET /dns/settings': admin(async () => settingsView(await settingsState())),

@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # Статика страницы аварийки из образа. Реестр нужен только здесь; остановленный
 # контейнер держит образ занятым и показывает версию в `docker ps -a`.
-# Аргументы: каталог библиотек деплоя, каталог аварийки. Печатает image=<образ>
-# и changed=1, если статика на узле сменилась.
+# Аргумент: каталог аварийки. Печатает image=<образ> и changed=1, если статика на узле сменилась.
 set -euo pipefail
-lib=${1:?каталог библиотек}
-home=${2:?каталог аварийки}
+home=${1:?каталог аварийки}
 venv=${VPN2_VENV:-/opt/vpn2/venv}
 container=vpn2-emergency
-# shellcheck source=infra/ansible/roles/emergency/files/release.sh
-source "$lib/release.sh"
-# Пакет выпуска на узле лежит в venv, копии рядом с библиотекой нет.
-release_py() { "$venv/bin/python" -m vpn2.release "$@"; }
 
-image=$(release_image emergency "${EMERGENCY_IMAGE:-}" "${EMERGENCY_IMAGE_PULL:-true}")
+image=$("$venv/bin/python" - "${EMERGENCY_IMAGE:-}" "${EMERGENCY_IMAGE_PULL:-true}" <<'PY'
+import os, sys
+from vpn2.containers import engine
+from vpn2.release import ReleaseError
+try:
+    print(engine.release_image(os.environ, 'emergency', sys.argv[1], sys.argv[2] != 'false'))
+except (engine.EngineError, ReleaseError, OSError, ValueError, KeyError) as error:
+    sys.exit(f'release: emergency: {error}; no unverified artifact accepted')
+PY
+)
 printf 'image=%s\n' "$image"
 id=$(docker image inspect --format '{{.Id}}' "$image")
 held=$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)
@@ -28,9 +31,7 @@ docker create --name "$container" --network none "$image" >/dev/null
 staging=$(mktemp -d "$home/.staging.XXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
 docker cp "$container:/opt/vpn2-emergency/." "$staging/"
-# Образ, собранный до переноса агента в venv, держит статику внутри пакета.
 static=$staging/static
-[[ -d "$static" ]] || static=$staging/vpn2/emergency/static
 for required in index.html instructions.html; do
   [[ -f "$static/$required" ]] || {
     echo "ERROR: в образе аварийки $image нет статики страницы ($required)" >&2
@@ -50,8 +51,7 @@ release = json.load(open(sys.argv[1]))
 print(json.dumps({'version': release['version'], 'revision': release['revision'], 'image': sys.argv[2]}))
 PY
 install -m 0644 "$staging/release.json" "$home/release.json"
-# На узле остаётся ровно установленный образ. Прежний потерял тег при новом
-# pull, а образы без тега видны только с --all.
+# На узле остаётся ровно установленный образ; прежний без тега виден только с --all.
 while read -r old; do
   [[ "$old" == "$image" ]] || docker image rm -f "$old" >/dev/null
 done < <(docker images --all --quiet --no-trunc --filter label=vpn2.component=emergency | sort -u)

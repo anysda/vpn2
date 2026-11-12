@@ -153,8 +153,10 @@ class EmergencyImageTests(unittest.TestCase):
         (fake / 'bin').mkdir()
         (fake / 'bin/docker').write_text(DOCKER)
         (fake / 'bin/docker').chmod(0o755)
-        (fake / 'lib').mkdir()
-        shutil.copy(ROOT / 'infra/ansible/roles/emergency/files/release.sh', fake / 'lib')
+        (fake / 'venv/bin').mkdir(parents=True)
+        (fake / 'venv/bin/python').write_text(
+            f'#!/bin/sh\nPYTHONPATH={ROOT / "infra/vpn2/src"} exec {sys.executable} "$@"\n')
+        (fake / 'venv/bin/python').chmod(0o755)
         (fake / 'home').mkdir()
         (fake / 'state.json').write_text(json.dumps({'registry': {}, 'images': {}, 'containers': {}}))
         return fake
@@ -172,10 +174,11 @@ class EmergencyImageTests(unittest.TestCase):
                 (layer / static / name).write_text(version)
             (layer / 'image.json').write_text(json.dumps({'version': 'dev', 'revision': version[:1] * 40}))
         env = {**os.environ, 'FAKE': str(fake), 'PATH': f"{fake / 'bin'}:{os.environ['PATH']}",
-               'VPN2_DEVELOPMENT': 'true', 'FAKE_OFFLINE': '1' if offline else '0'}
+               'VPN2_DEVELOPMENT': 'true', 'FAKE_OFFLINE': '1' if offline else '0',
+               'VPN2_VENV': str(fake / 'venv')}
         env.pop('BASH_ENV', None)
         (fake / 'calls.log').write_text('')
-        result = subprocess.run(['bash', str(ROLE / 'files/static.sh'), str(fake / 'lib'), str(fake / 'home')],
+        result = subprocess.run(['bash', str(ROLE / 'files/static.sh'), str(fake / 'home')],
                                 env=env, text=True, capture_output=True, timeout=60)
         result.calls = (fake / 'calls.log').read_text().splitlines()
         result.state = json.loads((fake / 'state.json').read_text())
@@ -219,16 +222,11 @@ class EmergencyImageTests(unittest.TestCase):
             self.assertEqual(third.stdout.splitlines(), ['image=sha256:' + '2' * 64])
             self.assertEqual(sorted(third.state['images']), ['sha256:' + '2' * 64])
 
-    def test_static_accepts_image_built_before_host_venv(self):
+    def test_image_without_static_keeps_installed_page(self):
         with tempfile.TemporaryDirectory(prefix='emergency-static-') as directory:
             fake = self.host(directory)
             home = fake / 'home'
-            # Между пушем в dev и сборкой образа :dev в реестре лежит образ со
-            # статикой внутри пакета: шаг берёт её и оттуда.
-            older = self.static(fake, image='sha256:' + '5' * 64, static='vpn2/emergency/static')
-            self.assertEqual(older.returncode, 0, older.stderr)
-            self.assertEqual((home / 'static/index.html').read_text(), '5' * 64)
-            self.assertFalse((home / 'vpn2').exists())
+            self.assertEqual(self.static(fake, image='sha256:' + '5' * 64).returncode, 0)
             broken = self.static(fake, image='sha256:' + '6' * 64, static='elsewhere')
             self.assertEqual(broken.returncode, 1, broken.stdout)
             self.assertIn('нет статики страницы', broken.stderr)

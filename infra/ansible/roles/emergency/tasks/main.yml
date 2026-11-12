@@ -9,13 +9,6 @@
     argv: ["{{ emergency_vpn2 }}", emergency, agent, --help]
   changed_when: false
 
-- name: Библиотека выпусков
-  ansible.builtin.copy:
-    src: "release.sh"
-    dest: "{{ emergency_tmp }}/"
-    mode: '0644'
-  changed_when: false
-
 - name: Наблюдатели слышат друг друга
   ansible.builtin.command:
     argv: [ufw, allow, proto, udp, from, "{{ item }}", to, any, port, "{{ emergency_node.port }}", comment, vpn2 emergency observer]
@@ -108,7 +101,7 @@
 
 - name: Статика страницы из образа
   ansible.builtin.script:
-    cmd: static.sh {{ emergency_tmp }} {{ emergency_home }}
+    cmd: static.sh {{ emergency_home }}
   environment: "{{ emergency_env }}"
   register: emergency_static
   changed_when: "'changed=1' in emergency_static.stdout"

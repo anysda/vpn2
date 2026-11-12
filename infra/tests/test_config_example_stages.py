@@ -2,13 +2,18 @@
 после его правки: строка «После изменений: стадия NN-имя на ...». Без неё
 человек меняет блок и не знает, что подхватит изменение. Блоки, которые
 ставятся при любом deploy, строки не требуют."""
+import inspect
 import re
+import sys
 import unittest
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2 import containers  # noqa: E402
+from vpn2.containers import compose  # noqa: E402
 EXAMPLE = ROOT / 'config.example.yaml'
 SITE = ROOT / 'infra' / 'ansible' / 'site.yml'
 ROLES = ROOT / 'infra' / 'ansible' / 'roles'
@@ -56,8 +61,12 @@ class ConfigExampleStagesTests(unittest.TestCase):
         self.lines = EXAMPLE.read_text(encoding='utf-8').splitlines()
         self.blocks = commented_blocks(self.lines)
         # Стадия -> имена ролей её плея.
+        plays = yaml.safe_load(SITE.read_text(encoding='utf-8'))
         self.stages = {play['tags'][0]: {role['role'] if isinstance(role, dict) else role for role in play['roles']}
-                       for play in yaml.safe_load(SITE.read_text(encoding='utf-8'))}
+                       for play in plays}
+        # Стадия -> служба роли containers (шаг пакета vpn2.containers).
+        self.services = {play['tags'][0]: role['containers_service'] for play in plays for role in play['roles']
+                         if isinstance(role, dict) and 'containers_service' in role}
 
     def test_parser_sees_commented_blocks(self):
         for key in ('alerts', 'failover', 'wireguard', 'telegram'):
@@ -86,6 +95,12 @@ class ConfigExampleStagesTests(unittest.TestCase):
         roles = {path.parent.parent.name for path in ROLES.glob('*/defaults/main.yml')
                  if alert.search(path.read_text(encoding='utf-8'))}
         writers = {stage for stage, named in self.stages.items() if roles & named}
+        # Службы entry пороги передаёт шаг пакета: функции compose, которые он зовёт.
+        for stage, service in self.services.items():
+            step = inspect.getsource(containers.STAGES[service])
+            called = re.findall(r'\bcompose\.(\w+)\(', step)
+            if any(alert.search(inspect.getsource(getattr(compose, name))) for name in called):
+                writers.add(stage)
         self.assertTrue(writers, 'ни одна стадия не пишет ALERT_*')
         _, chunk = self.blocks['alerts']
         named = {stage for line in chunk if AFTER in line for stage in STAGE.findall(line)}

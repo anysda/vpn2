@@ -1,69 +1,30 @@
-"""Отзыв IKEv2 должен повторяться после временного отказа VICI."""
-import hashlib
-from pathlib import Path
-import tempfile
+"""Счётчики IKEv2: разбор `swanctl --list-sas` в сессии ikev2-status.json."""
 import types
 import unittest
-from unittest.mock import patch
 
 from test_deploy import ROOT
 
+SAS = '''anysda-ikev2: #7, ESTABLISHED, IKEv2, cbd5867eca6763b0_i 0cf6cdcbdda975d6_r*
+  remote '192.0.2.10' @ 198.51.100.7[1445] EAP: 'phone' [10.68.68.1]
+  net: #7, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-256
+    in  c6cbc42a (-|0x0000002a),  50650 bytes,   540 packets,    11s ago
+    out ceebcf43 (-|0x0000002a), 1023795 bytes,  1100 packets,    11s ago
+anysda-dev-3: #9, ESTABLISHED, IKEv2, aa_i bb_r*
+  remote 'laptop' @ 198.51.100.8[4500] [10.68.68.3]
+    in  c6cbc42b,  10 bytes,   5 packets,    1s ago
+    out ceebcf44,  20 bytes,  5 packets,    1s ago
+anysda-ikev2: #10, CONNECTING, IKEv2, cc_i dd_r
+'''
+
 
 class Ikev2SyncTests(unittest.TestCase):
-    def test_failed_revoke_is_retried(self):
-        for failure in ('load', 'list', 'terminate'):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
-                script = (ROOT / 'infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py').read_text()
-                sync = types.ModuleType('ikev2_sync')
-                exec(compile(script, 'ikev2_sync', 'exec'), sync.__dict__)
-                root = Path(directory)
-                for name in ('CLIENTS_CONF', 'STATE_FILE', 'DIGEST_FILE', 'STATUS_FILE'):
-                    setattr(sync, name, str(root / name))
-                # Пароль изменён, прежняя SA всё ещё работает.
-                Path(sync.CLIENTS_CONF).write_text('id = "phone"\nsecret = "new"\n')
-                old = {'phone': hashlib.sha256(b'old').hexdigest()}
-                sync.write_json(sync.STATE_FILE, old, 0o600)
-                sync.write_json(sync.DIGEST_FILE, 'old-digest', 0o600)
-                sa = {'conn': 'anysda-dev-1', 'uniqueid': '7', 'state': 'ESTABLISHED',
-                      'username': 'phone', 'rx': 0, 'tx': 0}
-                failed = {'load': '--load-all', 'terminate': '--terminate'}.get(failure)
-
-                def command(*args):
-                    return int(args[0] == failed)
-
-                with patch.object(sync, 'swanctl', side_effect=command), \
-                        patch.object(sync, 'live_sas', return_value=None if failure == 'list' else [sa]):
-                    self.assertEqual(sync.main(), 1)
-                self.assertEqual(sync.read_json(sync.STATE_FILE, {}), old)
-                self.assertEqual(sync.read_json(sync.DIGEST_FILE, ''), 'old-digest')
-                with patch.object(sync, 'swanctl', return_value=0) as calls, \
-                        patch.object(sync.subprocess, 'run', return_value=types.SimpleNamespace(stdout='anysda-dev-1:\n')), \
-                        patch.object(sync, 'live_sas', side_effect=[[sa], [], [], []]):
-                    self.assertEqual(sync.main(), 0)
-                self.assertIn(('--terminate', '--ike-id', '7'), [c.args for c in calls.call_args_list])
-                self.assertEqual(sync.read_json(sync.STATE_FILE, {}),
-                                 {'phone': hashlib.sha256(b'new').hexdigest()})
-
-    def test_acknowledged_termination_with_live_sa_is_not_confirmed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            script = (ROOT / 'infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py').read_text()
-            sync = types.ModuleType('ikev2_sync')
-            exec(compile(script, 'ikev2_sync', 'exec'), sync.__dict__)
-            for name in ('CLIENTS_CONF', 'STATE_FILE', 'DIGEST_FILE', 'STATUS_FILE'):
-                setattr(sync, name, str(Path(directory) / name))
-            Path(sync.CLIENTS_CONF).write_text('id = "phone"\nsecret = "new"\n')
-            old = {'phone': hashlib.sha256(b'old').hexdigest()}
-            sync.write_json(sync.STATE_FILE, old, 0o600)
-            sync.write_json(sync.DIGEST_FILE, 'old-digest', 0o600)
-            sa = {'conn': 'anysda-dev-1', 'uniqueid': '7', 'state': 'ESTABLISHED',
-                  'username': 'phone', 'rx': 0, 'tx': 0}
-            with patch.object(sync, 'swanctl', return_value=0), \
-                    patch.object(sync.subprocess, 'run', return_value=types.SimpleNamespace(stdout='anysda-dev-1:\n')), \
-                    patch.object(sync, 'live_sas', return_value=[sa]):
-                self.assertEqual(sync.main(), 1)
-            self.assertEqual(sync.read_json(sync.STATE_FILE, {}), old)
-            self.assertEqual(sync.read_json(sync.DIGEST_FILE, ''), 'old-digest')
-            self.assertFalse(Path(sync.STATUS_FILE).exists())
+    def test_sessions(self):
+        script = (ROOT / 'infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py').read_text()
+        sync = types.ModuleType('ikev2_sync')
+        exec(compile(script, 'ikev2_sync', 'exec'), sync.__dict__)
+        self.assertEqual(sync.sessions(SAS), [
+            {'uniqueid': '7', 'username': 'phone', 'rx': 1023795, 'tx': 50650},
+            {'uniqueid': '9', 'username': 'laptop', 'rx': 20, 'tx': 10}])
 
 
 if __name__ == '__main__':

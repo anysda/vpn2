@@ -25,45 +25,37 @@ _spec.loader.exec_module(fixture)  # забирает путь репозито�
 REPO = fixture.REPO
 OPT = Path('/opt/anysda-vpn2')
 CLONE = Path('/root/vpn2')
-STAGES = ('22-adguard', '30-frontend', '35-telegram')
-# Проверка узла идёт пакетом дерева: команда verify подменена, остальной пакет настоящий.
-VERIFY = '''import os
-from pathlib import Path
+# Шаги стадий 22, 30, 35, что restore прогоняет командой vpn2 с окружением клона.
+STEPS = ('adguard config', 'adguard restart', 'containers panel', 'containers telegram')
+STEP = '''#!/bin/sh
+printf '%s|%s|%s|%s\\n' "$*" "$VPN2_PANEL_CONFIG_TPL" "$(cat /tmp/anysda/anysda-config.yaml.tpl)" "$PANEL_DOMAIN" \\
+    >> /test-output/stages
+'''
+# Проверка узла идёт пакетом дерева: проверка подменена, остальной пакет настоящий.
+VERIFY = '''from pathlib import Path
 
 
-def main(_argv):
+def run(env, traffic_only=False):
+    del traffic_only
     with open('/test-output/stages', 'a') as log:
         log.write('|'.join((__file__, Path('/tmp/anysda/anysda-config.yaml.tpl').read_text(),
-                            'SOURCE=' + os.environ['SOURCE'])) + '\\n')
+                            env['PANEL_DOMAIN'])) + '\\n')
     return 0
 '''
 OUT = Path('/test-output')
 
 
 def make_source(root):
-    """Исходники как у клона: настоящие infra и миграции, стадии restore - заглушки."""
+    """Исходники как у клона: настоящие infra и миграции, проверка узла - заглушка."""
     root.mkdir(parents=True)
     shutil.copytree(REPO / 'infra', root / 'infra',
                     ignore=shutil.ignore_patterns('secrets', 'envs', '__pycache__'))
     shutil.copytree(REPO / 'app/shared', root / 'app/shared')
     shutil.copytree(REPO / 'app/server/database/migrations', root / 'app/server/database/migrations')
-    for stage in STAGES:
-        fixture.write(root / 'infra/scripts' / (stage + '.sh'), '''#!/bin/sh
-printf '%s|%s|%s\\n' "$0" "$(cat /tmp/anysda/anysda-config.yaml.tpl)" "$(grep '^SOURCE=' "$1")" >> /test-output/stages
-''', 0o755)
     fixture.write(root / 'infra/vpn2/src/vpn2/verify/stage.py', VERIFY)
     fixture.write(root / 'infra/configs/anysda-config.yaml.tpl', f'template from {root}')
-    fixture.write(root / 'infra/envs/all.env', f'SOURCE={root}\n')
-    fixture.write(root / 'infra/envs/ru.env', '''HOST_TAG=ru
-BACKUP_ENABLED=true
-BACKUP_BACKEND=local
-BACKUP_LOCAL_DIR=/var/backups/anysda-vpn2
-BACKUP_RETENTION=2
-BACKUP_SCHEDULE=off
-BACKUP_PASSPHRASE=test-backup-passphrase
-''')
     host = root.name + '.example.test'
-    fixture.write(root / 'config.yaml', f"admin:\n  user: 'clone-admin'\npanel:\n  domain: '{host}'\n")
+    fixture.write(root / 'config.yaml', fixture.CONFIG + f"admin:\n  user: 'clone-admin'\npanel:\n  domain: '{host}'\n")
     git = ('git', '-C', str(root), '-c', 'user.name=test', '-c', 'user.email=test@example.test')
     for args in (('init', '-q'), ('add', '-A'), ('commit', '-qm', 'source')):
         result = fixture.run(*git, *args)
@@ -82,13 +74,15 @@ class ClonePath(unittest.TestCase):
         fixture.BackupRestore.setUp(self)
         # Фикстура кладёт исходники в /opt; каждый случай ставит их сам.
         shutil.rmtree(OPT)
+        fixture.write('/test-bin/vpn2', STEP, 0o755)
 
     def install(self, root):
         """Команды и библиотеки узла - то же, что кладёт роль backup."""
-        for name in ('backup', 'restore', 'backup-list'):
-            target = Path(f'/usr/local/bin/anysda-{name}.sh')
-            shutil.copy(root / f'infra/lib/anysda-{name}.sh', target)
-            target.chmod(0o755)
+        template = (root / 'infra/ansible/roles/backup/templates/anysda-command.sh.j2').read_text()
+        for command in ('backup', 'restore', 'backup-list'):
+            name = f'anysda-{command}.sh'
+            text = template.replace('{{ item.name }}', name).replace('{{ item.command }}', command)
+            fixture.write(Path('/usr/local/bin', name), text, 0o755)
         Path('/usr/local/lib/anysda').mkdir(parents=True)
         shutil.copy(root / 'infra/lib/anysda-svc.sh', '/usr/local/lib/anysda/anysda-svc.sh')
         shutil.copy(root / 'app/shared/vpn-pools.json', '/usr/local/lib/anysda/vpn-pools.json')
@@ -119,10 +113,11 @@ class ClonePath(unittest.TestCase):
         result = fixture.run('/usr/local/bin/anysda-restore.sh', 'latest', '--force', env=self.env)
         self.assertEqual(result.returncode, 0, result.stdout[-1500:])
         self.assertIn('anysda-restore: SUCCESS', result.stdout)
+        host = root.name + '.example.test'
         self.assertEqual(stages.read_text().splitlines(),
-                         [f'{root}/infra/{path}|template from {root}|SOURCE={root}'
-                          for path in [f'scripts/{stage}.sh' for stage in STAGES]
-                          + ['vpn2/src/vpn2/verify/stage.py']])
+                         [f'{step}|{root}/infra/configs/anysda-config.yaml.tpl|template from {root}|{host}'
+                          for step in STEPS]
+                         + [f'{root}/infra/vpn2/src/vpn2/verify/stage.py|template from {root}|{host}'])
 
     def assert_speedtest_uses(self, root):
         text = (REPO / 'infra/tests/speedtest.py').read_text()
@@ -141,7 +136,7 @@ echo '[{{"id":1,"name":"speed-test"}}]'
         self.assertIn(f'https://{root.name}.example.test/api/clients', calls.read_text())
 
     # 1. restore: исходники только в клоне, деплой шёл из него.
-    def test_restore_takes_migrations_template_envs_stages_verify_from_clone(self):
+    def test_restore_takes_migrations_template_config_stages_verify_from_clone(self):
         make_source(CLONE)
         self.deploy()
         self.assertFalse(OPT.exists())

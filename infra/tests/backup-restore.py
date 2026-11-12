@@ -7,6 +7,7 @@ Services and deploy stages are stubs; backup/restore, SQLite, tar and age are re
 
 import base64
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import json
 import pwd
@@ -17,6 +18,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import unittest
 
@@ -42,6 +44,15 @@ EXTRA = ('/etc/caddy/Caddyfile', '/opt/AdGuardHome/AdGuardHome.yaml',
 # restore выводит server.pub из PrivateKey wg0.conf, поэтому ключ должен быть
 # настоящим; метка состояния остаётся в комментарии.
 MIGRATIONS = Path('/opt/anysda-vpn2/app/server/database/migrations')
+# config.yaml клона: из него restore собирает окружение стадий.
+CONFIG = """entry:
+  host: 192.0.2.1
+  password: 'entry secret'
+exits:
+  - tag: se
+    host: 192.0.2.2
+    password: 'exit secret'
+"""
 
 
 def journal():
@@ -58,6 +69,48 @@ def body(path, state):
     if path.endswith('/wg0.conf'):
         return f'[Interface]\nPrivateKey = {WG_KEYS[state]}\n# {state}:{path}\n'
     return f'{state}:{path}'
+
+
+# Бэкап с подменённым снимком БД: первый снимок окружён /test-output/at-db-copy before|after.
+HOOKED_BACKUP = '''import subprocess
+import sys
+from vpn2 import cli
+from vpn2.backup import run
+copy, calls = run.db_copy, []
+
+
+def db_copy(db, target):
+    calls.append(target)
+    if len(calls) == 1:
+        subprocess.run(['/test-output/at-db-copy', 'before'], check=True)
+    copy(db, target)
+    if len(calls) == 1:
+        subprocess.run(['/test-output/at-db-copy', 'after'], check=True)
+
+
+run.db_copy = db_copy
+sys.exit(cli.main(['backup']))
+'''
+
+
+class _Events(BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.server.events.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+def panel_events(test):
+    """События, что команда шлёт журналу панели (vpn2.notify.PANEL_URL), - в список."""
+    server = ThreadingHTTPServer(('127.0.0.1', 51821), _Events)
+    server.events = []
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(server.server_close)
+    test.addCleanup(server.shutdown)
+    return server.events
 
 
 def write(path, content, mode=0o600):
@@ -136,14 +189,14 @@ if [ "$1" = stop ] && [ -f /test-output/writer.pid ]; then
 fi
 exit 0
 ''', 0o755)
-        write('/test-bin/curl', '#!/bin/sh\necho \'{"version":"test"}\'\n', 0o755)
-        for stage in ('22-adguard', '30-frontend', '35-telegram'):
-            write('/opt/anysda-vpn2/infra/scripts/' + stage + '.sh',
-                  '#!/bin/sh\nexit 0\n', 0o755)
+        # Клон на entry: инвентарь и пакет из дерева, config.yaml; шаги стадий - заглушка vpn2.
+        shutil.copytree(REPO / 'infra/vpn2/src', '/opt/anysda-vpn2/infra/vpn2/src', dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns('__pycache__', 'verify'))
+        write('/opt/anysda-vpn2/infra/ansible/inventory.py', (REPO / 'infra/ansible/inventory.py').read_text())
+        write('/opt/anysda-vpn2/config.yaml', CONFIG)
         write('/opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl', 'template from installed tree')
-        for name in ('all', 'ru'):
-            write('/opt/anysda-vpn2/infra/envs/' + name + '.env', 'HOST_TAG=ru\n')
-        self.env = dict(os.environ, PATH='/test-bin:' + os.environ['PATH'])
+        write('/test-bin/vpn2', '#!/bin/sh\necho "$*" >> /test-output/vpn2\n', 0o755)
+        self.env = dict(os.environ, PATH='/test-bin:' + os.environ['PATH'], VPN2_BIN='/test-bin/vpn2')
         self.conn = sqlite3.connect(DB)
         self.addCleanup(self.conn.close)
         self.conn.execute('PRAGMA journal_mode=WAL')
@@ -161,20 +214,14 @@ exit 0
         self.conn.commit()
         self.assertGreater(Path(str(DB) + '-wal').stat().st_size, 0)
 
-    def script(self, name, *args):
-        # Как на узле: 26-backup ставит wg_conf.py в /usr/local/lib/anysda, сверка берёт его оттуда.
-        lib = Path('/usr/local/lib/anysda')
-        if not (lib / 'wg_conf.py').exists():
-            if not lib.exists():
-                lib.mkdir(parents=True)
-                self.addCleanup(shutil.rmtree, lib)
-            shutil.copy(REPO / 'infra/ansible/roles/backup/files/wg_conf.py', lib / 'wg_conf.py')
-            self.addCleanup((lib / 'wg_conf.py').unlink, True)
-        return run('bash', str(REPO / 'infra/lib' / ('anysda-' + name + '.sh')),
-                   *args, env=self.env)
+    def script(self, name, *args, hook=False):
+        # Как на узле: /usr/local/bin/anysda-<name>.sh запускает `vpn2 <name>` пакета из клона.
+        command = ('-c', HOOKED_BACKUP) if hook else ('-m', 'vpn2.cli', name, *args)
+        return run('python3', '-B', *command,
+                   env=dict(self.env, PYTHONPATH=str(REPO / 'infra/vpn2/src')))
 
-    def backup(self):
-        result = self.script('backup')
+    def backup(self, hook=False):
+        result = self.script('backup', hook=hook)
         self.assertEqual(result.returncode, 0, result.stdout)
         archive = next(BACKUPS.glob('*.age'))
         decrypt(archive, '/test-output/backup.tar.gz')
@@ -281,27 +328,29 @@ sys.stdin.read()
             key.unlink()
             write(str(key), content)
         self.backup()
-        # Стадия проверяет тот же обязательный вход, что настоящая стадия 30.
-        write('/opt/anysda-vpn2/infra/scripts/30-frontend.sh', '''#!/bin/bash
+        # Шаг стадии 30 проверяет тот же обязательный вход, что настоящий шаг панели.
+        write('/test-bin/vpn2', '''#!/bin/bash
 set -eu
-source "$1"
+echo "$*" >> /test-output/vpn2
+[ "$*" = 'containers panel' ] || exit 0
 test -s /tmp/anysda/anysda-config.yaml.tpl
 test -z "${ADMIN_PASSWORD:-}"
-cmp /tmp/anysda/anysda-config.yaml.tpl /opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl
+cmp /tmp/anysda/anysda-config.yaml.tpl "$VPN2_PANEL_CONFIG_TPL"
 ''', 0o755)
-        write('/opt/anysda-vpn2/infra/envs/ru.env', 'HOST_TAG=ru\nADMIN_PASSWORD=current-deploy\n')
+        write('/opt/anysda-vpn2/config.yaml', CONFIG + "admin:\n  password: 'current-deploy'\n")
         self.assertFalse(Path('/tmp/anysda').exists())
         result = self.script('restore', 'latest', '--force')
         print(f'cold_restore_rc={result.returncode}', flush=True)
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('containers panel', Path('/test-output/vpn2').read_text().splitlines())
         self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'archived'))
 
     def test_snapshot_failure_preserves_live_data(self):
         self.backup()
-        # Inject a tar failure only for safety archive creation.
-        write('/test-bin/tar', '''#!/bin/sh
-case "$*" in *pre-restore*) /usr/bin/tar "$@"; exit 42;; esac
-exec /usr/bin/tar "$@"
+        # Отказ только при шифровании страховочного архива.
+        write('/test-bin/age', '''#!/bin/sh
+case "$*" in *-p*pre-restore*) exit 42;; esac
+exec /usr/bin/age "$@"
 ''', 0o755)
         result = self.script('restore', 'latest', '--force')
         self.assertNotEqual(result.returncode, 0)
@@ -410,16 +459,16 @@ ANYSDA_S3_SECRET_KEY=secret
 ANYSDA_BACKUP_PASSPHRASE=test-backup-passphrase
 ''')
         Path('/test-output/s3').mkdir(exist_ok=True)
-        write('/test-bin/aws', '''#!/bin/sh
+        write('/test-bin/rclone', '''#!/bin/sh
 if [ -f /test-output/s3-down ]; then
-    echo 'Could not connect to the endpoint URL' >&2; exit 255
+    echo 'Failed to lsl: connection refused' >&2; exit 1
 fi
-shift 3
 case "$1" in
-    ls) for f in /test-output/s3/*; do
-            [ -e "$f" ] && echo "2026-01-01 00:00:00 $(stat -c %s "$f") ${f##*/}"
+    lsl) for f in /test-output/s3/*; do
+            [ -e "$f" ] && echo "$(stat -c %s "$f") 2026-01-01 00:00:00.000000000 ${f##*/}"
         done ;;
-    cp) cp "/test-output/s3/${2#s3://bucket/}" "$3" ;;
+    copyto) cp "/test-output/s3/${2#s3:bucket/}" "$3" ;;
+    *) exit 1 ;;
 esac
 ''', 0o755)
 
@@ -672,21 +721,16 @@ exit 0
         self.conn.commit()
         # Перевыпуск посреди бэкапа: отзыв старого сертификата попадает в CRL,
         # а новый сертификат панель пишет в БД отдельным шагом чуть позже.
-        write('/test-bin/sqlite3', f"""#!/bin/sh
-case "$*" in *".backup "*)
-  if [ ! -e /test-output/reissued ]; then
-    touch /test-output/reissued
-    if flock -n -x /etc/openvpn/server/.pki.lock true; then echo free; else echo held; fi > /test-output/lock
-    cp {pki}/revoked.pem /etc/openvpn/server/pki/crl.pem
-    /usr/bin/sqlite3 "$@" || exit
-    (sleep 1; /usr/bin/sqlite3 {DB} ".timeout 10000" \\
-      "UPDATE devices SET ovpn_cert = CAST(readfile('{pki}/11.pem') AS TEXT) WHERE id = 1") >/dev/null 2>&1 &
-    exit 0
-  fi;;
-esac
-exec /usr/bin/sqlite3 "$@"
+        write('/test-output/at-db-copy', f"""#!/bin/sh
+if [ "$1" = before ]; then
+  if flock -n -x /etc/openvpn/server/.pki.lock true; then echo free; else echo held; fi > /test-output/lock
+  cp {pki}/revoked.pem /etc/openvpn/server/pki/crl.pem
+else
+  (sleep 1; /usr/bin/sqlite3 {DB} ".timeout 10000" \\
+    "UPDATE devices SET ovpn_cert = CAST(readfile('{pki}/11.pem') AS TEXT) WHERE id = 1") >/dev/null 2>&1 &
+fi
 """, 0o755)
-        bundle = self.backup()
+        bundle = self.backup(hook=True)
         bad, serials = self.revoked_active(bundle)
         lock = Path('/test-output/lock').read_text().strip()
         print(f'archive_active={sorted(serials)} revoked_active={sorted(bad)} lock_during_db_snapshot={lock}', flush=True)
@@ -695,7 +739,6 @@ exec /usr/bin/sqlite3 "$@"
         self.assertEqual(lock, 'held')
 
         # Старый архив с расхождением: restore предупреждает и называет устройство.
-        Path('/test-bin/sqlite3').unlink()
         shutil.copy(pki / 'revoked.pem', bundle / 'etc-openvpn/server/pki/crl.pem')
         with sqlite3.connect(bundle / 'db.sqlite') as db:
             db.execute('UPDATE devices SET ovpn_cert = ? WHERE id = 1', ((pki / '10.pem').read_text(),))
@@ -753,20 +796,15 @@ exec /usr/bin/sqlite3 "$@"
               f"'dev3', 'secret3', '{issued['ike_ip']}');\n")
         # Посреди бэкапа панель выдаёт устройство 3 и удаляет 2: БД уже новая,
         # а конфиги WireGuard и IKEv2 панель применяет отдельным шагом позже.
-        write('/test-bin/sqlite3', f"""#!/bin/sh
-case "$*" in *".backup "*)
-  if [ ! -e /test-output/applied ]; then
-    touch /test-output/applied
-    /usr/bin/sqlite3 {DB} ".timeout 10000" ".read /test-output/issue-revoke.sql" || exit
-    /usr/bin/sqlite3 "$@" || exit
-    (sleep 1; cp /test-output/after-wg /etc/wireguard/wg0.conf
-     cp /test-output/after-ike /etc/swanctl/conf.d/anysda-clients.conf) >/dev/null 2>&1 &
-    exit 0
-  fi;;
-esac
-exec /usr/bin/sqlite3 "$@"
+        write('/test-output/at-db-copy', f"""#!/bin/sh
+if [ "$1" = before ]; then
+  /usr/bin/sqlite3 {DB} ".timeout 10000" ".read /test-output/issue-revoke.sql"
+else
+  (sleep 1; cp /test-output/after-wg /etc/wireguard/wg0.conf
+   cp /test-output/after-ike /etc/swanctl/conf.d/anysda-clients.conf) >/dev/null 2>&1 &
+fi
 """, 0o755)
-        bundle = self.backup()
+        bundle = self.backup(hook=True)
         db = sqlite3.connect(bundle / 'db.sqlite')
         archived = sorted(n for (n,) in db.execute('SELECT id FROM devices'))
         db.close()
@@ -780,7 +818,6 @@ exec /usr/bin/sqlite3 "$@"
         self.assertEqual(accounts, [1, 3, 4])
 
         # Старый архив с расхождением: restore предупреждает и называет устройства.
-        Path('/test-bin/sqlite3').unlink()
         (bundle / 'etc-wireguard/wg0.conf').write_text(before_wg)
         (bundle / 'etc-swanctl/conf.d/anysda-clients.conf').write_text(before_ike)
         manifest = json.loads((bundle / 'manifest.json').read_text())
@@ -1701,9 +1738,7 @@ exec /usr/bin/sqlite3 "$@"
         self.conn.commit()
         write('/etc/anysda/tgbot-secret.txt', 'test-tgbot-secret')
         self.addCleanup(Path('/etc/anysda/tgbot-secret.txt').unlink)
-        write('/test-bin/curl', '#!/bin/sh\nprintf "%s\\n" "$@" >> /test-output/curl\n'
-              'echo \'{"version":"test"}\'\n', 0o755)
-        write('/test-bin/sleep', '#!/bin/sh\nexit 0\n', 0o755)
+        events = panel_events(self)
         result = self.script('backup')
         print('\n'.join(line for line in result.stdout.splitlines()
                         if 'срез 10' in line or 'устройство' in line or 'warning' in line or 'backup:' in line),
@@ -1714,13 +1749,11 @@ exec /usr/bin/sqlite3 "$@"
         decrypt(archives[0], '/test-output/backup.tar.gz')
         self.assertIn('устройство 7 «Телефон Ани»: нет пира WireGuard', result.stdout)
         self.assertRegex(result.stdout, r'(?m)^warning: +БД и конфиги VPN расходятся')
-        events = Path('/test-output/curl').read_text()
         # Годный архив — предупреждение в ленте, а не «Бэкап не удался».
-        self.assertIn('{"type":"backup_warning","detail":"БД и конфиги VPN расходятся (устройства: 7)'
-                      ' — перевыпусти в панели"}', events)
-        self.assertNotIn('backup_failed', events)
+        self.assertEqual(events, [{'type': 'backup_warning',
+                                   'detail': 'БД и конфиги VPN расходятся (устройства: 7) — перевыпусти в панели'}])
         for secret in (psk, 'test-tgbot-secret'):
-            self.assertNotIn(secret, result.stdout + events)
+            self.assertNotIn(secret, result.stdout + json.dumps(events, ensure_ascii=False))
 
     def test_intermediate_reissue_key_of_pending_client_is_not_a_stranger(self):
         # Перевыпуски без подтверждения: в retired остался только исходный ключ,

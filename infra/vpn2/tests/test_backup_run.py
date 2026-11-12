@@ -257,7 +257,7 @@ def test_read_env_is_what_bash_sources(tmp_path):
 @pytest.mark.parametrize(('n', 'text'), [(0, '0'), (1023, '1023'), (1024, '1.0K'), (1025, '1.1K'),
                                          (10 * 1024, '10K'), (10 * 1024 + 1, '11K'), (1024 ** 2, '1.0M')])
 def test_human_size_like_numfmt(n, text):
-    assert listing.human_size(n) == text
+    assert listing.human_sizes([n]) == [text]
 
 
 def test_listing_local_rows(tmp_path, capsys):

@@ -1,25 +1,18 @@
 """Листинг бэкапов: локальные архивы и S3."""
 import os
 import re
+import subprocess
 
 from vpn2.backup import archive, env
 
 ROW = '%-50s %-22s %12s'
 
 
-def human_size(n):
-    """Размер как `numfmt --to=iec`: до 1024 число, дальше округление вверх до 1 знака (до 10) или целого."""
-    if n < 1024:
-        return str(n)
-    for i, unit in enumerate('KMGTPEZY', 1):
-        d = 1024 ** i
-        if n < 10 * d:
-            t = -(-n * 10 // d)
-            return f'{t // 10}.{t % 10}{unit}' if t < 100 else f'{t // 10}{unit}'
-        if n < 1024 * d:
-            v = -(-n // d)
-            return f'{v}{unit}' if v < 1024 else f'1.0{"MGTPEZY"[i - 1]}'
-    return str(n)
+def human_sizes(sizes):
+    """Размеры в байтах так, как их пишет `numfmt --to=iec`."""
+    done = subprocess.run(['numfmt', '--to=iec'], input=''.join(f'{size}\n' for size in sizes),
+                          capture_output=True, text=True, check=True)
+    return done.stdout.split()
 
 
 def local_rows(local_dir):
@@ -44,8 +37,9 @@ def render(settings):
     """Печать листинга; код возврата: 0, а для s3 - 1, если rclone упал или архивов нет."""
     print(ROW % ('Name', 'Timestamp (UTC)', 'Size'))
     print(ROW % ('----', '---------------', '----'))
-    for name, ts, size in local_rows(settings.local_dir):
-        print(ROW % (name, ts, human_size(size)))
+    rows = local_rows(settings.local_dir)
+    for (name, ts, _size), size in zip(rows, human_sizes(size for *_, size in rows)):
+        print(ROW % (name, ts, size))
     if settings.backend != 's3':
         return 0
     print(f'\n── S3: s3://{settings.s3_bucket}/ ──', flush=True)

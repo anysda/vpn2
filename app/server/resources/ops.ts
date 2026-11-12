@@ -40,16 +40,9 @@ export default {
     const [[count], recent, rows] = await Promise.all([
       db.select({ n: sql<number>`count(*)` }).from(clients),
       recentBytesByClient(),
-      db
-        .select({
-          hour: deviceTrafficHourly.hour,
-          clientId: devices.clientId,
-          bytes: sql<number>`sum(${deviceTrafficHourly.rx} + ${deviceTrafficHourly.tx})`,
-        })
-        .from(deviceTrafficHourly)
-        .innerJoin(devices, eq(devices.id, deviceTrafficHourly.deviceId))
-        .where(gte(deviceTrafficHourly.hour, since))
-        .groupBy(deviceTrafficHourly.hour, devices.clientId),
+      db.select({ hour: deviceTrafficHourly.hour, bytes: sql<number>`sum(${deviceTrafficHourly.rx} + ${deviceTrafficHourly.tx})` })
+        .from(deviceTrafficHourly).innerJoin(devices, eq(devices.id, deviceTrafficHourly.deviceId))
+        .where(gte(deviceTrafficHourly.hour, since)).groupBy(deviceTrafficHourly.hour, devices.clientId),
     ])
     const hourly = Array.from({ length: HOURS }, () => 0)
     for (const r of rows) {
@@ -99,9 +92,7 @@ export default {
       const node = exitNodeOf(c.chains[0])
       const ip = c.metadata?.sourceIP
       if (!node || !ip || !/^10\.6[678]\./.test(ip)) continue
-      let s = devicesByNode.get(node)
-      if (!s) { s = new Set(); devicesByNode.set(node, s) }
-      s.add(ip)
+      devicesByNode.set(node, (devicesByNode.get(node) ?? new Set()).add(ip))
     }
     return nodes.map((n, i) => {
       const m = metrics[i]
@@ -152,38 +143,22 @@ export default {
   'GET /ops/bot-snapshot': bot(async () => {
     const instances = nodeInstances()
     const [allClients, nodes, proxies, connections] = await Promise.all([
-      useDb().select({
-        id: clients.id,
-        name: clients.name,
-        frozenManual: clients.frozenManual,
-        expiresAt: clients.expiresAt,
-        createdAt: clients.createdAt,
-      }).from(clients).orderBy(...clientsNewestFirst),
+      useDb().select({ id: clients.id, name: clients.name, frozenManual: clients.frozenManual, expiresAt: clients.expiresAt, createdAt: clients.createdAt })
+        .from(clients).orderBy(...clientsNewestFirst),
       fetchNodeMetrics(instances.map(n => n.instance), false),
       fetchProxies(),
       fetchConnections(),
     ])
     return {
       timestamp: new Date().toISOString(),
-      clients: allClients.map(c => ({
-        id: c.id,
-        name: c.name,
-        status: clientStatus(c),
-        expiresAt: c.expiresAt,
-        createdAt: c.createdAt,
-      })),
-      nodes: instances.map((n, i) => ({
-        tag: n.tag,
-        label: n.label,
-        cpu: nodes[i]?.cpuPct ?? null,
-        ram: nodes[i]?.ramPct ?? null,
-        rxMbps: mbps(nodes[i]?.rxBps),
-        txMbps: mbps(nodes[i]?.txBps),
-        uptimeSec: nodes[i]?.uptimeSec ?? null,
-        staleSec: nodes[i]?.staleSec ?? null,
-        cores: nodes[i]?.cores ?? null,
-        memTotalBytes: nodes[i]?.memTotalBytes ?? null,
-      })),
+      clients: allClients.map(c => ({ id: c.id, name: c.name, status: clientStatus(c), expiresAt: c.expiresAt, createdAt: c.createdAt })),
+      nodes: instances.map(({ tag, label }, i) => {
+        const m = nodes[i]
+        return {
+          tag, label, cpu: m?.cpuPct ?? null, ram: m?.ramPct ?? null, rxMbps: mbps(m?.rxBps), txMbps: mbps(m?.txBps),
+          uptimeSec: m?.uptimeSec ?? null, staleSec: m?.staleSec ?? null, cores: m?.cores ?? null, memTotalBytes: m?.memTotalBytes ?? null,
+        }
+      }),
       outbounds: userVisibleOutbounds(proxies).map(p => ({ name: p.name, rttMs: p.delay ?? p.history?.at(-1)?.delay ?? null, isWarp: p.name.endsWith('-warp') })),
       connections: connections?.connections.length ?? 0,
     }

@@ -53,7 +53,6 @@
   register: exit_step
   changed_when: "'уже установлен' not in exit_step.stdout"
 
-# Профиль WARP, пароли каналов, пара Reality, сертификат hy2 и конфиг sing-box.
 # Существующие секреты и годный сертификат шаг не меняет: entry их пинит.
 - name: Секреты, сертификат и конфиг sing-box
   ansible.builtin.command:
@@ -77,21 +76,13 @@
     enabled: true
     daemon_reload: true
 
-- name: Ресурсы sing-box
+- name: Ресурсы sing-box и сторожа WARP
   ansible.builtin.include_role:
     name: resources
   vars:
-    resources_units: [sing-box]
+    resources_units: "{{ ['sing-box'] + (['anysda-warp-watchdog'] if exit_warp_enabled else []) }}"
 
-- name: Ресурсы сторожа WARP
-  ansible.builtin.include_role:
-    name: resources
-  vars:
-    resources_units: [anysda-warp-watchdog]
-  when: exit_warp_enabled
-
-# Перезапуск рвёт все туннели entry-экзит, у клиентов это секунды без сети.
-# Поэтому только если sing-box читает уже не то, с чем стартовал.
+# Перезапуск рвёт все туннели entry-экзит: только при смене входов sing-box.
 - name: Служба sing-box перезапущена при смене входов
   ansible.builtin.command:
     argv: >-
@@ -106,8 +97,7 @@
     timeout: 2
   when: "'vpn2: changed' in exit_restart.stdout"
 
-# Даже при прежнем конфиге WARP проверяется. Проверка и таймер делят один flock
-# и бюджет: один перезапуск и не дольше минуты ожидания за прогон, три перезапуска за скользящий час.
+# Проверка и таймер делят flock и бюджет перезапусков.
 - name: Проверка WARP
   ansible.builtin.command:
     argv: ["{{ exit_vpn2 }}", watchdog, warp, --bootstrap]
@@ -134,13 +124,6 @@
   environment: "{{ exit_env }}"
   register: exit_step
   changed_when: "'vpn2: changed' in exit_step.stdout"
-
-- name: Правило clash-api эпохи mesh снято
-  ansible.builtin.command:
-    cmd: ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090
-  register: exit_step
-  changed_when: "'Rule deleted' in exit_step.stdout"
-  failed_when: false
 
 - name: Смена портов hy2
   ansible.builtin.import_tasks: hy2hop.yml

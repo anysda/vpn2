@@ -22,23 +22,17 @@
     - {src: anysda-warp-watchdog.timer, dest: /etc/systemd/system/anysda-warp-watchdog.timer, mode: '0644'}
   when: exit_warp_enabled
 
-# Состояние сторожа не удаляется и без WARP: повторная установка не должна
-# обнулять его лимиты перезапусков.
-- name: Таймер сторожа WARP остановлен
-  ansible.builtin.command:  # noqa: command-instead-of-module
-    cmd: systemctl disable --now anysda-warp-watchdog.timer
-    removes: /etc/systemd/system/anysda-warp-watchdog.timer
-  when: not exit_warp_enabled
-  failed_when: false
-
-- name: Служба сторожа WARP остановлена
-  ansible.builtin.command:  # noqa: command-instead-of-module
-    cmd: systemctl stop anysda-warp-watchdog.service
-    removes: /etc/systemd/system/anysda-warp-watchdog.service
-  when: not exit_warp_enabled
-  failed_when: false
-
+# Состояние сторожа остаётся и без WARP: повторная установка не обнуляет лимиты перезапусков.
 - name: Сторож WARP снят
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: [anysda-warp-watchdog.timer, anysda-warp-watchdog.service]
+  failed_when: false
+  when: not exit_warp_enabled
+
+- name: Юниты сторожа WARP убраны
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent

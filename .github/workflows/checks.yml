@@ -45,14 +45,16 @@ jobs:
       - name: vulture
         run: git ls-files -z '*.py' | xargs -0 pipx run --spec vulture==2.16 vulture --min-confidence 0
       - run: pip install --quiet ./infra/vpn2
-      - name: config2env на config.example.yaml
+      - name: инвентарь на config.example.yaml
         run: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
           cp config.example.yaml "$d/config.yaml"
           sed -i 's/^  passphrase: ""/  passphrase: ci pass/' "$d/config.yaml"
-          VPN2_STATE_DIR="$d/state" python3 infra/lib/config2env.py "$d"
-          test -s "$d/infra/envs/all.env"
+          export PYTHONPATH=infra/vpn2/src VPN2_CONFIG="$d/config.yaml" VPN2_STATE_DIR="$d/state"
+          python3 -B infra/ansible/inventory.py --prepare
+          python3 -B infra/ansible/inventory.py --env ru > "$d/ru.env"
+          test -s "$d/ru.env"
 
   infra:
     name: "infra ${{ matrix.sing-box && 'с' || 'без' }} sing-box ${{ matrix.part }}/3"

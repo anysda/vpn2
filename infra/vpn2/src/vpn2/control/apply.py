@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Apply a managed config through a candidate.
 
 Candidate beside the target -> syntax and project checks -> journal -> rename ->
@@ -12,7 +11,6 @@ previous config restored, 4 restore failed, 5 first install failed.
 
 import argparse
 import contextlib
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -22,7 +20,7 @@ import sys
 import threading
 import time
 
-from vpn2.fsutil import atomic as write
+from vpn2.fsutil import atomic as write, lock
 
 RESOURCES = {
     'sing-box': {'path': '/etc/sing-box/config.json', 'mode': 0o600, 'unit': 'sing-box'},
@@ -306,8 +304,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     applier = Applier()
     applier.state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with (applier.state / 'lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with lock(applier.state / 'lock'):
         try:
             if args.action == 'install':
                 applier.install(args.resource, args.file)
@@ -323,8 +320,3 @@ def main(argv=None):
             print(f'vpn2-apply: {args.action}: {error}', file=sys.stderr)
             sys.exit(1)
     print(f'vpn2-apply: {args.action} done')
-
-
-if __name__ == '__main__':
-    os.umask(0o077)
-    main()

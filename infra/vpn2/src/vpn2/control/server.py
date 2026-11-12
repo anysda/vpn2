@@ -1,7 +1,6 @@
 """Socket-activated VPN control service. All installed sources are root-owned."""
 
 import argparse
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -11,6 +10,7 @@ import subprocess
 import sys
 import time
 
+from ..fsutil import lock
 from .backend import Backend
 from .contract import API, Fault, LIMIT, load_pools, require, validate
 
@@ -107,12 +107,7 @@ def main(argv=None):
     config = json.loads(Path('/etc/vpn2-control/callers.json').read_text())
     require(type(config) is list and all(type(uid) is int and uid >= 0 for uid in config))
     backend = Backend()
-    with (backend.state / 'service.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with lock(backend.state / 'service.lock', blocking=False):
         with socket.socket(fileno=3) as listener:
             require(listener.family == socket.AF_UNIX)
             serve(listener, backend, set(config), load_pools())
-
-
-if __name__ == '__main__':
-    main()

@@ -3,34 +3,30 @@
 import copy
 import hashlib
 import json
-import os
 from pathlib import Path
-import subprocess
-import sys
 import tempfile
 import unittest
 
 import yaml
 
 from adguard_support import Hub
-from router_support import exit_cert
+from router_support import exit_cert, render
 from vpn2.adguard import dns
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GENERATOR = Path(os.environ.get("GEN_ROUTER_PATH", ROOT / "infra/vpn2/src/vpn2/router/config.py"))
 UPSTREAMS = ["[/ru/рф/xn--p1ai/su/]77.88.8.8",
              "https://1.1.1.1/dns-query", "https://dns.google/dns-query"]
 
 
 def generate(mode="off"):
-    env = dict(os.environ, EXIT_TAGS="test", DOMAIN_TEST="exit.example.test",
+    env = dict(EXIT_TAGS="test", DOMAIN_TEST="exit.example.test",
                TEST_DIRECT="test-direct", TEST_WARP="test-warp", TEST_MGMT="test-mgmt",
                TEST_OBFS="test-obfs", MGMT_IP_TEST="192.0.2.2", MGMT_IP="192.0.2.1",
                HY2_DIRECT_PORT="443", HY2_WARP_PORT="8443", HY2_MGMT_PORT="9443",
                WG_OUT_IFACE="eth0", RU_CLASH_SECRET="test-secret", YT_ROUTE=mode,
                LANE_SUBNETS="198.51.100.0/24", TEST_HY2_CERT_PATH=exit_cert())
-    return json.loads(subprocess.check_output([sys.executable, str(GENERATOR)], env=env))
+    return json.loads(render(env).stdout)
 
 
 class RouterDnsTests(unittest.TestCase):

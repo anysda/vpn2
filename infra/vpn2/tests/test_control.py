@@ -768,10 +768,10 @@ class ControlTests(unittest.TestCase):
 
     def test_management_uid_switch_is_transactional_and_survives_redeploy(self):
         panel = (ROOT / 'infra/vpn2/src/vpn2/containers/panel.py').read_text()
-        from vpn2 import entryvpn
-        self.assertIn('management-client-user {user}\n', entryvpn.OVPN_CONF)
-        self.assertEqual(entryvpn.ovpn_control_user(self.file('/etc/vpn2-control/api-managed', '')), 'vpn2-control')
-        self.assertEqual(entryvpn.ovpn_control_user('/nonexistent/api-managed'), 'root')
+        role = ROOT / 'infra/ansible/roles/openvpn'
+        self.assertIn("management-client-user {{ 'vpn2-control' if openvpn_api_managed.stat.exists else 'root' }}",
+                      (role / 'templates/server.conf.j2').read_text())
+        self.assertIn('path: /etc/vpn2-control/api-managed', (role / 'tasks/main.yml').read_text())
         self.assertIn("OVPN_USER = 'management-client-user vpn2-control'", panel)
         body = panel[panel.index('def _stage('):]
         guard, switch = body.index('host_tls(environ, say, tx)'), body.index('openvpn.switch()')

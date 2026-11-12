@@ -1,0 +1,38 @@
+{% set base = openvpn_subnet.rsplit('.', 1)[0] %}
+port {{ openvpn_port }}
+proto {{ openvpn_proto ~ '-server' if openvpn_proto in ['tcp', 'tcp4', 'tcp6'] else openvpn_proto }}
+dev tun0
+topology subnet
+# Постоянные адреса устройств .2-.239 панель раздаёт через ccd (ifconfig-push);
+# общий пул .240-.253 - устройствам, которым адрес ещё не выдан.
+server {{ openvpn_subnet }} 255.255.255.0 nopool
+ifconfig-pool {{ base }}.240 {{ base }}.253 255.255.255.0
+ca   {{ openvpn_dir }}/pki/ca.crt
+cert {{ openvpn_dir }}/pki/server.crt
+key  {{ openvpn_dir }}/pki/server.key
+dh none
+tls-crypt {{ openvpn_dir }}/pki/tls-crypt.key
+crl-verify {{ openvpn_dir }}/pki/crl.pem
+client-config-dir {{ openvpn_dir }}/ccd
+keepalive 5 30
+cipher AES-256-GCM
+data-ciphers AES-256-GCM:CHACHA20-POLY1305
+auth SHA256
+persist-key
+persist-tun
+sndbuf 0
+rcvbuf 0
+{{ 'fast-io' if openvpn_proto.startswith('udp') else '' }}
+user nobody
+group nogroup
+push "redirect-gateway def1 bypass-dhcp"
+# DNS сервер не пушит: его несёт .ovpn клиента. Статус - CSV для сборщика трафика панели.
+status {{ openvpn_dir }}/status-server.log
+status-version 2
+# Через сокет панель рвёт сессии: ccd disable и CRL OpenVPN проверяет только при подключении.
+management {{ openvpn_dir }}/mgmt.sock unix
+management-client-user {{ 'vpn2-control' if openvpn_api_managed.stat.exists else 'root' }}
+verb 3
+{% for net in openvpn_subnets if net != openvpn_subnet ~ '/24' %}
+route {{ net.split('/')[0] }} 255.255.255.0
+{% endfor %}

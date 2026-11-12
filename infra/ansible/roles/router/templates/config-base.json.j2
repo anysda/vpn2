@@ -1,0 +1,186 @@
+{#- Базовый конфиг sing-box на entry: трафик клиентов из TPROXY :7898 расходится
+    по наборам geoip/geosite в туннели Hysteria2 до экзитов. Ручные маршруты панели
+    накладывает `vpn2 router apply-routes`, он же пишет config.json. -#}
+{%- set env = router_env -%}
+{%- set exits = env.EXIT_TAGS.split() -%}
+{%- set mgmt_ip = env.MGMT_IP | default('10.99.0.1', true) -%}
+{%- set yt_route = env.YT_ROUTE | default('off', true) -%}
+{%- set yt_domains = (env.YT_DOMAINS | default('', true)).split() or router_yt_domains -%}
+{%- set hop = {} -%}
+{%- if (env.HY2_HOP_ENABLED | default('1', true)) == '1' -%}
+{%-   for channel, range in router_hop_defaults.items() -%}
+{%-     set _ = hop.update({channel: {'server_ports': [(env['HY2_HOP_' ~ channel | upper] | default(range, true)) | replace('-', ':')],
+                                      'hop_interval': env.HY2_HOP_INTERVAL | default('5s', true)}}) -%}
+{%-   endfor -%}
+{%- endif -%}
+{%- set ns = namespace(out=[
+      {'type': 'direct', 'tag': 'direct-ru', 'bind_interface': router_wan},
+      {'type': 'direct', 'tag': 'local-dns', 'bind_interface': 'lo'},
+      {'type': 'direct', 'tag': 'dns-unfiltered', 'bind_interface': 'lo'}],
+    mon_in=[], mon_rules=[], direct=[], warp=[], yt_tag='youtube-ru') -%}
+{#- YouTube уходит с РФ-адреса entry: на нём YouTube не крутит рекламу. zapret - со
+    своей меткой сокета, по ней nfqws2 забирает в очередь ровно YouTube. -#}
+{%- if yt_route != 'off' -%}
+{%-   set yt = {'type': 'direct', 'tag': 'youtube-ru', 'bind_interface': router_wan} -%}
+{%-   if yt_route == 'zapret' -%}
+{%-     set ns.out = ns.out + [yt | combine({'routing_mark': env.YT_MARK | default(256, true) | int}),
+          {'type': 'selector', 'tag': 'youtube-auto', 'outbounds': ['youtube-ru', 'foreign-best'],
+           'default': 'youtube-ru', 'interrupt_exist_connections': true}] -%}
+{%-     set ns.yt_tag = 'youtube-auto' -%}
+{%-   else -%}
+{%-     set ns.out = ns.out + [yt] -%}
+{%-   endif -%}
+{%- endif -%}
+{%- for tag in exits -%}
+{%-   set T = tag | upper | replace('-', '_') -%}
+{%-   set domain = env['DOMAIN_' ~ T] -%}
+{%-   set pwd = {'direct': router_secret[T ~ '_DIRECT'], 'warp': router_secret[T ~ '_WARP'],
+                 'mgmt': router_secret[T ~ '_MGMT']} -%}
+{%-   set obfs = {'type': 'salamander', 'password': router_secret[T ~ '_OBFS']} -%}
+{%-   set ports = {'direct': (env[T ~ '_HY2_DIRECT_PORT'] | default(env.HY2_DIRECT_PORT, true)) | int,
+                   'warp': env.HY2_WARP_PORT | int,
+                   'mgmt': (env[T ~ '_HY2_MGMT_PORT'] | default(env.HY2_MGMT_PORT, true)) | int} -%}
+{%-   if (env[T ~ '_HY2_INSECURE'] | default('')) == '1' -%}
+{%-     set tls = {'enabled': true, 'server_name': domain, 'insecure': true} -%}
+{%-   else -%}
+{%-     set tls = {'enabled': true, 'server_name': domain, 'certificate_path': router_certs ~ '/' ~ tag ~ '.pem'} -%}
+{%-   endif -%}
+{#-   Экзит ждёт скорость со своей стороны: up и down меняются местами. -#}
+{%-   set up, down = env[T ~ '_HY2_UP_MBPS'] | default(''), env[T ~ '_HY2_DOWN_MBPS'] | default('') -%}
+{%-   set speed = {'up_mbps': down | int, 'down_mbps': up | int} if up and down else {} -%}
+{%-   set reality = router_reality.get(tag, {}) -%}
+{%-   set tcp = 'PUB' in reality -%}
+{#-   Trojan + h2mux внутри Hysteria2: потоки изолированы, провод тот же. -#}
+{%-   for kind, inner in [('direct', 10443), ('warp', 10444)] -%}
+{%-     set ns.out = ns.out + [{'type': 'trojan', 'tag': 'hy2-' ~ tag ~ '-' ~ kind, 'server': '127.0.0.1',
+          'server_port': inner, 'password': pwd[kind],
+          'detour': ('transport-' if tcp else 'transport-hy2-') ~ tag ~ '-' ~ kind,
+          'multiplex': {'enabled': true, 'protocol': 'h2mux', 'max_connections': 4}}] -%}
+{%-   endfor -%}
+{%-   for kind in ['direct', 'warp', 'mgmt'] -%}
+{%-     set hy2_tag = 'hy2-' ~ tag ~ '-mgmt' if kind == 'mgmt' and not tcp else 'transport-hy2-' ~ tag ~ '-' ~ kind -%}
+{%-     set ns.out = ns.out + [({'type': 'hysteria2', 'tag': hy2_tag, 'server': domain, 'server_port': ports[kind],
+          'password': pwd[kind], 'obfs': obfs, 'tls': tls}
+          | combine(speed if kind != 'mgmt' else {}, hop.get(kind, {})))] -%}
+{%-   endfor -%}
+{#-   Запасной канал VLESS + Reality по TCP; между ним и hy2 выбирает failover-watchdog. -#}
+{%-   if tcp -%}
+{%-     for kind in ['direct', 'warp', 'mgmt'] -%}
+{%-       set selector = 'hy2-' ~ tag ~ '-mgmt' if kind == 'mgmt' else 'transport-' ~ tag ~ '-' ~ kind -%}
+{%-       set ns.out = ns.out + [
+            {'type': 'vless', 'tag': 'transport-tcp-' ~ tag ~ '-' ~ kind, 'server': domain,
+             'server_port': reality.PORT | int, 'uuid': ('vpn2-reality:' ~ pwd[kind]) | to_uuid(namespace=router_uuid_ns),
+             'tls': {'enabled': true, 'server_name': reality.SNI,
+                     'utls': {'enabled': true, 'fingerprint': 'chrome'},
+                     'reality': {'enabled': true, 'public_key': reality.PUB, 'short_id': reality.SID | default('')}}},
+            {'type': 'selector', 'tag': selector, 'default': 'transport-hy2-' ~ tag ~ '-' ~ kind,
+             'outbounds': ['transport-hy2-' ~ tag ~ '-' ~ kind, 'transport-tcp-' ~ tag ~ '-' ~ kind],
+             'interrupt_exist_connections': true}] -%}
+{%-     endfor -%}
+{%-   endif -%}
+{#-   Скрейп node_exporter экзита: SOCKS mon-<tag>, порт из последнего октета MGMT_IP. -#}
+{%-   set ns.mon_in = ns.mon_in + [{'type': 'mixed', 'tag': 'mon-' ~ tag, 'listen': '127.0.0.1',
+        'listen_port': 10100 + env['MGMT_IP_' ~ T].split('.')[-1] | int}] -%}
+{%-   set ns.mon_rules = ns.mon_rules + [{'inbound': 'mon-' ~ tag, 'outbound': 'hy2-' ~ tag ~ '-mgmt'}] -%}
+{%-   set ns.direct = ns.direct + ['hy2-' ~ tag ~ '-direct'] -%}
+{%-   set ns.warp = ns.warp + ['hy2-' ~ tag ~ '-warp'] -%}
+{%- endfor -%}
+{%- set all_hy2 = ns.direct + ns.warp -%}
+{#- Дорожки: устройство попадает в lane-NN по последнему октету адреса (пулы - /24),
+    экзит дорожки выбирает failover-watchdog через clash-api без рестарта. -#}
+{%- set lanes = env.LANES | default(32, true) | int -%}
+{%- set lane_ips = [] -%}
+{%- for _ in range(lanes) %}{% set _ = lane_ips.append([]) %}{% endfor -%}
+{%- for kind in ['wg', 'ovpn', 'ikev2'] -%}
+{%-   for subnet in router_pools[kind].subnets -%}
+{%-     for octet in range(1, 255) -%}
+{%-       set _ = lane_ips[octet % lanes].append(subnet.rsplit('.', 1)[0] ~ '.' ~ octet ~ '/32') -%}
+{%-     endfor -%}
+{%-   endfor -%}
+{%- endfor -%}
+{%- set urltest = {'type': 'urltest', 'url': 'http://www.gstatic.com/generate_204', 'interval': '10s',
+                   'tolerance': 50, 'idle_timeout': '5m', 'interrupt_exist_connections': false} -%}
+{%- set ns.out = ns.out + [
+      urltest | combine({'tag': 'direct-best', 'outbounds': ns.direct}),
+      urltest | combine({'tag': 'warp-best', 'outbounds': ns.warp}),
+      {'type': 'selector', 'tag': 'foreign-best', 'outbounds': all_hy2, 'default': all_hy2[0], 'interrupt_exist_connections': false},
+      {'type': 'selector', 'tag': 'tg-best', 'outbounds': all_hy2, 'default': all_hy2[0], 'interrupt_exist_connections': false}] -%}
+{%- set ns.lane_rules = [] -%}
+{%- for i in range(lanes) -%}
+{%-   set ns.out = ns.out + [{'type': 'selector', 'tag': 'lane-%02d' % i, 'outbounds': all_hy2,
+        'default': ns.direct[i % ns.direct | length], 'interrupt_exist_connections': false}] -%}
+{%-   if lane_ips[i] %}{% set ns.lane_rules = ns.lane_rules + [{'source_ip_cidr': lane_ips[i], 'outbound': 'lane-%02d' % i}] %}{% endif -%}
+{%- endfor -%}
+{#- pin-<выход> для ручных маршрутов: пока выход мёртв, сторож держит его на запасном;
+    у warp запасные - только другие WARP-ноги. -#}
+{%- for t in all_hy2 -%}
+{%-   set spare = ns.warp | reject('equalto', t) | list if t in ns.warp else ['foreign-best'] -%}
+{%-   set ns.out = ns.out + [{'type': 'selector', 'tag': 'pin-' ~ t, 'outbounds': [t] + spare, 'default': t,
+        'interrupt_exist_connections': false}] -%}
+{%- endfor -%}
+{#- YouTube выше geoip ru: узлы GGC стоят у российских провайдеров и без этого ушли бы
+    в direct-ru без метки. QUIC режется, десинк работает только по TCP. -#}
+{%- set domestic = [] -%}
+{%- if yt_route != 'off' -%}
+{%-   if (env.YT_QUIC | default('block', true)) == 'block' -%}
+{%-     set domestic = [{'domain_suffix': yt_domains, 'network': 'udp', 'port': [443], 'action': 'reject'},
+                        {'rule_set': ['geosite-youtube'], 'network': 'udp', 'port': [443], 'action': 'reject'}] -%}
+{%-   endif -%}
+{%-   set domestic = domestic + [{'domain_suffix': yt_domains, 'outbound': ns.yt_tag},
+                                 {'rule_set': ['geosite-youtube'], 'outbound': ns.yt_tag}] -%}
+{%- endif -%}
+{%- set domestic = domestic + [{'domain_suffix': router_ru_zones, 'outbound': 'direct-ru'},
+                               {'rule_set': ['geosite-category-gov-ru'], 'outbound': 'direct-ru'},
+                               {'rule_set': ['geoip-ru'], 'outbound': 'direct-ru'}] -%}
+{#- Telegram маскирует TLS чужим SNI: его сети не попадают ни в одно РФ-правило. -#}
+{%- set ns.domestic = [] -%}
+{%- for rule in domestic -%}
+{%-   set action = rule | dict2items | selectattr('key', 'in', ['action', 'outbound']) | items2dict -%}
+{%-   set match = rule | dict2items | rejectattr('key', 'in', ['action', 'outbound']) | items2dict -%}
+{%-   set ns.domestic = ns.domestic + [{'type': 'logical', 'mode': 'and',
+        'rules': [match, {'ip_cidr': router_telegram_cidrs, 'invert': true}]} | combine(action)] -%}
+{%- endfor -%}
+{%- set ns.rule_sets = [] -%}
+{%- for name in router_rule_sets -%}
+{%-   set ns.rule_sets = ns.rule_sets + [{'type': 'local', 'tag': name, 'format': 'binary', 'path': router_rule_set_dir ~ '/' ~ name ~ '.srs'}] -%}
+{%- endfor -%}
+{%- set entry_addrs = {'type': 'local', 'tag': 'entry-addrs', 'format': 'source', 'path': '/etc/sing-box/entry-addrs.json'} -%}
+{%- set head = [{'inbound': ['wg-tproxy-in'], 'action': 'sniff'}] + ns.mon_rules + [
+      {'ip_cidr': ['127.0.0.0/8', '0.0.0.0/8'], 'action': 'reject'},
+      {'port': [853], 'ip_cidr': ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8'], 'action': 'reject'},
+      {'inbound': ['tg-proxy'], 'rule_set': ['entry-addrs'], 'outbound': 'direct-best'},
+      {'inbound': ['tg-proxy'], 'outbound': 'tg-best'},
+      {'inbound': ['agh-doh-v4', 'agh-doh-v6'], 'port': [443], 'outbound': 'foreign-best',
+       'ip_cidr': ['1.1.1.1/32', '8.8.8.8/32', '8.8.4.4/32', '2001:4860:4860::8888/128', '2001:4860:4860::8844/128']},
+      {'inbound': ['agh-doh-v4', 'agh-doh-v6'], 'action': 'reject'},
+      {'inbound': ['wg-tproxy-in'], 'protocol': 'dns', 'action': 'route', 'outbound': 'dns-unfiltered',
+       'override_address': '127.0.0.2', 'override_port': 53},
+      {'ip_cidr': router_client_blocked, 'action': 'reject'},
+      {'ip_is_private': true, 'action': 'reject'},
+      {'type': 'logical', 'mode': 'and', 'action': 'reject', 'rules': [
+        {'rule_set': ['entry-addrs']}, {'network': ['tcp'], 'port': [22, 80, 443], 'invert': true}]}] -%}
+{{ {
+  'log': {'level': 'error', 'timestamp': true},
+  'dns': {
+    'servers': [
+      {'type': 'udp', 'tag': 'ru-dns', 'server': '77.88.8.8', 'detour': 'direct-ru'},
+      {'type': 'udp', 'tag': 'bootstrap-dns', 'server': '8.8.8.8', 'detour': 'direct-ru'},
+      {'type': 'udp', 'tag': 'adguard', 'server': mgmt_ip, 'detour': 'local-dns'}],
+    'rules': [{'domain_suffix': router_ru_zones, 'server': 'ru-dns'}],
+    'final': 'adguard', 'strategy': 'ipv4_only'},
+  'inbounds': [
+    {'type': 'redirect', 'tag': 'agh-doh-v4', 'listen': '127.0.0.1', 'listen_port': 7899},
+    {'type': 'redirect', 'tag': 'agh-doh-v6', 'listen': '::1', 'listen_port': 7899},
+    {'type': 'mixed', 'tag': 'tg-proxy', 'listen': '127.0.0.1', 'listen_port': 7897},
+    {'type': 'tproxy', 'tag': 'wg-tproxy-in', 'listen': '127.0.0.1', 'listen_port': 7898}] + ns.mon_in,
+  'outbounds': ns.out,
+  'route': {
+    'rule_set': ns.rule_sets + [entry_addrs],
+    'rules': head + ns.domestic + ns.lane_rules,
+    'final': 'foreign-best',
+    'auto_detect_interface': true,
+    'default_domain_resolver': {'server': 'bootstrap-dns'}},
+  'experimental': {
+    'cache_file': {'enabled': true, 'path': '/var/lib/sing-box/cache.db'},
+    'clash_api': {'external_controller': mgmt_ip ~ ':9090', 'secret': router_clash_secret}}
+} | to_nice_json(indent=2) }}

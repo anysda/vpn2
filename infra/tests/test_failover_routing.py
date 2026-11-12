@@ -1,23 +1,16 @@
 """Verify that generated foreign selectors cannot fall back to entry direct."""
-import contextlib
-import importlib.util
-import io
 import json
 import os
 from pathlib import Path
 import unittest
-from unittest.mock import patch
 
-from router_support import exit_cert
+from router_support import exit_cert, generate
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 
 
 def router_config():
-    spec = importlib.util.spec_from_file_location('router', ROOT / 'infra/vpn2/src/vpn2/router/config.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
     env = {'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '443', 'HY2_WARP_PORT': '8443',
            'HY2_MGMT_PORT': '9443', 'WG_OUT_IFACE': 'lo', 'RU_CLASH_SECRET': 'test'}
     for n, tag in enumerate(('AA', 'BB'), start=2):
@@ -25,10 +18,7 @@ def router_config():
                     f'{tag}_HY2_CERT_PATH': exit_cert()})
         for key in ('DIRECT', 'WARP', 'MGMT', 'OBFS'):
             env[f'{tag}_{key}'] = 'test'
-    output = io.StringIO()
-    with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output):
-        module.main()
-    return json.loads(output.getvalue())
+    return json.loads(generate(**env))
 
 
 class TestFailoverRouting(unittest.TestCase):

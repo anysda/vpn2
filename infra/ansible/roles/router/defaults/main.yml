@@ -2,34 +2,54 @@
 router_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 router_tmp: /tmp/anysda
 router_vpn2: /opt/vpn2/venv/bin/vpn2
-router_step: ["{{ router_vpn2 }}", router]
 # Установщик sing-box зовёт python3 -m vpn2.release: первым в PATH стоит venv с пакетом.
 router_path: /opt/vpn2/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# Окружение генератора конфига: общие переменные стадии и по набору на экзит.
-router_env_common:
-  - EXIT_TAGS
-  - HY2_DIRECT_PORT
-  - HY2_WARP_PORT
-  - HY2_MGMT_PORT
-  - MGMT_IP
-  - HY2_HOP_ENABLED
-  - HY2_HOP_DIRECT
-  - HY2_HOP_WARP
-  - HY2_HOP_MGMT
-  - HY2_HOP_INTERVAL
-  - YT_ROUTE
-  - YT_QUIC
-  - YT_MARK
-  - YT_DOMAINS
-router_env_exit_prefix: [DOMAIN, MGMT_IP]
-router_env_exit_suffix: [HY2_UP_MBPS, HY2_DOWN_MBPS, HY2_DIRECT_PORT, HY2_MGMT_PORT, HY2_INSECURE]
-router_exits: "{{ (vpn2_env.EXIT_TAGS | default('')).split() | map('upper') | map('replace', '-', '_') | list }}"
-router_env_names: >-
-  {{ router_env_common
-     + (router_env_exit_prefix | product(router_exits) | map('join', '_') | list)
-     + (router_exits | product(router_env_exit_suffix) | map('join', '_') | list) }}
-router_env: "{{ dict(router_env_names | product([''])) | combine(vpn2_env | dict2items | selectattr('key', 'in', router_env_names) | items2dict) }}"
-
+router_env: "{{ vpn2_env }}"
 # Что деплой снял с экзитов: каталогов может не быть, если экзиты ещё не ставились.
 router_secrets: "{{ router_infra }}/secrets"
+router_pools: "{{ lookup('ansible.builtin.file', router_infra ~ '/../app/shared/vpn-pools.json') | from_json }}"
+router_exits: "{{ (vpn2_env.EXIT_TAGS | default('')).split() }}"
+router_certs: /etc/sing-box/exit-certs
+router_sing_box: /usr/local/bin/sing-box
+
+# Наборы sing-geoip/sing-geosite: качаются раз в неделю, sing-box перечитывает их сам.
+router_rule_set_dir: /var/lib/sing-box/rule-set
+router_rule_sets: [geoip-ru, geosite-youtube, geosite-category-gov-ru]
+router_rule_set_url: https://raw.githubusercontent.com/SagerNet/sing-{kind}/rule-set/{name}.srs
+
+# Тот же uuid канала Reality из пароля, что у инбаунда экзита (uuid.NAMESPACE_OID).
+router_uuid_ns: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+router_hop_defaults: {direct: 20000-24999, warp: 25000-29999, mgmt: 30000-30999}
+router_ru_zones: [.ru, .рф, .xn--p1ai, .su]
+
+# geosite отстаёт на неделю; googlevideo - само видео, youtubei и jnn-pa - API и
+# аттестация плеера: уйдя за границу, они включают рекламу.
+router_yt_domains:
+  - youtube.com
+  - youtu.be
+  - youtube-nocookie.com
+  - youtubekids.com
+  - ytimg.com
+  - ggpht.com
+  - googlevideo.com
+  - youtubei.googleapis.com
+  - jnn-pa.googleapis.com
+  - youtube.googleapis.com
+  - youtubeembeddedplayer.googleapis.com
+  - yt3.googleusercontent.com
+  - yt.be
+
+# https://core.telegram.org/resources/cidr.txt (2026-10-09).
+router_telegram_cidrs: [91.105.192.0/23, 91.108.4.0/22, 91.108.8.0/22, 91.108.12.0/22, 91.108.16.0/22,
+                        91.108.20.0/22, 91.108.56.0/22, 149.154.160.0/20, 185.76.151.0/24, '2001:67c:4e8::/48',
+                        '2001:b28:f23c::/48', '2001:b28:f23d::/48', '2001:b28:f23f::/48', '2a0a:f280::/32']
+
+# Куда клиенту туннеля нельзя: metadata API хостера, частные сети, loopback, мультикаст
+# и IPv6-формы, в которые заворачивается IPv4.
+router_client_blocked: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+                        192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4, '::/127', '64:ff9b::/96', '64:ff9b:1::/48',
+                        '100::/64', '2001::/32', '2002::/16', 'fc00::/7', 'fe80::/10', 'ff00::/8']
+
+# Пароль экзита в алфавите его генератора; остальное в файле секретов - чужое.
+router_secret_re: '[A-Z][A-Z0-9_]*_(DIRECT|WARP|OBFS|MGMT|CLASH)=[A-Za-z0-9+/]{16,128}'
+router_reality: {}

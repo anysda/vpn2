@@ -1,0 +1,34 @@
+---
+# Набор старше недели или битый качается заново. HTTP 200 не гарантирует SRS:
+# файл встаёт на место только после проверки, до неё sing-box читает прежний.
+- name: Возраст наборов
+  ansible.builtin.stat:
+    path: "{{ router_rule_set_dir }}/{{ item }}.srs"
+  loop: "{{ router_rule_sets }}"
+  register: router_srs
+
+- name: Свежие наборы скачаны
+  ansible.builtin.get_url:
+    url: "{{ router_rule_set_url | replace('{kind}', item.item.split('-')[0]) | replace('{name}', item.item) }}"
+    dest: "{{ router_rule_set_dir }}/{{ item.item }}.srs.new"
+    force: true
+    mode: '0644'
+    timeout: 20
+  loop: "{{ router_srs.results }}"
+  when: not item.stat.exists or now().timestamp() - item.stat.mtime > 604800
+  register: router_srs_new
+  until: router_srs_new is succeeded
+  retries: 5
+  delay: 3
+
+- name: Скачанные наборы проверены
+  ansible.builtin.command:
+    argv: [/usr/local/bin/sing-box, rule-set, decompile, --output, /dev/null, "{{ item.dest }}"]
+  loop: "{{ router_srs_new.results | selectattr('dest', 'defined') | list }}"
+  changed_when: false
+
+- name: Проверенные наборы на месте
+  ansible.builtin.command:
+    argv: [mv, -f, "{{ item.dest }}", "{{ item.dest | regex_replace('\\.new$', '') }}"]
+  loop: "{{ router_srs_new.results | selectattr('dest', 'defined') | list }}"
+  changed_when: true

@@ -6,17 +6,14 @@ import vpn_roles
 
 class OpenvpnFirewallTests(unittest.TestCase):
     def test_server_transport_aliases(self):
-        protocols = vpn_roles.package('entryvpn').ovpn_protocols
-        for proto in ('udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6',
-                      'tcp-server', 'tcp4-server', 'tcp6-server'):
+        self.assertIn('openvpn_protocols: [udp, udp4, udp6, tcp, tcp4, tcp6, tcp-server, tcp4-server, tcp6-server]',
+                      vpn_roles.role_defaults('openvpn'))
+        self.assertIn('that: openvpn_proto in openvpn_protocols', vpn_roles.role_tasks('openvpn'))
+        for proto, expected in (('udp6', 'udp6'), ('tcp', 'tcp-server'), ('tcp4-server', 'tcp4-server')):
             with self.subTest(proto=proto):
-                expected = proto + '-server' if proto in ('tcp', 'tcp4', 'tcp6') else proto
-                self.assertEqual(protocols(proto), (expected, proto[:3]))
-        with self.assertRaises(ValueError):
-            protocols('sctp')
+                self.assertIn(f'\nproto {expected}\n', vpn_roles.server_conf(proto=proto))
 
     def test_transport_variants_open_listener_port(self):
-        # ufw получает первые три буквы OVPN_PROTO: тот же протокол, что отдаёт ovpn_protocols.
         self.assertIn('openvpn_ufw_proto: "{{ openvpn_proto[:3] }}"', vpn_roles.role_defaults('openvpn'))
         for transport in ('udp', 'tcp'):
             with self.subTest(transport=transport):

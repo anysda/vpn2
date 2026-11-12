@@ -12,9 +12,7 @@ import yaml
 
 from adguard_support import Hub
 from containers_support import compose, telegram
-from router_support import exit_secrets, stage
 from zapret_support import render
-import vpn_roles
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -99,17 +97,6 @@ class FrontendLiteralTests(unittest.TestCase):
                 self.assertEqual(compose.mgmt_ips(environ), f'ru:192.0.2.1,test:{value},tail:192.0.2.3')
 
 
-class RouterExportLiteralTests(unittest.TestCase):
-    def test_default_ports_are_data(self):
-        for value in VALUES:
-            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                environ = {'EXIT_TAGS': 'test', 'HY2_DIRECT_PORT': value, 'HY2_MGMT_PORT': value}
-                env, _ = stage.exit_environment(environ, exit_secrets(['test']), Path(work, 'in'),
-                                                Path(work, 'pinned'), 'lo')
-                self.assertEqual([env['TEST_HY2_DIRECT_PORT'], env['TEST_HY2_MGMT_PORT']], [value, value])
-                self.assertFalse((Path(work) / 'INJECTED').exists())
-
-
 class LogLiteralTests(unittest.TestCase):
     def test_all_stage_log_prefixes(self):
         for path in sorted((ROOT / 'infra/scripts').glob('*.sh')):
@@ -126,21 +113,6 @@ class LogLiteralTests(unittest.TestCase):
                             result = run(script, work, HOST_TAG=value)
                             self.assertEqual(result.returncode, 0, result.stderr)
                             self.assertEqual(result.stdout, normal.stdout.replace('[plain]', '[' + value + ']'))
-
-
-class IkeRoutingLiteralTests(unittest.TestCase):
-    def test_generated_routing_shell(self):
-        for value in [*VALUES, "'; touch INJECTED; #"]:
-            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                text = vpn_roles.ikev2_routing(value, [value + '/24', value], value)
-                (Path(work) / 'routing.sh').write_text(
-                    text.replace('/run/anysda-vpn-routing.lock', work + '/routing.lock'))
-                # Unknown action executes assignments without touching networking.
-                loaded = run('source routing.sh inspect\nprintf "%s\\0" '
-                             '"$WAN_IF" "$IKEV2_SUBNETS" "$IKEV2_SUBNET6"', work)
-                self.assertEqual(loaded.returncode, 0, loaded.stderr)
-                self.assertEqual(loaded.stdout.split('\0')[:-1], [value, f'{value}/24 {value}', value])
-                self.assertFalse((Path(work) / 'INJECTED').exists())
 
 
 class BackupLiteralTests(unittest.TestCase):

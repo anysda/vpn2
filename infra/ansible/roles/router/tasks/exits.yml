@@ -1,0 +1,115 @@
+---
+# Пароли экзитов деплой снимает с них в foreign-secrets.env. Файл не исполняется:
+# строка не в форме пароля обрывает стадию.
+- name: Пароли экзитов в форме пароля
+  ansible.builtin.assert:
+    that:
+      - router_secrets_file is file
+      - router_secret_lines | reject('match', router_secret_re ~ '$') | list | length == 0
+    fail_msg: >-
+      {{ router_secrets_file }}: нет файла или в нём чужая строка - экзит отдал не пароль, стадию прерываю
+    quiet: true
+  vars:
+    router_secrets_file: "{{ router_secrets }}/foreign-secrets.env"
+    router_secret_lines: "{{ lookup('ansible.builtin.file', router_secrets_file).splitlines() | select | list }}"
+
+- name: Пароли экзитов разобраны
+  ansible.builtin.set_fact:
+    router_secret: "{{ dict(lookup('ansible.builtin.file', router_secrets ~ '/foreign-secrets.env').splitlines()
+                       | select | map('split', '=', 1)) }}"
+
+- name: У каждого экзита все пароли
+  ansible.builtin.assert:
+    that: (item.0 | upper | replace('-', '_')) ~ '_' ~ item.1 in router_secret
+    fail_msg: "секрет {{ item.0 }} {{ item.1 }} не найден в foreign-secrets.env"
+    quiet: true
+  loop: "{{ router_exits | product(['DIRECT', 'WARP', 'MGMT', 'OBFS']) | list }}"
+
+# Сертификат, не приехавший в этот раз, остаётся закреплённым с прошлого.
+- name: Сертификаты и ключи Reality экзитов
+  ansible.builtin.copy:
+    src: "{{ router_secrets }}/exit-certs/{{ item }}"
+    dest: "{{ router_certs }}/{{ item }}"
+    mode: '0600'
+  loop: "{{ router_exits | product(['.pem', '.reality']) | map('join') | list }}"
+  when: (router_secrets ~ '/exit-certs/' ~ item) is file
+
+- name: Закреплённые сертификаты на узле
+  ansible.builtin.stat:
+    path: "{{ router_certs }}/{{ item }}.pem"
+  loop: "{{ router_exits }}"
+  register: router_pems
+
+# insecure включает только явный exits[].hy2_insecure.
+- name: Сертификат каждого экзита закреплён
+  ansible.builtin.assert:
+    that: item.stat.exists or vpn2_env[(item.item | upper | replace('-', '_')) ~ '_HY2_INSECURE'] | default('') == '1'
+    fail_msg: >-
+      экзит {{ item.item }}: нет закреплённого сертификата. Запусти ./deploy.sh: он забирает сертификат
+      с экзита. Без проверки сертификата - только явным exits[].hy2_insecure: true в config.yaml
+    quiet: true
+  loop: "{{ router_pems.results }}"
+
+- name: Экзиты без проверки сертификата
+  ansible.builtin.debug:
+    msg: "WARNING: экзит {{ item }}: exits[].hy2_insecure: true - сертификат не проверяется, подмена экзита на пути не обнаруживается"
+  loop: "{{ router_exits }}"
+  when: vpn2_env[(item | upper | replace('-', '_')) ~ '_HY2_INSECURE'] | default('') == '1'
+
+# Нет открытой части Reality (экзит ещё не передеплоен) - каналы только на hy2.
+- name: Открытые части Reality
+  ansible.builtin.slurp:
+    src: "{{ router_certs }}/{{ item }}.reality"
+  loop: "{{ router_exits }}"
+  register: router_reality_files
+  failed_when: false
+
+- name: Открытые части Reality разобраны
+  ansible.builtin.set_fact:
+    router_reality: >-
+      {{ router_reality | combine({item.item: dict(item.content | b64decode | split('\n') | select | map('split', '=', 1))}) }}
+  loop: "{{ router_reality_files.results | selectattr('content', 'defined') | list }}"
+
+- name: Секрет clash-api создаётся один раз
+  ansible.builtin.shell:
+    cmd: umask 077 && tr -dc A-Za-z0-9 < /dev/urandom | head -c 32 > /etc/anysda/clash-secret.txt
+    creates: /etc/anysda/clash-secret.txt
+
+- name: Секрет clash-api
+  ansible.builtin.slurp:
+    src: /etc/anysda/clash-secret.txt
+  register: router_clash
+
+- name: Маршрут по умолчанию
+  ansible.builtin.command:
+    argv: [ip, -4, -o, route, show, default]
+  register: router_route
+  changed_when: false
+  failed_when: "' dev ' not in router_route.stdout"
+
+- name: Базовый конфиг роутера
+  ansible.builtin.template:
+    src: config-base.json.j2
+    dest: /etc/sing-box/config-base.json
+    mode: '0600'
+    validate: "{{ router_sing_box }} check -c %s"
+  vars:
+    router_wan: "{{ router_route.stdout.split(' dev ')[1].split()[0] }}"
+    router_clash_secret: "{{ router_clash.content | b64decode | trim }}"
+
+# ssh <tag> на экзиты через служебный туннель; ключ entry раскладывает base.
+- name: Конфиг ssh на экзиты
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/root/.ssh/{{ item }}"
+    mode: '0600'
+  loop: [anysda-mgmt.conf, known_hosts_mgmt]
+
+# Include обязан стоять до первого Host, иначе попадёт внутрь его блока.
+- name: Конфиг ssh подключён
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/config
+    line: Include /root/.ssh/anysda-mgmt.conf
+    insertbefore: BOF
+    create: true
+    mode: '0600'

@@ -88,52 +88,19 @@
 
 - name: Внешний интерфейс по маршруту по умолчанию
   ansible.builtin.command:
-    cmd: ip route show default
+    cmd: ip -4 -o route show default
   register: ikev2_route
   changed_when: false
+  failed_when: "' dev ' not in ikev2_route.stdout"
 
-- name: Юнит маршрутизации xfrm0
-  ansible.builtin.copy:
-    src: anysda-ikev2-routing.service
-    dest: /etc/systemd/system/anysda-ikev2-routing.service
-    mode: '0644'
-
-- name: Ресурсы юнита маршрутизации
+- name: Маршрутизация xfrm0
   ansible.builtin.include_role:
-    name: resources
+    name: wireguard
+    tasks_from: routing
   vars:
-    resources_units: [anysda-ikev2-routing]
-
-- name: Скрипт маршрутизации xfrm0
-  ansible.builtin.template:
-    src: anysda-ikev2-routing.sh.j2
-    dest: /usr/local/sbin/anysda-ikev2-routing.sh
-    mode: '0755'
-  vars:
-    ikev2_wan_if: "{{ (ikev2_route.stdout_lines | select('search', 'default') | first).split()[4] }}"
-
-- name: Маршрутизация xfrm0 включена
-  ansible.builtin.systemd_service:
-    name: anysda-ikev2-routing
-    enabled: true
-    daemon_reload: true
-
-# Рестарт = down + up, а down удаляет xfrm0 из-под живых SA.
-- name: Маршрутизация xfrm0 запущена с текущими входами
-  ansible.builtin.command:
-    argv: >-
-      {{ ikev2_host + ['restart-if-changed', 'anysda-ikev2-routing',
-         '/etc/systemd/system/anysda-ikev2-routing.service', '/usr/local/sbin/anysda-ikev2-routing.sh'] }}
-  environment: "{{ ikev2_env }}"
-  register: ikev2_step
-  changed_when: "'vpn2: changed' in ikev2_step.stdout"
-
-- name: Цепочка TPROXY xfrm0 на месте
-  ansible.builtin.command:
-    argv: "{{ ikev2_host + ['routing-ensure', 'anysda-ikev2-routing', 'xfrm0', 'ANYSDA_IKEV2_TPROXY'] }}"
-  environment: "{{ ikev2_env }}"
-  register: ikev2_step
-  changed_when: "'vpn2: changed' in ikev2_step.stdout"
+    routing: {unit: anysda-ikev2-routing, iface: xfrm0, chain: ANYSDA_IKEV2_TPROXY, mss: 1360,
+              after: strongswan-starter.service, routes: "{{ ikev2_subnets }}", v6_reject: true,
+              xfrm_dev: "{{ ikev2_route.stdout.split(' dev ')[1].split()[0] }}", subnet6: "{{ ikev2_subnet6 }}"}
 
 # Панель живёт в контейнере без swanctl и сокета charon. Применяет её
 # anysda-clients.conf этот таймер на узле: грузит конфиг в charon, рвёт SA

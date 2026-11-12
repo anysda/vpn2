@@ -15,7 +15,7 @@ PROTOCOLS = (('28-wireguard', 'wg0'), ('29-openvpn', 'tun0'), ('27-ikev2', 'xfrm
 
 
 def routing_script(stage, directory):
-    text = vpn_roles.ikev2_routing() if stage == '27-ikev2' else vpn_roles.routing(stage)
+    text = vpn_roles.routing(stage)
     return text.replace('/run/anysda-vpn-routing.lock', str(Path(directory) / 'routing.lock'))
 
 
@@ -29,7 +29,6 @@ class IcmpRoutingTests(unittest.TestCase):
 ip() { echo 'local default dev lo'; }
 iptables() { [[ " $* " != *" -C "* ]] && echo "iptables $*"; }
 ip6tables() { [[ " $* " != *" -C "* ]]; }
-export WG_SUBNETS=10.66.66.0/24
 ''' + f'set -- {action}\n' + script, directory)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     rejects = [line for line in result.stdout.splitlines()
@@ -67,7 +66,6 @@ ip -n "$ns" route add default via 192.0.2.1
 sysctl -qw net.ipv4.ip_forward=1
 # Даже существующее разрешение ICMP в ufw не должно выпускать ping с entry.
 iptables -A FORWARD -p icmp -j ACCEPT
-export WG_SUBNETS=10.66.66.0/24
 bash "$ROUTING" up
 before=$(iptables -S FORWARD)
 bash "$ROUTING" up

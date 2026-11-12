@@ -1,6 +1,5 @@
 ---
 ikev2_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
-ikev2_tmp: /tmp/anysda
 ikev2_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
 ikev2_env:
   HOST_TAG: "{{ inventory_hostname }}"

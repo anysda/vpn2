@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """Telegram must reach client exit selection even with a misleading sniffed name.
 
-Run against an older generator with ROUTER_GENERATOR=/path/to/gen-router-config.py.
 The matcher below covers only the generated rule fields used in these fixtures;
 unknown fields fail explicitly. It does not emulate sniffing or network transport.
 """
 
 import ipaddress
 import json
-import os
-from pathlib import Path
-import subprocess
-import sys
 import unittest
 
-from router_support import exit_cert
+from router_support import exit_cert, render
 
 
 # sing-box ip_is_private: адрес не публичный (RFC 1918, ULA, loopback, link-local).
@@ -22,8 +17,6 @@ PRIVATE_NETS = [ipaddress.ip_network(net) for net in (
     '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8',
     '169.254.0.0/16', 'fc00::/7', '::1/128', 'fe80::/10')]
 
-GENERATOR = os.environ.get(
-    'ROUTER_GENERATOR', str(Path(__file__).resolve().parents[1] / 'vpn2/src/vpn2/router/config.py'))
 ENV = {
     'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '8443', 'HY2_WARP_PORT': '8444',
     'HY2_MGMT_PORT': '8445', 'WG_OUT_IFACE': 'lo', 'RU_CLASH_SECRET': 'test-only',
@@ -37,9 +30,9 @@ ENV = {
 
 
 def generate(mode, quic='block'):
-    return json.loads(subprocess.check_output(
-        [sys.executable, GENERATOR],
-        env={**ENV, 'YT_ROUTE': mode, 'YT_QUIC': quic}, text=True))
+    done = render({**ENV, 'YT_ROUTE': mode, 'YT_QUIC': quic})
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
 
 
 def matches(rule, flow):

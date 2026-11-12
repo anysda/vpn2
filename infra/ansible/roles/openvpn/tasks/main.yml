@@ -1,12 +1,17 @@
 ---
-# Сервер OpenVPN на tun0: EC PKI (CA, сертификат сервера, tls-crypt), трафик
-# клиентов уходит в ту же цепочку TPROXY sing-box, что у WireGuard. Панель
+# Сервер OpenVPN на tun0: EC PKI (CA, сертификат сервера, tls-crypt). Панель
 # выпускает и отзывает сертификаты клиентов этим CA и ведёт ccd.
 - name: Каталог отметок стадий
   ansible.builtin.file:
     path: /var/anysda/.stamps
     state: directory
     mode: '0755'
+
+- name: Протокол OpenVPN поддержан
+  ansible.builtin.assert:
+    that: openvpn_proto in openvpn_protocols
+    fail_msg: "unsupported OpenVPN protocol: {{ openvpn_proto }}"
+    quiet: true
 
 - name: Пакеты openvpn и openssl
   ansible.builtin.apt:
@@ -18,8 +23,7 @@
   retries: 3
   delay: 10
 
-# Ключи переживают повторы: комплект собирается в копии и подменяет прежний
-# целиком, действующие ключи не перевыпускаются.
+# Комплект собирается в копии и подменяет прежний целиком; действующие ключи не перевыпускаются.
 - name: Каталоги сервера и комплект PKI
   ansible.builtin.command:
     argv: "{{ openvpn_host + ['ovpn-pki'] }}"
@@ -27,14 +31,16 @@
   register: openvpn_step
   changed_when: "'vpn2: changed' in openvpn_step.stdout"
 
+- name: Управление панели через службу
+  ansible.builtin.stat:
+    path: /etc/vpn2-control/api-managed
+  register: openvpn_api_managed
+
 - name: Конфиг server.conf
-  ansible.builtin.command:
-    argv: >-
-      {{ openvpn_host + ['ovpn-server-conf', '--port', openvpn_port, '--proto', openvpn_proto,
-         '--subnet', openvpn_subnet] + openvpn_subnets }}
-  environment: "{{ openvpn_env }}"
-  register: openvpn_step
-  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+  ansible.builtin.template:
+    src: server.conf.j2
+    dest: "{{ openvpn_dir }}/server.conf"
+    mode: '0644'
 
 - name: Пересылка пакетов между интерфейсами
   ansible.builtin.command:
@@ -59,8 +65,7 @@
   vars:
     resources_units: [openvpn-server@server]
 
-# Рестарт рвёт всех клиентов OpenVPN: только при смене конфига, сертификатов
-# или бинарника. Поднявшийся server.conf отмечается как last good.
+# Рестарт рвёт всех клиентов: только при смене конфига, сертификатов или бинарника.
 - name: Сервер OpenVPN запущен с текущими входами
   ansible.builtin.command:
     argv: "{{ openvpn_host + ['ovpn-restart'] }}"
@@ -68,45 +73,14 @@
   register: openvpn_step
   changed_when: "'vpn2: changed' in openvpn_step.stdout"
 
-- name: Юнит маршрутизации tun0
-  ansible.builtin.copy:
-    src: anysda-ovpn-routing.service
-    dest: /etc/systemd/system/anysda-ovpn-routing.service
-    mode: '0644'
-
-- name: Ресурсы юнита маршрутизации
+# MSS 1340: путь с MTU 1440 минус оверхед OpenVPN; mssfix при DCO не работает.
+- name: Маршрутизация tun0
   ansible.builtin.include_role:
-    name: resources
+    name: wireguard
+    tasks_from: routing
   vars:
-    resources_units: [anysda-ovpn-routing]
-
-- name: Скрипт маршрутизации tun0
-  ansible.builtin.copy:
-    src: anysda-ovpn-routing.sh
-    dest: /usr/local/sbin/anysda-ovpn-routing.sh
-    mode: '0755'
-
-- name: Маршрутизация tun0 включена
-  ansible.builtin.systemd_service:
-    name: anysda-ovpn-routing
-    enabled: true
-    daemon_reload: true
-
-- name: Маршрутизация tun0 запущена с текущими входами
-  ansible.builtin.command:
-    argv: >-
-      {{ openvpn_host + ['restart-if-changed', 'anysda-ovpn-routing',
-         '/etc/systemd/system/anysda-ovpn-routing.service', '/usr/local/sbin/anysda-ovpn-routing.sh'] }}
-  environment: "{{ openvpn_env }}"
-  register: openvpn_step
-  changed_when: "'vpn2: changed' in openvpn_step.stdout"
-
-- name: Цепочка TPROXY tun0 на месте
-  ansible.builtin.command:
-    argv: "{{ openvpn_host + ['routing-ensure', 'anysda-ovpn-routing', 'tun0', 'ANYSDA_OVPN_TPROXY'] }}"
-  environment: "{{ openvpn_env }}"
-  register: openvpn_step
-  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+    routing: {unit: anysda-ovpn-routing, iface: tun0, chain: ANYSDA_OVPN_TPROXY, mss: 1340,
+              after: openvpn-server@server.service}
 
 - name: Отметка стадии
   ansible.builtin.copy:

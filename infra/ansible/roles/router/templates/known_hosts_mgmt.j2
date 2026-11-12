@@ -1,0 +1,4 @@
+{# Ключи, снятые с экзитов этим деплоем: переустановленный экзит не упрётся в старый. #}
+{% for tag in router_exits if (router_secrets ~ '/exit-hostkeys/' ~ tag ~ '.pub') is file %}
+anysda-{{ tag }} {{ lookup('ansible.builtin.file', router_secrets ~ '/exit-hostkeys/' ~ tag ~ '.pub').split()[:2] | join(' ') }}
+{% endfor %}

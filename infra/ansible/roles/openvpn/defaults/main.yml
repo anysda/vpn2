@@ -1,20 +1,19 @@
 ---
 openvpn_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
-openvpn_tmp: /tmp/anysda
 openvpn_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
 openvpn_env:
   HOST_TAG: "{{ inventory_hostname }}"
+openvpn_dir: /etc/openvpn/server
 openvpn_port: "{{ vpn2_env.OVPN_PORT | default('1194', true) }}"
-# udp, udp4, udp6, tcp, tcp4, tcp6 и те же tcp с суффиксом -server.
 openvpn_proto: "{{ vpn2_env.OVPN_PROTO | default('udp', true) }}"
+openvpn_protocols: [udp, udp4, udp6, tcp, tcp4, tcp6, tcp-server, tcp4-server, tcp6-server]
 # Сеть tun0 без маски: первая подсеть пула.
 openvpn_subnet: "{{ vpn2_env.OVPN_SUBNET | default('10.67.67.0', true) }}"
-# Единственный список пулов общий с панелью.
 openvpn_pools: "{{ lookup('ansible.builtin.file', openvpn_infra ~ '/../app/shared/vpn-pools.json') | from_json }}"
 openvpn_subnets: "{{ openvpn_pools.ovpn.subnets }}"
 # Клиенты OpenVPN резолвят через AdGuard на mgmt-адресе entry.
 openvpn_dns: 10.99.0.1
-# OpenVPN различает udp4/udp6 и tcp[46]-server, ufw принимает только udp и tcp.
+# ufw принимает только udp и tcp.
 openvpn_ufw_proto: "{{ openvpn_proto[:3] }}"
 openvpn_ufw:
   - {comment: openvpn listener, rules: ["{{ openvpn_port }}/{{ openvpn_ufw_proto }}"]}

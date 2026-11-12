@@ -146,7 +146,7 @@ class Hy2PortHoppingTests(unittest.TestCase):
         for outbound in enabled['outbounds']:
             for key in HOP_KEYS:
                 outbound.pop(key, None)
-        self.assertEqual(disabled, json.dumps(enabled, indent=2, ensure_ascii=False) + '\n')
+        self.assertEqual(json.loads(disabled), enabled)
 
     # край 3
     def test_config_ranges_and_interval_reach_outbound_and_bad_ranges_fail(self):

@@ -9,10 +9,16 @@
 
 - name: Каталоги роутера
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ item.path }}"
     state: directory
-    mode: '0755'
-  loop: [/etc/anysda, /etc/sing-box, /var/lib/sing-box, "{{ router_tmp }}/router"]
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - {path: /etc/anysda}
+    - {path: /etc/sing-box}
+    - {path: /var/lib/sing-box}
+    - {path: "{{ router_rule_set_dir }}"}
+    - {path: "{{ router_tmp }}/router"}
+    - {path: "{{ router_certs }}", mode: '0700'}
 
 - name: Установщик sing-box
   ansible.builtin.copy:
@@ -27,72 +33,28 @@
   environment:
     PATH: "{{ router_path }}"
     VPN2_RELEASE_MANIFEST: "{{ vpn2_env.VPN2_RELEASE_MANIFEST | default('') }}"
-    VPN2_DEVELOPMENT: "{{ vpn2_env.VPN2_DEVELOPMENT | default('') }}"
   register: router_binary
   changed_when: "'уже установлен' not in router_binary.stdout"
 
-# sing-box следит за локальными наборами и перечитывает их сам.
 - name: Наборы правил geoip и geosite
-  ansible.builtin.command:
-    argv: "{{ router_step + ['rule-sets'] }}"
-  register: router_rule_sets
-  changed_when: "'changed=1' in router_rule_sets.stdout"
+  ansible.builtin.include_tasks: rule-sets.yml
 
 # Клиентам VPN до адресов самого entry открыты только публичные порты. Набор
 # пишется и перед каждым стартом sing-box (ExecStartPre юнита).
 - name: Набор адресов entry
   ansible.builtin.command:
-    argv: "{{ router_step + ['entry-addrs'] }}"
+    argv: ["{{ router_vpn2 }}", router, entry-addrs]
   changed_when: false
 
-- name: Скрипты прежних выпусков убраны
-  ansible.builtin.file:
-    path: "/usr/local/sbin/{{ item }}"
-    state: absent
-  loop: [vpn2-entry-addrs, anysda-apply-routes.py]
-
-- name: Секреты экзитов
-  ansible.builtin.copy:
-    src: "{{ router_secrets }}/foreign-secrets.env"
-    dest: "{{ router_tmp }}/foreign-secrets.env"
-    mode: '0600'
-  changed_when: false
-
-- name: Сертификаты и ключи узлов экзитов
-  ansible.builtin.copy:
-    src: "{{ router_secrets }}/{{ item }}"
-    dest: "{{ router_tmp }}/"
-    mode: '0600'
-    directory_mode: '0700'
-  loop: [exit-certs, exit-hostkeys]
-  when: (router_secrets ~ '/' ~ item) is ansible.builtin.directory
-  changed_when: false
-
-- name: Пулы адресов клиентов
-  ansible.builtin.copy:
-    src: "{{ router_infra }}/../app/shared/vpn-pools.json"
-    dest: "{{ router_tmp }}/vpn-pools.json"
-    mode: '0644'
-  changed_when: false
-
-# База без ручных маршрутов: config.json из неё и правил панели собирает
-# apply-routes ниже.
-- name: Базовый конфиг роутера
-  ansible.builtin.command:
-    argv: "{{ router_step + ['base-config'] }}"
-  environment: "{{ router_env }}"
-  register: router_base
-  changed_when: "'changed=1' in router_base.stdout"
+- name: Конфиг роутера по экзитам
+  ansible.builtin.include_tasks: exits.yml
 
 - name: Юниты роутера
   ansible.builtin.copy:
     src: "{{ item }}"
     dest: /etc/systemd/system/
     mode: '0644'
-  loop:
-    - sing-box.service
-    - anysda-apply-routes.service
-    - anysda-apply-routes.path
+  loop: [sing-box.service, anysda-apply-routes.service, anysda-apply-routes.path]
 
 - name: Ресурсы юнитов роутера
   ansible.builtin.include_role:
@@ -100,17 +62,12 @@
   vars:
     resources_units: [sing-box, anysda-apply-routes]
 
-# route_localnet нужен TPROXY клиентов WireGuard и OpenVPN (--on-ip 127.0.0.1).
+# route_localnet нужен TPROXY клиентов (--on-ip 127.0.0.1).
 - name: Sysctl роутера
-  ansible.builtin.copy:
-    src: 99-anysda-vpn.conf
-    dest: /etc/sysctl.d/99-anysda-vpn.conf
-    mode: '0644'
-
-- name: Sysctl роутера применён
-  ansible.builtin.command:
-    argv: [sysctl, -p, /etc/sysctl.d/99-anysda-vpn.conf]
-  changed_when: false
+  ansible.posix.sysctl:
+    name: net.ipv4.conf.all.route_localnet
+    value: '1'
+    sysctl_file: /etc/sysctl.d/99-anysda-vpn.conf
 
 # Пустые файлы, чтобы наблюдателю было за чем следить до первой правки в панели.
 - name: Файлы ручных маршрутов панели
@@ -123,38 +80,41 @@
     - {name: manual-routes.json, content: "[]\n"}
     - {name: client-prefs.json, content: "{}\n"}
 
-- name: Роутер включён
+- name: Роутер и наблюдатель ручных маршрутов включены
   ansible.builtin.systemd_service:
-    name: sing-box
+    name: "{{ item.name }}"
     enabled: true
+    state: "{{ item.state | default(omit) }}"
     daemon_reload: true
-
-- name: Наблюдатель ручных маршрутов
-  ansible.builtin.systemd_service:
-    name: anysda-apply-routes.path
-    enabled: true
-    state: started
+  loop:
+    - {name: sing-box}
+    - {name: anysda-apply-routes.path, state: started}
 
 # config.json = база + ручные маршруты панели; перезапуск один, шагом ниже.
 - name: Конфиг роутера с маршрутами панели
   ansible.builtin.command:
-    argv: "{{ router_step + ['apply-routes', '--no-restart'] }}"
+    argv: ["{{ router_vpn2 }}", router, apply-routes, --no-restart]
   register: router_apply
   changed_when: "'config.json собран' in router_apply.stdout"
 
+# Перезапуск рвёт соединения клиентов: только при смене того, что читает sing-box.
 - name: Роутер запущен с текущими входами
   ansible.builtin.command:
-    argv: "{{ router_step + ['restart'] }}"
+    argv: >-
+      {{ [router_vpn2, 'host', 'restart-if-changed', '--record', '/var/lib/sing-box/applied.sha256', 'sing-box',
+          router_sing_box, '/etc/systemd/system/sing-box.service', '/etc/sing-box/config.json']
+         + router_exits | map('regex_replace', '^(.*)$', router_certs ~ '/\1.pem') | list
+         + ['/etc/sysctl.d/99-anysda.conf'] }}
   register: router_restart
-  changed_when: "'changed=1' in router_restart.stdout"
+  changed_when: "'vpn2: changed' in router_restart.stdout"
 
-# ssh <tag> на экзиты через служебный туннель; ключ entry раскладывает base.
-- name: Конфиг ssh на экзиты
-  ansible.builtin.command:
-    argv: "{{ router_step + ['ssh-config'] }}"
-  environment: "{{ router_env }}"
-  register: router_ssh
-  changed_when: "'changed=1' in router_ssh.stdout"
+# verify идёт сразу после стадии и ходит в clash-api.
+- name: Порт clash-api открыт
+  ansible.builtin.wait_for:
+    host: "{{ vpn2_env.MGMT_IP | default('10.99.0.1', true) }}"
+    port: 9090
+    timeout: 10
+  when: "'vpn2: changed' in router_restart.stdout"
 
 - name: Отметка стадии
   ansible.builtin.copy:

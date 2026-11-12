@@ -46,13 +46,6 @@ def test_clean_root_gets_new_key_and_initial_conf(tmp_path):
     assert identity(tmp_path) is False
 
 
-@NEEDS_WG
-def test_flat_key_migrates_unchanged(tmp_path):
-    (tmp_path / 'server.priv').write_text(KEY + '\n')
-    assert identity(tmp_path) is True
-    assert tree(tmp_path) == shape(KEY, (INITIAL.format(key=KEY), 0o600))
-
-
 @pytest.mark.parametrize('line', ['PrivateKey = {key}', 'privatekey={key} # старый', ' PRIVATEKEY\t=\t{key}'])
 @NEEDS_WG
 def test_key_is_taken_from_interface_of_existing_conf(tmp_path, line):
@@ -135,19 +128,6 @@ def test_apply_restarts_only_when_addresses_differ(tmp_path, answers, address, r
     else:
         assert tail == (['wg', 'syncconf', 'wg0', '/dev/stdin'], b'[Interface]\n')
         assert said == ['адреса wg0 прежние — wg syncconf без рестарта']
-
-
-@NEEDS_WG
-def test_routing_ensure_restarts_unit_only_without_chain():
-    calls, said = [], []
-    args = ('anysda-wg-routing', 'wg0', 'ANYSDA_WG_TPROXY')
-    assert entryvpn.routing_ensure(*args, said.append, run=runner({}, calls)) is False
-    assert calls == [(['iptables', '-t', 'mangle', '-C', 'PREROUTING', '-i', 'wg0', '-j', 'ANYSDA_WG_TPROXY'], None)]
-    calls.clear()
-    lost = {('iptables', '-t', 'mangle'): (1, '')}
-    assert entryvpn.routing_ensure(*args, said.append, run=runner(lost, calls)) is True
-    assert calls[-1] == (['systemctl', 'restart', 'anysda-wg-routing'], None)
-    assert said == ['anysda-wg-routing: цепочка ANYSDA_WG_TPROXY пропала, восстанавливаю']
 
 
 @NEEDS_WG

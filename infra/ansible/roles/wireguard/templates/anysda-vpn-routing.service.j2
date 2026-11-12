@@ -1,0 +1,17 @@
+[Unit]
+Description=anysda-vpn2 — {{ routing.iface }} forwarded traffic → sing-box TPROXY
+After=network-online.target sing-box.service {{ routing.after }}
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=IFACE={{ routing.iface }} CHAIN={{ routing.chain }} MSS={{ routing.mss }}
+Environment="ROUTES={{ routing.routes | default([]) | join(' ') }}"
+Environment=V6_REJECT={{ '1' if routing.v6_reject | default(false) else '' }}
+Environment=XFRM_DEV={{ routing.xfrm_dev | default('') }} SUBNET6={{ routing.subnet6 | default('') }}
+ExecStart=/usr/local/sbin/anysda-vpn-routing.sh up
+ExecStop=/usr/local/sbin/anysda-vpn-routing.sh down
+
+[Install]
+WantedBy=multi-user.target

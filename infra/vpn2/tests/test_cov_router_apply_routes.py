@@ -79,10 +79,7 @@ def box(tmp_path, monkeypatch):
 @pytest.fixture
 def run(capsys):
     def call(*argv):
-        try:
-            code = apply_routes.main(list(argv))
-        except SystemExit as stop:
-            code = stop.code
+        code = apply_routes.main(list(argv))
         captured = capsys.readouterr()
         return code, captured.out, captured.err
     return call
@@ -92,17 +89,11 @@ def stamps(box):
     return {str(path): path.stat().st_mtime_ns for path in box.root.rglob('*.json')}
 
 
-def test_no_base_and_no_config_is_a_refusal(box, run):
+def test_no_base_is_a_refusal(box, run):
     box.sb_config_base.unlink()
     code, _, err = run('--no-restart')
     assert code == 1 and 'config-base.json missing' in err
     assert not box.rules_dir.exists()
-
-
-def test_first_run_takes_the_live_config_as_the_base(box, run):
-    box.sb_config_base.rename(box.sb_config)
-    assert run('--no-restart')[0] == 0
-    assert json.loads(box.sb_config_base.read_text()) == BASE
 
 
 def test_empty_inputs_give_empty_sets_for_every_exit(box, run):

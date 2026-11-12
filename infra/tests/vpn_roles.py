@@ -1,22 +1,79 @@
 """VPN-серверы entry для тестов: скрипты маршрутизации ролей и шаги пакета vpn2."""
+import fcntl
+import hashlib
+import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ROLES = {'28-wireguard': ('wireguard', 'anysda-wg-routing.sh'), '29-openvpn': ('openvpn', 'anysda-ovpn-routing.sh')}
+ROLES = ROOT / 'infra/ansible/roles'
+# Окружение юнитов маршрутизации, как его пишут роли.
+TUNNELS = {
+    '28-wireguard': {'IFACE': 'wg0', 'CHAIN': 'ANYSDA_WG_TPROXY', 'MSS': '1380', 'V6_REJECT': '1'},
+    '29-openvpn': {'IFACE': 'tun0', 'CHAIN': 'ANYSDA_OVPN_TPROXY', 'MSS': '1340'},
+    '27-ikev2': {'IFACE': 'xfrm0', 'CHAIN': 'ANYSDA_IKEV2_TPROXY', 'MSS': '1360', 'V6_REJECT': '1',
+                 'XFRM_DEV': 'wan', 'SUBNET6': 'fd68:68::/112', 'ROUTES': '10.68.68.0/24'},
+}
+PLAY = """- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_vars: {defaults}
+    - ansible.builtin.template: {{src: {src}, dest: {out}}}
+"""
 
 
-def routing(stage):
-    """Скрипт маршрутизации протокола: файл роли, у стадии - её heredoc."""
-    if stage in ROLES:
-        role, name = ROLES[stage]
-        return (ROOT / 'infra/ansible/roles' / role / 'files' / name).read_text()
-    text = (ROOT / 'infra/scripts' / f'{stage}.sh').read_text()
-    return text.split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
+def ansible_playbook():
+    """ansible-playbook из PATH, иначе из venv тестов на пинах деплоя."""
+    found = shutil.which('ansible-playbook')
+    if found:
+        return found
+    pins = ROOT / 'infra/ansible/constraints.txt'
+    cache = Path.home() / '.cache/vpn2-tests'
+    venv = cache / f'ansible-{hashlib.sha256(pins.read_bytes()).hexdigest()[:12]}'
+    cache.mkdir(parents=True, exist_ok=True)
+    with open(cache / 'ansible.lock', 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not (venv / 'bin/ansible-playbook').exists():
+            shutil.rmtree(f'{venv}.new', ignore_errors=True)
+            subprocess.run([sys.executable, '-m', 'venv', f'{venv}.new'], check=True)
+            subprocess.run([f'{venv}.new/bin/pip', 'install', '-q', '-c', str(pins), 'ansible-core'], check=True)
+            os.replace(f'{venv}.new', venv)
+    return str(venv / 'bin/ansible-playbook')
+
+
+def routing(stage, **values):
+    """Общий скрипт маршрутизации с окружением юнита роли; values - замены, routes='...'."""
+    env = {**TUNNELS[stage], **{name.upper(): value for name, value in values.items()}}
+    head = ''.join(f'{name}={shlex.quote(value)}\n' for name, value in env.items())
+    text = (ROLES / 'wireguard/files/anysda-vpn-routing.sh').read_text()
+    return text.replace('set -euo pipefail\n', 'set -euo pipefail\n' + head, 1)
+
+
+def template(role, src, variables):
+    """Шаблон роли с её defaults и переменными variables, как его отрисует ansible."""
+    with tempfile.TemporaryDirectory() as work:
+        work = Path(work)
+        (work / 'vars.json').write_text(json.dumps(variables))
+        (work / 'play.yml').write_text(PLAY.format(defaults=ROLES / role / 'defaults/main.yml',
+                                                   src=ROLES / role / 'templates' / src, out=work / 'out'))
+        done = subprocess.run([ansible_playbook(), '-i', 'localhost,', str(work / 'play.yml'),
+                               '-e', '@' + str(work / 'vars.json')], text=True, capture_output=True, check=False)
+        if done.returncode:
+            raise AssertionError(done.stdout + done.stderr)
+        return (work / 'out').read_text()
+
+
+def server_conf(port='1194', proto='udp', subnet='10.67.67.0', subnets=('10.67.67.0/24',), managed=False):
+    """server.conf роли openvpn."""
+    return template('openvpn', 'server.conf.j2', {
+        'vpn2_env': {}, 'openvpn_infra': str(ROOT / 'infra'), 'openvpn_port': str(port), 'openvpn_proto': proto,
+        'openvpn_subnet': subnet, 'openvpn_subnets': list(subnets), 'openvpn_api_managed': {'stat': {'exists': managed}}})
 
 
 def package(name):
@@ -62,24 +119,26 @@ OVPN_STAGE = '''import subprocess
 import sys
 from vpn2 import entryvpn
 from vpn2.cli import host
-root, applied, apply, port = sys.argv[1:]
-directory = root + entryvpn.OVPN_DIR
+root, applied, apply = sys.argv[1:]
 try:
-    entryvpn.ovpn_write_conf(port, 'udp', '10.67.67.0', ['10.67.67.0/24'], directory=directory,
-                             marker=root + entryvpn.OVPN_API_MANAGED)
-    host.ovpn_restart(directory=directory, applied=applied, apply=apply)
+    host.ovpn_restart(directory=root + entryvpn.OVPN_DIR, applied=applied, apply=apply)
 except (RuntimeError, subprocess.CalledProcessError) as error:
     sys.exit(str(error))
 '''
 
 
 def ovpn_stage(root, applied, apply, port=1194):
-    """Строка bash: шаги `ovpn-server-conf` и `ovpn-restart` роли openvpn на дереве root.
+    """Строка bash: server.conf роли openvpn в дереве root уже записан, шаг `ovpn-restart`.
 
     systemctl и vpn2-apply берутся подставные: первый из PATH, второй путём apply.
     """
+    directory = Path(str(root) + '/etc/openvpn/server')
+    directory.mkdir(parents=True, exist_ok=True)
+    managed = Path(str(root) + '/etc/vpn2-control/api-managed').is_file()
+    text = server_conf(port, managed=managed).replace('/etc/openvpn/server', str(directory))
+    (directory / 'server.conf').write_text(text)
     return shlex.join(['env', f'PYTHONPATH={ROOT / "infra/vpn2/src"}', sys.executable, '-B', '-c', OVPN_STAGE,
-                       str(root), str(applied), str(apply), str(port)]) + '\n'
+                       str(root), str(applied), str(apply)]) + '\n'
 
 
 def ikev2_pki(target, *, env=None):
@@ -91,21 +150,6 @@ def ikev2_pki(target, *, env=None):
     env = dict(env or os.environ, PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
     return subprocess.run([sys.executable, '-c', code, str(target)], env=env, text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
-
-
-def ikev2_routing(wan='wan', subnets=('10.68.68.0/24',), subnet6='fd68:68::/112'):
-    """Скрипт маршрутизации роли ikev2: шаблон с теми же подстановками, что делает ansible."""
-    text = (ROOT / 'infra/ansible/roles/ikev2/templates/anysda-ikev2-routing.sh.j2').read_text()
-    values = {"{{ ikev2_wan_if | quote }}": shlex.quote(wan),
-              "{{ ikev2_subnets | map('quote') | join('\\\\ ') }}": '\\ '.join(shlex.quote(net) for net in subnets),
-              "{{ ikev2_subnet6 | quote }}": shlex.quote(subnet6)}
-    for mark, value in values.items():
-        if mark not in text:
-            raise AssertionError(f'в шаблоне нет {mark}')
-        text = text.replace(mark, value)
-    if '{{' in text or '{%' in text:
-        raise AssertionError('в шаблоне осталась неизвестная подстановка')
-    return text
 
 
 def role_defaults(role):

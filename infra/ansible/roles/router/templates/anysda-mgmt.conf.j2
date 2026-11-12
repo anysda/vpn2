@@ -1,0 +1,15 @@
+# anysda-vpn - пишет роль router, руками не править
+{% for tag in router_exits %}
+
+Host {{ tag }}
+  HostName 127.0.0.1
+  Port 22
+  User root
+  IdentityFile /root/.ssh/id_ed25519_mgmt
+  IdentitiesOnly yes
+  HostKeyAlias anysda-{{ tag }}
+  UserKnownHostsFile /root/.ssh/known_hosts_mgmt
+  StrictHostKeyChecking accept-new
+  ServerAliveInterval 15
+  ProxyCommand nc -X 5 -x 127.0.0.1:{{ 10100 + vpn2_env['MGMT_IP_' ~ tag | upper | replace('-', '_')].split('.')[-1] | int }} %h %p
+{% endfor %}

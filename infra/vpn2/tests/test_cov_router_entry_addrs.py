@@ -43,9 +43,7 @@ def rules(host):
 
 
 def failed(capsys):
-    with pytest.raises(SystemExit) as stop:
-        entry_addrs.main()
-    assert stop.value.code == 1
+    assert entry_addrs.main() == 1
     return capsys.readouterr().err
 
 

@@ -26,11 +26,10 @@ class TproxyLifecycleTests(unittest.TestCase):
     def test_wireguard_stop_preserves_openvpn_routing(self):
         functions = []
         for stage, name in [('28-wireguard', 'wg'), ('29-openvpn', 'ovpn')]:
-            routing = vpn_roles.routing(stage)
+            routing = vpn_roles.routing(stage, routes='10.66.66.0/24' if name == 'wg' else '')
             functions.append(f'{name}() {{ bash -s -- "$1" <<\'ROUTING\'\n{routing}\nROUTING\n}}')
         shell = '\n'.join(functions) + '''
 set -euo pipefail
-export WG_SUBNETS='10.66.66.0/24'
 ip link set lo up
 ip link add wg0 type dummy
 ip link add tun0 type dummy

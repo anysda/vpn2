@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-from router_support import ROOT, exit_cert, exit_secrets, generate, run_generator, stage
+from router_support import ROOT, exit_cert, generate
 from test_deploy import bash, function, source
 
 
@@ -16,15 +16,6 @@ def hy2_tls(cfg):
 
 
 class ExitPinTests(unittest.TestCase):
-    def test_exit_without_pinned_cert_is_refused(self):
-        result = run_generator(AA_HY2_CERT_PATH='')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('экзит aa: нет закреплённого сертификата', result.stderr)
-        self.assertIn('hy2_insecure', result.stderr)
-        result = run_generator(BB_HY2_CERT_PATH='/nonexistent/bb.pem')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('экзит bb', result.stderr)
-
     def test_pinned_exits_have_no_insecure_anywhere(self):
         text = generate()
         self.assertNotIn('insecure', text)
@@ -32,13 +23,6 @@ class ExitPinTests(unittest.TestCase):
         self.assertTrue(any(tag.endswith('-mgmt') for tag in tls))
         for tag, settings in tls.items():
             self.assertEqual(settings.get('certificate_path'), exit_cert(), tag)
-
-    def test_explicit_insecure_flag_is_the_only_compat_path(self):
-        result = run_generator(AA_HY2_CERT_PATH='', AA_HY2_INSECURE='1')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('WARNING: экзит aa: exits[].hy2_insecure: true', result.stderr)
-        for tag, settings in hy2_tls(json.loads(result.stdout)).items():
-            self.assertEqual(settings.get('insecure', False), '-aa-' in tag, tag)
 
     def test_config_flag_reaches_env_and_deploy_warns(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -96,21 +80,6 @@ prep_ru_router
             pinned = Path(tmp, 'secrets/exit-certs/aa.pem')
             self.assertEqual(pinned.read_text(), pem)
             self.assertEqual(pinned.stat().st_mode & 0o777, 0o600)
-
-    def test_stage_keeps_pin_already_on_entry(self):
-        # Повторный deploy без свежего сертификата (экзит пропущен, deploy с
-        # другой машины) закрепляет уже лежащий на entry, а не падает.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / 'pinned').mkdir()
-            (root / 'pinned/aa.pem').write_text('old-pin')
-            environ = {'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '443', 'HY2_MGMT_PORT': '3443'}
-            env, _ = stage.exit_environment(environ, exit_secrets(['aa', 'bb']), root / 'incoming',
-                                            root / 'pinned', 'lo')
-            self.assertEqual(env['AA_HY2_CERT_PATH'], f'{root}/pinned/aa.pem')
-            self.assertNotIn('BB_HY2_CERT_PATH', env)
-            self.assertEqual((root / 'pinned/aa.pem').read_text(), 'old-pin')
-
 
 if __name__ == '__main__':
     unittest.main()

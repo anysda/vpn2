@@ -1,20 +1,15 @@
 """Проверки генерации и миграции настроек хаб ↔ экзит без изменения сети."""
 
-import json
 import os
-import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
 
-from router_support import exit_cert, exit_secrets, stage
-
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
-from vpn2 import exitnode  # noqa: E402
 
 
 class QueueTests(unittest.TestCase):
@@ -73,61 +68,6 @@ fi
 
 
 class HysteriaTests(unittest.TestCase):
-    def test_config_to_stages_bbr_brutal_and_back(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            base = (ROOT / 'config.example.yaml').read_text().replace(
-                '  passphrase: ""', '  passphrase: test pass')
-            # Разные направления выявляют случайную перестановку скоростей;
-            # второй экзит и mgmt должны оставаться на BBR.
-            for settings in ('', '    hy2_up_mbps: 240\n    hy2_down_mbps: 120\n', ''):
-                (root / 'config.yaml').write_text(base.replace(
-                    '    host: 5.6.7.8\n', '    host: 5.6.7.8\n' + settings))
-                subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), tmp],
-                               check=True, capture_output=True, text=True,
-                               env={**os.environ, 'VPN2_STATE_DIR': f'{tmp}/state'})
-                # Как run_play: переменные стадии уходят в окружение шага целиком.
-                script = 'set -a; source "$1/infra/envs/all.env"; source "$1/infra/envs/ru.env"; env -0'
-                dumped = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp], check=True,
-                                        capture_output=True, text=True, env={'PATH': os.environ['PATH']})
-                environ = dict(item.split('=', 1) for item in dumped.stdout.split('\0') if item)
-                tags = environ['EXIT_TAGS'].split()
-                for tag in tags:
-                    shutil.copyfile(exit_cert(), root / f'{tag}.pem')
-                env, _ = stage.exit_environment(environ, exit_secrets(tags), root, root / 'pinned', 'wan-test')
-                env['RU_CLASH_SECRET'] = 'test-clash-secret'
-                router = json.loads(stage.render_config(env))
-                for out in router['outbounds']:
-                    if out['type'] != 'hysteria2':
-                        continue
-                    actual = {k: out[k] for k in ('up_mbps', 'down_mbps') if k in out}
-                    expected = {'up_mbps': 120, 'down_mbps': 240} if settings and out[
-                        'tag'].removeprefix('transport-') in ('hy2-us-direct', 'hy2-us-warp') else {}
-                    self.assertEqual(actual, expected, out['tag'])
-
-                template = (ROOT / 'infra/configs/sing-box-server.json.tpl').read_text()
-                values = dict(HY2_PWD_DIRECT='test-direct', HY2_PWD_WARP='test-warp',
-                              HY2_PWD_MGMT='test-mgmt', HY2_OBFS_PWD='test-obfs', CLASH_SECRET='test',
-                              REALITY_PRIVKEY='test', REALITY_SHORT_ID='abcd',
-                              REALITY_SNI='www.apple.com', REALITY_PORT='4443',
-                              **exitnode.WARP_PLACEHOLDER)
-                names = ('HY2_DIRECT_PORT', 'HY2_WARP_PORT', 'HY2_MGMT_PORT', 'HY2_UP_MBPS', 'HY2_DOWN_MBPS')
-                for tag in ('us', 'gb'):
-                    script = ('source "$1/infra/envs/all.env"\nsource "$1/infra/envs/$2.env"\n'
-                              + ''.join(f'echo "${{{name}:-}}"\n' for name in names))
-                    result = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp, tag],
-                                            check=True, capture_output=True, text=True)
-                    env = dict(zip(names, result.stdout.split('\n')))
-                    server = json.loads(exitnode.render_config(
-                        template, {**values, **env, 'HY2_BANDWIDTH_FIELDS': exitnode.bandwidth_fragment(env)}))
-                    hy2 = [inbound for inbound in server['inbounds'] if inbound['type'] == 'hysteria2']
-                    self.assertEqual(len(hy2), 3)
-                    for inbound in hy2:
-                        actual = {k: inbound[k] for k in ('up_mbps', 'down_mbps') if k in inbound}
-                        expected = {'up_mbps': 240, 'down_mbps': 120} if settings and tag == 'us' and (
-                            inbound['tag'] in ('hy2-direct-in', 'hy2-warp-in')) else {}
-                        self.assertEqual(actual, expected, inbound['tag'])
-
     def test_reject_invalid_bandwidth_before_writing_env(self):
         for up, down in [('10', ''), ('', '10'), ('0', '10'), ('-1', '10'),
                          ('1.5', '10'), ('oops', '10'), ('1000001', '10')]:

@@ -13,6 +13,8 @@ import sys
 import tempfile
 import threading
 import unittest
+
+import router_support
 from contextlib import redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -263,10 +265,7 @@ class EchoTargetTests(unittest.TestCase):
 
     def test_echo_target_is_open_to_client_and_leaves_direct(self):
         wan = '198.51.100.7'
-        spec = importlib.util.spec_from_file_location('gen_router', ROOT / 'infra/vpn2/src/vpn2/router/config.py')
-        gen = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gen)
-        rules = gen.client_block_rules()
+        rules = router_support.client_block_rules()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manual = root / 'manual'
@@ -325,10 +324,7 @@ class ExitRouteTargetTests(unittest.TestCase):
     def paths(self, server, closed=False):
         """Проверка пути через экзит se с адресом server; closed - исходящие sing-box на экзите запрещены."""
         wan = '198.51.100.7'
-        spec = importlib.util.spec_from_file_location('gen_router', ROOT / 'infra/vpn2/src/vpn2/router/config.py')
-        gen = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gen)
-        rules = gen.client_block_rules()
+        rules = router_support.client_block_rules()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manual = root / 'manual'

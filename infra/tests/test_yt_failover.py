@@ -1,15 +1,13 @@
 """Проверки маршрута и настоящего контроллера с подставными сетью/видеопробой."""
 import importlib.util
 import json
-import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from router_support import exit_cert
-from test_deploy import ROOT
+from router_support import exit_cert, render
 from zapret_support import role_file, stage, tasks
 import watchdog_src
 
@@ -24,14 +22,13 @@ def load_watch():
 
 class YoutubeFailoverTests(unittest.TestCase):
     def router(self, mode, quic):
-        env = dict(os.environ, EXIT_TAGS='test', DOMAIN_TEST='exit.example.org',
+        env = dict(EXIT_TAGS='test', DOMAIN_TEST='exit.example.org',
                    TEST_DIRECT='fake', TEST_WARP='fake', TEST_MGMT='fake', TEST_OBFS='fake',
                    MGMT_IP_TEST='192.0.2.2', TEST_HY2_CERT_PATH=exit_cert(),
                    HY2_DIRECT_PORT='443', HY2_WARP_PORT='444',
                    HY2_MGMT_PORT='445', WG_OUT_IFACE='eth0', RU_CLASH_SECRET='fake',
                    MGMT_IP='127.0.0.1', YT_ROUTE=mode, YT_QUIC=quic)
-        result = subprocess.run(['python3', str(ROOT / 'infra/vpn2/src/vpn2/router/config.py')],
-                                env=env, capture_output=True, text=True, check=True)
+        result = render(env)
         return json.loads(result.stdout)
 
     def test_youtube_routes_through_selector_in_both_quic_modes(self):

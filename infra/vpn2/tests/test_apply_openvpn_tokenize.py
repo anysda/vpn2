@@ -1,10 +1,14 @@
 """OpenVPN candidate lines are split into words as openvpn 2.7 splits them, with the real openvpn."""
+from pathlib import Path
 import shutil
 import unittest
 
+import jinja2
+
 import test_apply_openvpn_candidate as candidate
 from test_apply_openvpn_candidate import WORKING
-from vpn2 import entryvpn
+
+SERVER_CONF = Path(__file__).parents[2] / 'ansible/roles/openvpn/templates/server.conf.j2'
 
 
 class OpenvpnTokenizeTests(unittest.TestCase):
@@ -137,8 +141,10 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         self.applied(WORKING + 'cipher aes-256-gcm\ndata-ciphers aes-256-gcm:chacha20-poly1305\n')
 
     def template(self, proto, fastio):
-        text = entryvpn.ovpn_server_conf('1194', proto, '10.8.0.0', ['10.8.0.0/24', '10.8.1.0/24'], 'root',
-                                         directory=str(self.base))
+        env = jinja2.Environment(trim_blocks=True, keep_trailing_newline=True)
+        text = env.from_string(SERVER_CONF.read_text()).render(
+            openvpn_port='1194', openvpn_proto=proto, openvpn_subnet='10.8.0.0', openvpn_dir=str(self.base),
+            openvpn_subnets=['10.8.0.0/24', '10.8.1.0/24'], openvpn_api_managed={'stat': {'exists': False}})
         self.assertEqual('\nfast-io\n' in text, fastio)
         self.assertIn('route 10.8.1.0 255.255.255.0\n', text)
         return text

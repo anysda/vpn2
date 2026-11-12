@@ -1,13 +1,11 @@
 import ipaddress
 import json
-from pathlib import Path
 import re
-import subprocess
 import tempfile
 import unittest
 
 from adguard_support import Hub
-from router_support import exit_cert
+from router_support import exit_cert, render
 from test_deploy import ROOT, bash, source
 from test_ufw_reconcile import FAKE_UFW
 import vpn_roles
@@ -57,40 +55,31 @@ class AddressPoolTests(unittest.TestCase):
                         continue
                     self.assertTrue(any(address in net for net in known), f'unclassified pool/address {literal} in {path}')
 
-    def test_wireguard_routes_on_start(self):
-        routing = vpn_roles.routing('28-wireguard')
+    def routes(self, stage, role, key, iface, **values):
+        subnets = json.loads(source('app/shared/vpn-pools.json'))[key]['subnets']
+        self.assertIn(f'routes: "{{{{ {role}_subnets }}}}"', vpn_roles.role_tasks(role))
         with tempfile.TemporaryDirectory() as directory:
+            routing = vpn_roles.routing(stage, routes=' '.join(subnets), **values)
             routing = routing.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock')
-            subnets = ' '.join(json.loads(source('app/shared/vpn-pools.json'))['wg']['subnets'])
-            result = bash(f"WG_SUBNETS='{subnets}'" + '''
+            result = bash('''
 ip() { echo "ip $*"; }
 iptables() { [[ " $* " != *" -C "* ]] && echo "iptables $*"; }
 ip6tables() { [[ " $* " != *" -C "* ]] && echo "ip6tables $*"; }
 set -- up
 ''' + routing, directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            for cidr in json.loads(source('app/shared/vpn-pools.json'))['wg']['subnets']:
-                self.assertIn(f'ip route replace {cidr} dev wg0', result.stdout)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for cidr in subnets:
+            self.assertIn(f'ip route replace {cidr} dev {iface}', result.stdout)
+
+    def test_wireguard_routes_on_start(self):
+        self.routes('28-wireguard', 'wireguard', 'wg', 'wg0')
 
     def test_ikev2_routes_and_openvpn_extra_routes(self):
-        pools = json.loads(source('app/shared/vpn-pools.json'))
-        with tempfile.TemporaryDirectory() as directory:
-            text = vpn_roles.ikev2_routing('eth0', pools['ikev2']['subnets'])
-            (Path(directory) / 'routing.sh').write_text(
-                text.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock'))
-            script = '''
-ip() { echo "ip $*"; }
-iptables() { [[ " $* " != *" -C "* ]] && echo "iptables $*"; }
-ip6tables() { [[ " $* " != *" -C "* ]] && echo "ip6tables $*"; }
-source routing.sh up
-'''
-            result = bash(script, directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            for cidr in pools['ikev2']['subnets']:
-                self.assertIn(f'ip route replace {cidr} dev xfrm0', result.stdout)
-        conf = vpn_roles.package('entryvpn').ovpn_server_conf('1194', 'udp', '10.67.67.0', pools['ovpn']['subnets'], 'root')
+        self.routes('27-ikev2', 'ikev2', 'ikev2', 'xfrm0', xfrm_dev='eth0')
+        subnets = json.loads(source('app/shared/vpn-pools.json'))['ovpn']['subnets']
+        conf = vpn_roles.server_conf(subnets=subnets)
         routes = [line for line in conf.splitlines() if line.startswith('route ')]
-        self.assertEqual(routes, [f'route {cidr[:-3]} 255.255.255.0' for cidr in pools['ovpn']['subnets'][1:]])
+        self.assertEqual(routes, [f'route {cidr[:-3]} 255.255.255.0' for cidr in subnets[1:]])
 
     def test_dns_firewall_and_adguard_cover_every_subnet(self):
         pools = json.loads(source('app/shared/vpn-pools.json'))
@@ -116,14 +105,12 @@ source routing.sh up
             self.assertIn('203.0.113.1', addresses)
 
     def test_router_lanes_include_new_addresses_with_old_env(self):
-        import os
-        env = dict(os.environ, EXIT_TAGS='se', HY2_DIRECT_PORT='443', HY2_WARP_PORT='444', HY2_MGMT_PORT='445',
+        env = dict(EXIT_TAGS='se', HY2_DIRECT_PORT='443', HY2_WARP_PORT='444', HY2_MGMT_PORT='445',
                    WG_OUT_IFACE='eth0', RU_CLASH_SECRET='test', DOMAIN_SE='exit.example.test',
                    SE_DIRECT='test', SE_WARP='test', SE_MGMT='test', SE_OBFS='test', MGMT_IP_SE='10.99.0.2',
                    SE_HY2_CERT_PATH=exit_cert(),
                    LANE_SUBNETS='10.66.66.0/24 10.67.67.0/24 10.68.68.0/24')
-        result = subprocess.run(['python3', str(ROOT / 'infra/vpn2/src/vpn2/router/config.py')], env=env,
-                                capture_output=True, text=True, timeout=15)
+        result = render(env)
         self.assertEqual(result.returncode, 0, result.stderr)
         config = json.loads(result.stdout)
         routed = {cidr for rule in config['route']['rules'] if rule.get('outbound', '').startswith('lane-') for cidr in rule['source_ip_cidr']}

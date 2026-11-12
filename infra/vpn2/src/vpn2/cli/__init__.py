@@ -39,12 +39,9 @@ WATCHDOGS = {
     'yt': 'vpn2.watchdog.yt:run',
 }
 ROUTER = {
-    'config': 'vpn2.router.config:run',
     'entry-addrs': 'vpn2.router.entry_addrs:main',
     'apply-routes': 'vpn2.router.apply_routes:main',
 }
-# Шаги установки роутера разбирает сам vpn2.router.stage.
-ROUTER_STEPS = ('rule-sets', 'base-config', 'restart', 'ssh-config')
 
 RESTORE_USAGE = '''Использование: vpn2 restore [АРХИВ|latest] [--force|-f] [--dry-run] [--allow-incompatible]
 Восстановить узел из архива (по умолчанию - самый свежий, локальный или из S3).
@@ -179,10 +176,8 @@ def nft(argv):
 
 
 def router(argv):
-    if argv and argv[0] in ROUTER_STEPS:
-        return _resolve('vpn2.router.stage:main')(argv)
     if not argv or argv[0] not in ROUTER:
-        sys.stderr.write('Использование: vpn2 router ' + '|'.join((*ROUTER, *ROUTER_STEPS)) + ' [аргументы]\n')
+        sys.stderr.write('Использование: vpn2 router ' + '|'.join(ROUTER) + ' [аргументы]\n')
         return 2
     return _resolve(ROUTER[argv[0]])(argv[1:])
 

@@ -190,15 +190,7 @@ ACTIONS = (
         _arg('--address', required=True),
     ), lambda args: entryvpn.wg_identity(args.port, args.address)),
     ('wg-apply', 'wg0.conf в ядро без лишнего рестарта', (), lambda _: entryvpn.wg_apply(_say)),
-    ('routing-ensure', 'вернуть пропавшую цепочку TPROXY службы', (_arg('unit'), _arg('iface'), _arg('chain')),
-     lambda args: entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say)),
     ('ovpn-pki', 'каталоги и комплект PKI сервера OpenVPN', (), lambda _: entryvpn.ovpn_pki()),
-    ('ovpn-server-conf', 'server.conf сервера OpenVPN', (
-        _arg('--port', required=True),
-        _arg('--proto', required=True),
-        _arg('--subnet', required=True, help='сеть tun0 без маски'),
-        _arg('pool', nargs='+', help='подсети пула клиентов'),
-    ), lambda args: entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool)),
     ('ovpn-restart', 'рестарт OpenVPN при смене входов и отметка last good', (), lambda _: ovpn_restart()),
     ('ikev2-server', 'сертификаты, конфиг swanctl и загрузка в charon', (
         _arg('--entry-host', required=True),

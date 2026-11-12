@@ -7,12 +7,6 @@
 : "${VPN2_DEPLOY_LOCK:=/run/lock/anysda-vpn2-deploy.lock}"
 export VPN2_STATE_DIR VPN2_DEPLOY_LOCK
 
-# Каталог состояния: только root, панель (свой uid в том же /var/lib/anysda-vpn2)
-# known_hosts не читает.
-state_dir_ensure() {
-  install -d -m 700 "$VPN2_STATE_DIR"
-}
-
 # Один файл из checkout в каталог состояния. Ничего не стирается: при разном
 # содержимом главнее цель (новый код пишет только её), источник уходит в checkout-old.
 _state_move() {

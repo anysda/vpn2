@@ -37,7 +37,7 @@ snapshot() {
   for table in "${TABLES[@]}"; do
     file=$snap/nft-${table// /-}
     # shellcheck disable=SC2086
-    if command -v nft >/dev/null && nft list table $table > "$file" 2>/dev/null; then :; else rm -f "$file"; fi
+    command -v nft >/dev/null && nft list table $table > "$file" 2>/dev/null || rm -f "$file"
   done
   mkdir -p "$snap/files"
   for file in "${FILES[@]}"; do
@@ -48,10 +48,8 @@ snapshot() {
 restore() {
   local snap=$DIR/snap table file rc=0
   if [[ -d "$snap/ufw" ]]; then
-    rm -rf "$ETC/ufw.vpn2-guard"
-    cp -a "$snap/ufw" "$ETC/ufw.vpn2-guard"
     rm -rf "$ETC/ufw"
-    mv "$ETC/ufw.vpn2-guard" "$ETC/ufw"
+    cp -a "$snap/ufw" "$ETC/ufw"
     [[ ! -f "$snap/default-ufw" ]] || cp -a "$snap/default-ufw" "$ETC/default/ufw"
   fi
   if command -v ufw >/dev/null; then
@@ -80,17 +78,12 @@ restore() {
   return $rc
 }
 
-age() {
-  echo $(( $(date +%s) - $(stat -c %Y "$DIR/alive") ))
-}
-
 case "${1:-}" in
   arm)
     stage=$2 window=$3
     systemctl stop "$UNIT" >/dev/null 2>&1 || true
     rm -rf "$DIR"
-    mkdir -p "$(dirname "$DIR")"
-    mkdir -m 700 "$DIR"
+    mkdir -p -m 700 "$DIR"
     echo "$stage" > "$DIR/stage"
     snapshot
     cp "${BASH_SOURCE[0]}" "$DIR/fw-guard.sh"
@@ -107,10 +100,11 @@ case "${1:-}" in
     window=$2
     while sleep 2; do
       [[ -d "$DIR" && ! -e "$DIR/decided" ]] || exit 0
-      (( $(age) > window )) || continue
+      silent=$(( $(date +%s) - $(stat -c %Y "$DIR/alive") ))
+      (( silent > window )) || continue
       # decided - общий замок с disarm: решает тот, кто создал его первым.
       mkdir "$DIR/decided" 2>/dev/null || exit 0
-      say "новых ssh-входов нет $(age) с (окно ${window} с), откатываю фаервол к снимку до стадии $(cat "$DIR/stage")"
+      say "новых ssh-входов нет $silent с (окно ${window} с), откатываю фаервол к снимку до стадии $(cat "$DIR/stage")"
       rc=0
       restore || rc=$?
       echo "$rc" > "$DIR/restored"

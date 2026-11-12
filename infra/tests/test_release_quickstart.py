@@ -97,7 +97,8 @@ class ReleaseQuickstartTests(unittest.TestCase):
 
     def release_start(self, source):
         deploy = (ROOT / 'infra/deploy.sh').read_text()
-        script = '\n'.join((re.search(r'^release_cli\(\) .*$', deploy, re.M)[0], function('release_start'),
+        script = '\n'.join((re.search(r'^vpn2_module\(\) .*$', deploy, re.M)[0],
+                            re.search(r'^release_cli\(\) .*$', deploy, re.M)[0], function('release_start'),
                             'die() { echo "$*" >&2; exit 1; }',
                             'service() { echo UNEXPECTED_REMOTE_CHANGE; exit 99; }',
                             f'REPO={shlex.quote(str(ROOT))} MANIFEST= TMP=$(mktemp -d)', 'release_start'))

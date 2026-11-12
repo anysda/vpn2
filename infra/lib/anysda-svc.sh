@@ -37,15 +37,13 @@ EOF
 # Был ли перезапуск через svc_restart_if_changed с прошлого svc_settle.
 SVC_RESTARTED=0
 
-svc_fingerprint() { { cat "$@" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1; }
-
 # svc_restart_if_changed UNIT FILE...: рестарт, если служба не идёт или отпечаток файлов,
 # что она читает при старте, не тот, что при прошлом рестарте.
 svc_restart_if_changed() {
   local unit=$1 fp_file fp
   shift
   fp_file="$SVC_FP_DIR/$unit.sha256"
-  fp=$(svc_fingerprint "$@")
+  fp=$({ cat "$@" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
   if systemctl is-active --quiet "$unit" && [[ "$(cat "$fp_file" 2>/dev/null)" == "$fp" ]]; then
     svc_say "$unit: конфиг, сертификаты и бинарник прежние — не перезапускаю"
     return 0
@@ -85,12 +83,9 @@ wg0_conf_iface() {
       n = split(value, a, /[, \t]+/); for (i = 1; i <= n; i++) if (a[i] != "") print "addr " a[i]
     }' /etc/wireguard/wg0.conf | sort
 }
-wg0_live_iface() {
-  ip -o addr show dev wg0 scope global | awk '{print "addr " $4}' | sort
-}
 wg0_apply() {
   if systemctl is-active --quiet wg-quick@wg0 && ip link show wg0 >/dev/null 2>&1 \
-     && [[ "$(wg0_conf_iface)" == "$(wg0_live_iface)" ]]; then
+     && [[ "$(wg0_conf_iface)" == "$(ip -o addr show dev wg0 scope global | awk '{print "addr " $4}' | sort)" ]]; then
     wg syncconf wg0 <(wg-quick strip wg0) || return
     svc_say "адреса wg0 прежние — wg syncconf без рестарта"
   else
@@ -236,16 +231,14 @@ deb_install() {
 CADDY_VER='2.11.9'
 # GitHub release assets API, tag v2.11.9, поле digest.
 CADDY_SHA256='bbea4aeaadc86b233c168cc33bad9daa1cbce756dc08949b783b45398f8e65cb'
-caddy_install() {
-  local tmp rel_url deb
-  [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]] || return 0
+caddy_install() (
+  local deb="caddy_${CADDY_VER}_linux_amd64.deb" tmp
+  [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]] || exit 0
   tmp=$(mktemp -d)
-  rel_url="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}"
-  deb="caddy_${CADDY_VER}_linux_amd64.deb"
-  release_download caddy "$tmp/$deb" "$rel_url/$deb" "$CADDY_SHA256" || { rm -rf "$tmp"; return 1; }
-  deb_install "$tmp/$deb" >/dev/null || { rm -rf "$tmp"; return 1; }
-  rm -rf "$tmp"
-}
+  trap 'rm -rf "$tmp"' EXIT
+  release_download caddy "$tmp/$deb" "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}/$deb" "$CADDY_SHA256" \
+    && deb_install "$tmp/$deb" >/dev/null
+)
 
 # apt_have PKG...: все пакеты уже установлены.
 apt_have() {
@@ -286,18 +279,14 @@ docker_apt_source() {
   [[ "$(cat "$list" 2>/dev/null)" == "$line" ]] || echo "$line" > "$list"
 }
 
-# apt_lists_are_fresh LISTS SOURCE...: каталог списков обновлён за час, источники не
-# новее его и в нём есть *_Packages*.
-apt_lists_are_fresh() {
-  local lists=$1
-  shift
-  [[ -n "$(find "$lists" -maxdepth 0 -mmin -60 2>/dev/null)" ]] || return 1
-  [[ -z "$(find "$@" -newer "$lists" -print -quit 2>/dev/null)" ]] || return 1
-  [[ -n "$(find "$lists" -maxdepth 1 -type f -name '*_Packages*' -print -quit 2>/dev/null)" ]]
-}
-
+# apt_update_if_stale: apt-get update, если списки старше часа, источники новее их или
+# в каталоге списков нет *_Packages*.
 apt_update_if_stale() {
-  apt_lists_are_fresh /var/lib/apt/lists /etc/apt/sources.list /etc/apt/sources.list.d || apt_get update -qq
+  local lists=/var/lib/apt/lists
+  [[ -n "$(find "$lists" -maxdepth 0 -mmin -60 2>/dev/null)" ]] \
+    && [[ -z "$(find /etc/apt/sources.list /etc/apt/sources.list.d -newer "$lists" -print -quit 2>/dev/null)" ]] \
+    && [[ -n "$(find "$lists" -maxdepth 1 -type f -name '*_Packages*' -print -quit 2>/dev/null)" ]] \
+    || apt_get update -qq
 }
 
 # apt_prepare: Lock::Timeout для любого apt на узле, ожидание блокировок, довод

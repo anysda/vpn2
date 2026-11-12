@@ -5,10 +5,8 @@
 set -euo pipefail
 
 # Юнит systemd без User= и systemd-run переменную HOME не задают, а ключ оркестратора живёт в ней.
-if [[ -z "${HOME:-}" ]]; then
-  HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
-  [[ -n "$HOME" ]] || { echo 'deploy: у пользователя нет домашнего каталога (HOME пуст, в passwd его нет)' >&2; exit 1; }
-fi
+: "${HOME:=$(getent passwd "$(id -u)" | cut -d: -f6)}"
+[[ -n "$HOME" ]] || { echo 'deploy: у пользователя нет домашнего каталога (HOME пуст, в passwd его нет)' >&2; exit 1; }
 DEPLOY_ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO=$(dirname "$DEPLOY_ROOT")
 export HOME DEPLOY_ROOT
@@ -21,6 +19,12 @@ ok()   { printf '%b[%s]%b %s\n' "$C_G" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }
 warn() { printf '%b[%s]%b %s\n' "$C_Y" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }
 die()  { printf '%b[%s] FATAL:%b %s\n' "$C_R" "${HOST_TAG:-?}" "$C_END" "$*" >&2; exit 1; }
 step() { printf '%b==>%b %s\n' "$C_B" "$C_END" "$*"; }
+# Время с метки SINCE (секунды эпохи): «4m 7s», до минуты - «7s».
+elapsed() {
+  local t=$(( $(date +%s) - $1 )) text
+  text="$(( t / 60 ))m $(( t % 60 ))s"
+  echo "${text#0m }"
+}
 
 for lib in state-dir anysda-svc ansible-venv deploy-report deploy-prep deploy-backup; do
   # shellcheck disable=SC1090
@@ -30,6 +34,14 @@ done
 _STAGE_LOG=() _VERIFY_WARNINGS=() _DEPLOY_WARNINGS=() SKIPPED_EXIT_TAGS='' _TOTAL_T0=0
 MUTATING=false OPENED=false TMP='' BEAT='' PLAY=''
 MANIFEST=${VPN2_RELEASE_MANIFEST:-}
+# Без --development запуск сверяется с манифестом сборки: опубликованным или из --manifest.
+case "${1:-}" in
+  --development) VPN2_DEVELOPMENT=true; shift ;;
+  --manifest)
+    [[ -f "${2:-}" ]] || { printf '%b✗ --manifest <файл>: файл манифеста не найден: %s%b\n' "$C_R" "${2:-}" "$C_END" >&2; exit 1; }
+    VPN2_DEVELOPMENT=false MANIFEST=$(realpath "$2")
+    shift 2 ;;
+esac
 GUARDED=' 00-bootstrap 05-mgmt-mesh 10-foreign 19-yt-zapret 20-ru-router 22-adguard 23-emergency 27-ikev2 28-wireguard 29-openvpn 30-frontend '
 GUARD_WINDOW=${VPN2_FW_GUARD_WINDOW:-90}
 FRESH_LOGIN='-o ControlMaster=no -o ControlPath=none'
@@ -184,7 +196,7 @@ verify_and_rotate_ports() {
 }
 
 run_stage() {
-  local stage=$1 group=$2 t0 hosts nodes host rc=0 t
+  local stage=$1 group=$2 t0 hosts nodes host rc=0
   t0=$(date +%s)
   hosts=$(expand_hosts "$group")
   # shellcheck disable=SC2086  # список узлов через пробел
@@ -212,8 +224,7 @@ run_stage() {
     stage_once "$stage" "$nodes" && ok "[$stage → $nodes] done" || rc=1
   fi
   (( rc != 1 )) || die "стадия $stage: одна или несколько нод завершились с ошибкой"
-  t=$(( $(date +%s) - t0 )); t="$(( t / 60 ))m $(( t % 60 ))s"
-  _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"${t#0m }")
+  _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"$(elapsed "$t0")")
   [[ "$stage" != 99-verify || -z "${_VERIFY_WARNINGS[*]:-}" ]] \
     || warn '99-verify: ⚠ не все проверки измерены; установка не требует отката'
   return "$rc"
@@ -297,6 +308,15 @@ on_exit() {
 }
 
 case "${1:-}" in -h|--help) usage ;; esac
+if [[ ! -f "$REPO/config.yaml" ]]; then
+  printf '\n  %b config.yaml не найден%b\n\n' "$C_R" "$C_END"
+  printf '  Запусти мастер настройки:\n'
+  printf '  %b./setup.sh%b\n\n' "$C_Y" "$C_END"
+  exit 1
+fi
+inventory --prepare || exit 1
+# Каталог окружений прежних выпусков (с секретами) не читается никем.
+rm -rf "$REPO/infra/envs"
 TMP=$(mktemp -d)
 trap on_exit EXIT
 envs_write

@@ -19,7 +19,7 @@ class StateDirMigrateTests(unittest.TestCase):
         (self.infra / 'state').mkdir(parents=True)
 
     def migrate(self, before=''):
-        script = f'source {ROOT}/infra/lib/state-dir.sh\nstate_dir_ensure\n{before}\nstate_dir_migrate "$1"\n'
+        script = f'source {ROOT}/infra/lib/state-dir.sh\ninstall -d -m 700 "$VPN2_STATE_DIR"\n{before}\nstate_dir_migrate "$1"\n'
         env = {**os.environ, 'VPN2_STATE_DIR': str(self.state), 'VPN2_DEPLOY_LOCK': str(self.root / 'lock')}
         return subprocess.run(['bash', '-euo', 'pipefail', '-c', script, 'migrate', str(self.infra)],
                               env=env, capture_output=True, text=True, timeout=30)

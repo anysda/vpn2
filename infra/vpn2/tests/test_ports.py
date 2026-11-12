@@ -51,8 +51,9 @@ run_stage() {
   [[ " $PORTS_RERUN_FAIL " != *" $log "* ]] || { echo "stage $1 failed"; exit 1; }
 }
 '''
-FUNCTION = re.search(r'^verify_and_rotate_ports\(\) \{.*?^\}$', (ROOT / 'infra/deploy.sh').read_text(),
-                     re.MULTILINE | re.DOTALL)[0]
+DEPLOY = (ROOT / 'infra/deploy.sh').read_text()
+FUNCTION = (re.search(r'^vpn2_module\(\) .*$', DEPLOY, re.MULTILINE)[0] + '\n'
+            + re.search(r'^verify_and_rotate_ports\(\) \{.*?^\}$', DEPLOY, re.MULTILINE | re.DOTALL)[0])
 SCRIPT = HARNESS + FUNCTION + '''
 envs_write
 verify_and_rotate_ports

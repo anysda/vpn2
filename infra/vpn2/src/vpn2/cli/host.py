@@ -16,10 +16,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vpn2 import entryvpn, exitnode, firewall, ikev2, pki, swap
+from vpn2 import entryvpn, exitnode, firewall, ikev2, pki, svc, swap
 
 CHANGED = 'vpn2: changed'
-APPLIED_DIR = Path('/var/lib/anysda/applied')
 
 
 def _say(text):
@@ -89,43 +88,6 @@ def _f2b_ignore(args):
     return False
 
 
-def fingerprint(paths):
-    """sha256 склейки содержимого; отсутствующий файл в отпечаток не входит."""
-    digest = hashlib.sha256()
-    for path in paths:
-        try:
-            digest.update(Path(path).read_bytes())
-        except OSError:
-            continue
-    return digest.hexdigest()
-
-
-def restart_if_changed(unit, paths, *, applied=None, record=None, run=subprocess.run):
-    """Перезапуск службы, только если сменились её входы или она не работает."""
-    if record is None:
-        record = (APPLIED_DIR if applied is None else Path(applied)) / f'{unit}.sha256'
-    record = Path(record)
-    current = fingerprint(paths)
-    active = run(['systemctl', 'is-active', '--quiet', unit]).returncode == 0
-    try:
-        known = record.read_text().strip()
-    except OSError:
-        known = None
-    if active and known == current:
-        return False
-    run(['systemctl', 'restart', unit], check=True)
-    record.parent.mkdir(parents=True, exist_ok=True)
-    record.write_text(current + '\n')
-    return True
-
-
-def _restart_if_changed(args):
-    changed = restart_if_changed(args.unit, args.file, record=args.record)
-    _say(f'{args.unit} перезапущен' if changed
-         else f'{args.unit}: конфиг, сертификаты и бинарник прежние — не перезапускаю')
-    return changed
-
-
 def _venv(args):
     """venv vpn2 экзита из колеса, без сети; PyYAML берётся из системных пакетов."""
     root = Path(args.root)
@@ -192,112 +154,65 @@ def _venv_in_use(build):
     return False
 
 
-def ovpn_restart(*, directory=entryvpn.OVPN_DIR, applied=None, apply=entryvpn.OVPN_APPLY):
+def ovpn_restart(*, directory=entryvpn.OVPN_DIR, applied=svc.APPLIED, apply=entryvpn.OVPN_APPLY):
     """Рестарт OpenVPN по общему со стадией панели отпечатку входов."""
     return entryvpn.ovpn_restart(
-        lambda: restart_if_changed(entryvpn.OVPN_UNIT, entryvpn.ovpn_inputs(directory), applied=applied),
+        lambda: svc.restart_if_changed(entryvpn.OVPN_UNIT, entryvpn.ovpn_inputs(directory), applied),
         _say, apply=apply)
 
 
-def _ikev2_server(args):
-    return ikev2.server(args.entry_host, args.public_host, args.panel_domain, args.subnet, args.dns, _say,
-                        lambda: restart_if_changed(ikev2.UNIT, ikev2.starter_inputs()))
-
-
-def _nft_preserve(args):
-    del args
-    return firewall.preserve_nftables_conf()
-
-
-def _swap(args):
-    return swap.ensure(args.manifest, _say, install_bytes=args.install_bytes)
-
-
-def _exit_config(args):
-    return exitnode.configure(os.environ, args.template, _say)
-
-
-def _wg_identity(args):
-    return entryvpn.wg_identity(args.port, args.address)
-
-
-def _wg_apply(args):
-    del args
-    return entryvpn.wg_apply(_say)
-
-
-def _routing_ensure(args):
-    return entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say)
-
-
-def _ovpn_pki(args):
-    del args
-    return entryvpn.ovpn_pki()
-
-
-def _ovpn_server_conf(args):
-    return entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool)
-
-
-def _ovpn_restart(args):
-    del args
-    return ovpn_restart()
-
-
-def _argument(*flags, **options):
+def _arg(*flags, **options):
     return flags, options
 
 
 # действие, справка, аргументы, обработчик: он возвращает, менялся ли узел
 ACTIONS = (
-    ('nft-preserve', 'flush ruleset в nftables.conf закомментирован', (), _nft_preserve),
+    ('nft-preserve', 'flush ruleset в nftables.conf закомментирован', (),
+     lambda args: firewall.preserve_nftables_conf()),
     ('swap', 'swap узлу с памятью меньше 4 ГБ', (
-        _argument('--manifest', default='/tmp/anysda/release-manifest.json'),
-        _argument('--install-bytes', type=int, default=0, help='место на диске после полной установки узла, байт'),
-    ), _swap),
+        _arg('--manifest', default='/tmp/anysda/release-manifest.json'),
+        _arg('--install-bytes', type=int, default=0, help='место на диске после полной установки узла, байт'),
+    ), lambda args: swap.ensure(args.manifest, _say, install_bytes=args.install_bytes)),
     ('ufw', 'политика и правила ufw по группам', (
-        _argument('--only-rules', action='store_true', help='только правила групп: политику и включение ufw не трогать'),
-        _argument('groups', help='JSON: [{"comment", "rules", "aliases", "dns": {"to", "subnets"}}]'),
+        _arg('--only-rules', action='store_true', help='только правила групп: политику и включение ufw не трогать'),
+        _arg('groups', help='JSON: [{"comment", "rules", "aliases", "dns": {"to", "subnets"}}]'),
     ), _ufw),
-    ('f2b-ignore', 'адреса, которые fail2ban не банит', (
-        _argument('entry_host', nargs='?', default=''),
-    ), _f2b_ignore),
+    ('f2b-ignore', 'адреса, которые fail2ban не банит', (_arg('entry_host', nargs='?', default=''),), _f2b_ignore),
     ('restart-if-changed', 'перезапуск службы при смене её входов', (
-        _argument('--record', help='файл отпечатка вместо общего каталога'),
-        _argument('unit'),
-        _argument('file', nargs='+'),
-    ), _restart_if_changed),
-    ('exit-config', 'конфиг sing-box экзита', (_argument('--template', required=True),), _exit_config),
+        _arg('--record', help='файл отпечатка вместо общего каталога'),
+        _arg('unit'),
+        _arg('file', nargs='+'),
+    ), lambda args: svc.restart_if_changed(args.unit, args.file, record=args.record)),
+    ('exit-config', 'конфиг sing-box экзита', (_arg('--template', required=True),),
+     lambda args: exitnode.configure(os.environ, args.template, _say)),
     ('wg-identity', 'ключи сервера WireGuard и начальный wg0.conf', (
-        _argument('--port', required=True),
-        _argument('--address', required=True),
-    ), _wg_identity),
-    ('wg-apply', 'wg0.conf в ядро без лишнего рестарта', (), _wg_apply),
-    ('routing-ensure', 'вернуть пропавшую цепочку TPROXY службы', (
-        _argument('unit'),
-        _argument('iface'),
-        _argument('chain'),
-    ), _routing_ensure),
-    ('ovpn-pki', 'каталоги и комплект PKI сервера OpenVPN', (), _ovpn_pki),
+        _arg('--port', required=True),
+        _arg('--address', required=True),
+    ), lambda args: entryvpn.wg_identity(args.port, args.address)),
+    ('wg-apply', 'wg0.conf в ядро без лишнего рестарта', (), lambda args: entryvpn.wg_apply(_say)),
+    ('routing-ensure', 'вернуть пропавшую цепочку TPROXY службы', (_arg('unit'), _arg('iface'), _arg('chain')),
+     lambda args: entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say)),
+    ('ovpn-pki', 'каталоги и комплект PKI сервера OpenVPN', (), lambda args: entryvpn.ovpn_pki()),
     ('ovpn-server-conf', 'server.conf сервера OpenVPN', (
-        _argument('--port', required=True),
-        _argument('--proto', required=True),
-        _argument('--subnet', required=True, help='сеть tun0 без маски'),
-        _argument('pool', nargs='+', help='подсети пула клиентов'),
-    ), _ovpn_server_conf),
-    ('ovpn-restart', 'рестарт OpenVPN при смене входов и отметка last good', (), _ovpn_restart),
+        _arg('--port', required=True),
+        _arg('--proto', required=True),
+        _arg('--subnet', required=True, help='сеть tun0 без маски'),
+        _arg('pool', nargs='+', help='подсети пула клиентов'),
+    ), lambda args: entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool)),
+    ('ovpn-restart', 'рестарт OpenVPN при смене входов и отметка last good', (), lambda args: ovpn_restart()),
     ('ikev2-server', 'сертификаты, конфиг swanctl и загрузка в charon', (
-        _argument('--entry-host', required=True),
-        _argument('--public-host', required=True, help='адрес сервера в профилях'),
-        _argument('--panel-domain', default=''),
-        _argument('--subnet', required=True),
-        _argument('--dns', required=True),
-    ), _ikev2_server),
+        _arg('--entry-host', required=True),
+        _arg('--public-host', required=True, help='адрес сервера в профилях'),
+        _arg('--panel-domain', default=''),
+        _arg('--subnet', required=True),
+        _arg('--dns', required=True),
+    ), lambda args: ikev2.server(args.entry_host, args.public_host, args.panel_domain, args.subnet, args.dns,
+                                 _say, lambda: svc.restart_if_changed(ikev2.UNIT, ikev2.starter_inputs()))),
     ('venv', 'venv vpn2 экзита из колеса', (
-        _argument('wheel'),
-        _argument('--root', default='/opt/vpn2'),
-        _argument('--pip-dir', default='/usr/share/python-wheels'),
-        _argument('--python', default='/usr/bin/python3'),
+        _arg('wheel'),
+        _arg('--root', default='/opt/vpn2'),
+        _arg('--pip-dir', default='/usr/share/python-wheels'),
+        _arg('--python', default='/usr/bin/python3'),
     ), _venv),
 )
 

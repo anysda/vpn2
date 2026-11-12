@@ -29,9 +29,12 @@ def forget(unit, applied=APPLIED):
     Path(applied, f'{unit}.sha256').unlink(missing_ok=True)
 
 
-def restart_if_changed(unit, paths, applied=APPLIED):
-    """paths - всё, что служба читает при старте. Вернуть, был ли перезапуск."""
-    fp_file = Path(applied, f'{unit}.sha256')
+def restart_if_changed(unit, paths, applied=APPLIED, record=None):
+    """paths - всё, что служба читает при старте; record - файл отпечатка вместо общего каталога.
+
+    Вернуть, был ли перезапуск.
+    """
+    fp_file = Path(record or Path(applied, f'{unit}.sha256'))
     current = fingerprint(paths)
     if active(unit) and fp_file.is_file() and fp_file.read_text().strip() == current:
         print(f'{unit}: конфиг и бинарник прежние - не перезапускаю')

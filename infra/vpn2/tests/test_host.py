@@ -7,7 +7,7 @@ import types
 import pytest
 import yaml
 
-from vpn2 import swap
+from vpn2 import svc, swap
 from vpn2.cli import host
 
 MIN_FREE = 2147483648
@@ -125,10 +125,10 @@ def test_fingerprint_is_sha256_of_concatenation(tmp_path):
     (tmp_path / 'a').write_bytes(b'one\n')
     (tmp_path / 'b').write_bytes(b'two')
     paths = [tmp_path / 'a', tmp_path / 'missing', tmp_path / 'b']
-    assert host.fingerprint(paths) == hashlib.sha256(b'one\ntwo').hexdigest()
+    assert svc.fingerprint(paths) == hashlib.sha256(b'one\ntwo').hexdigest()
 
 
-def test_restart_if_changed(tmp_path):
+def test_restart_if_changed(tmp_path, monkeypatch):
     (tmp_path / 'conf').write_text('1')
     calls = []
 
@@ -137,21 +137,22 @@ def test_restart_if_changed(tmp_path):
         calls.append(argv[1])
         return subprocess.CompletedProcess(argv, 0)
 
+    monkeypatch.setattr(svc.subprocess, 'run', run)
     applied = tmp_path / 'applied'
-    assert host.restart_if_changed('x', [tmp_path / 'conf'], applied=applied, run=run) is True
+    assert svc.restart_if_changed('x', [tmp_path / 'conf'], applied) is True
     assert (applied / 'x.sha256').read_text() == hashlib.sha256(b'1').hexdigest() + '\n'
-    assert host.restart_if_changed('x', [tmp_path / 'conf'], applied=applied, run=run) is False
+    assert svc.restart_if_changed('x', [tmp_path / 'conf'], applied) is False
     (tmp_path / 'conf').write_text('2')
-    assert host.restart_if_changed('x', [tmp_path / 'conf'], applied=applied, run=run) is True
+    assert svc.restart_if_changed('x', [tmp_path / 'conf'], applied) is True
     assert calls.count('restart') == 2
     # Экзит держит отпечаток sing-box в прежнем файле стадии: первый прогон роли
     # на живом узле не рвёт туннели лишним перезапуском.
     record = tmp_path / 'sing-box' / 'applied.sha256'
     record.parent.mkdir()
     record.write_text(hashlib.sha256(b'2').hexdigest() + '\n')
-    assert host.restart_if_changed('x', [tmp_path / 'conf'], record=record, run=run) is False
+    assert svc.restart_if_changed('x', [tmp_path / 'conf'], record=record) is False
     (tmp_path / 'conf').write_text('3')
-    assert host.restart_if_changed('x', [tmp_path / 'conf'], record=record, run=run) is True
+    assert svc.restart_if_changed('x', [tmp_path / 'conf'], record=record) is True
     assert record.read_text() == hashlib.sha256(b'3').hexdigest() + '\n'
 
 

@@ -1,35 +1,17 @@
 """Роль containers: плеи стадий 25, 30 и 35 зовут шаг пакета и отдают ему всё его окружение."""
 import os
 from pathlib import Path
-import re
+import ast
 import unittest
 
+import jinja2
 import yaml
 
 from play_stage import site_play
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 ROLE = ROOT / 'infra/ansible/roles/containers'
-PACKAGE = ROOT / 'infra/vpn2/src/vpn2/containers'
 PLAYS = {'25-monitoring': 'monitoring', '30-frontend': 'panel', '35-telegram': 'telegram'}
-# Пути-подмены для тестов пакета: плей их не задаёт, шаг берёт умолчания хоста.
-OVERRIDES = {'VPN2_ENTRY_RESOURCES', 'VPN2_PANEL_CONFIG_TPL'}
-# Массивы из ответа расчёта ресурсов, а не переменные окружения.
-RESOURCE_ARRAYS = {'ENTRY_DOCKER_ARGS', 'ENTRY_RUNTIME_ARGS'}
-READ = re.compile(r'''(?:\bget\(|environ\[)\s*(?:f?["'])([A-Z][A-Z0-9_]*)["']''')
-LOOP = re.compile(r'for name in \(([^)]*)\)')
-
-
-def package_names():
-    names = set()
-    for path in sorted(PACKAGE.glob('*.py')):
-        text = path.read_text()
-        names.update(READ.findall(text))
-        for group in LOOP.findall(text):
-            names.update(re.findall(r"'([A-Z][A-Z0-9_]*)'", group))
-    return names
-
-
 class ContainersRoleTests(unittest.TestCase):
     def setUp(self):
         self.defaults = yaml.safe_load((ROLE / 'defaults/main.yml').read_text())
@@ -56,20 +38,19 @@ class ContainersRoleTests(unittest.TestCase):
                 with self.subTest(task=task['name']):
                     self.assertEqual(task['changed_when'], f"'changed=1' in {task['register']}.stdout")
 
-    def test_step_gets_every_variable_the_package_reads(self):
-        names = package_names()
-        self.assertGreater(len(names), 30)
-        prefixes = {name for name in names if name.endswith('_')}
-        self.assertEqual(prefixes - {'TELEGRAM_'}, {'MGMT_IP_', 'DOMAIN_'})
-        self.assertEqual(sorted(prefix + '_' for prefix in self.defaults['containers_env_exit_prefix']),
-                         ['DOMAIN_', 'MGMT_IP_'])
-        passed = set(self.defaults['containers_env_common'])
-        self.assertIn("combine({'VM_VERSION':", self.defaults['containers_env'])
-        missing = {name for name in names - prefixes - OVERRIDES - RESOURCE_ARRAYS - {'VM_VERSION'} if not name.startswith('NUXT_')} - passed
-        self.assertEqual(missing, set())
-        # Отрицательный контроль: без имени в списке проверка называет именно его.
-        self.assertIn('TLS_ACME_URL', names - (passed - {'TLS_ACME_URL'}))
-        self.assertEqual(len(passed), len(self.defaults['containers_env_common']))
+    def test_step_gets_every_node_variable_but_the_entry_login(self):
+        filters = {'dict2items': lambda data: [{'key': key, 'value': value} for key, value in data.items()],
+                   'items2dict': lambda items: {item['key']: item['value'] for item in items},
+                   'combine': lambda data, other: {**data, **other}, 'from_yaml': yaml.safe_load}
+        environment = jinja2.Environment(undefined=jinja2.StrictUndefined)
+        environment.filters.update(filters)
+        node = {'ENTRY_HOST': '192.0.2.1', 'SSH_PASS': 'secret', 'TLS_ACME_URL': 'https://acme.test/dir'}
+        rendered = environment.from_string(self.defaults['containers_env']).render(
+            vpn2_env=node, containers_infra='infra',
+            lookup=lambda _kind, path: (ROOT / path).read_text())
+        env = ast.literal_eval(rendered)
+        self.assertEqual(env.pop('VM_VERSION'), yaml.safe_load((ROOT / 'infra/versions.yml').read_text())['victoriametrics'])
+        self.assertEqual(env, {'ENTRY_HOST': '192.0.2.1', 'TLS_ACME_URL': 'https://acme.test/dir'})
 
     def test_tools_exist_in_tree(self):
         for service, tools in self.defaults['containers_tools'].items():

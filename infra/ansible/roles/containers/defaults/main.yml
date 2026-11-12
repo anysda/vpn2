@@ -15,61 +15,9 @@ containers_tools:
   telegram:
     - {src: configs/anysda-config.yaml.tpl, dest: anysda-config.yaml.tpl}
 
-# Окружение шага: общие переменные стадий и по набору на экзит. Бот при смене
-# своего секрета пересоздаёт панель, поэтому набор у служб один.
-containers_env_common:
-  - HOST_TAG
-  - ENTRY_HOST
-  - AGH_PORT
-  - MGMT_IP
-  - MGMT_IP_RU
-  - EXIT_TAGS
-  - ADMIN_USER
-  - ADMIN_PASSWORD
-  - PANEL_DOMAIN
-  - PANEL_IMAGE
-  - PANEL_IMAGE_PULL
-  - TGBOT_IMAGE
-  - TGBOT_IMAGE_PULL
-  - SSO_ENABLED
-  - SSO_LABEL
-  - SSO_ALLOWED_SUBS
-  - SSO_AUTO_REDIRECT
-  - SSO_PASSWORD_LOGIN
-  - SSO_CLIENT_ID
-  - SSO_CLIENT_SECRET
-  - SSO_DISCOVERY_URL
-  - TELEGRAM_BOT_TOKEN
-  - TELEGRAM_CHAT_ID
-  - TELEGRAM_ADMIN_USERNAME
-  - ALERT_CPU_PCT
-  - ALERT_RAM_PCT
-  - ALERT_WINDOW_SEC
-  - TGBOT_INVALID_TOKEN_PAUSE_SEC
-  - TGBOT_POLL_STALL_SEC
-  - WG_LISTEN_PORT
-  - WG_MTU
-  - WG_PUBLIC_HOST
-  - WG_SERVER_IP
-  - WG_SPLIT_LOCAL
-  - WG_SUBNET_PREFIX
-  - OVPN_PORT
-  - OVPN_PROTO
-  - OVPN_PUBLIC_HOST
-  - TLS_ACME_URL
-  - TLS_ACME_ROOT
-  - TLS_INITIAL_WAIT
-  - ENTRY_RESOURCE_OVERRIDES
-  - VPN2_DEVELOPMENT
-  - VPN2_PANEL_FOLLOWS
-  - VPN2_RELEASE_MANIFEST
-containers_env_exit_prefix: [DOMAIN, MGMT_IP]
-containers_exits: "{{ (vpn2_env.EXIT_TAGS | default('')).split() | map('upper') | map('replace', '-', '_') | list }}"
-containers_env_names: >-
-  {{ containers_env_common
-     + (containers_env_exit_prefix | product(containers_exits) | map('join', '_') | list) }}
+# Окружение шага - все переменные узла, кроме пароля входа на entry.
 # Версия VictoriaMetrics закреплена в versions.yml: с :latest узлы жили на разных версиях.
 containers_env: >-
-  {{ dict(containers_env_names | product([''])) | combine(vpn2_env | dict2items | selectattr('key', 'in', containers_env_names) | items2dict)
+  {{ vpn2_env | dict2items | rejectattr('key', 'eq', 'SSH_PASS') | items2dict
      | combine({'VM_VERSION': (lookup('ansible.builtin.file', containers_infra ~ '/versions.yml')
                                | from_yaml).victoriametrics}) }}

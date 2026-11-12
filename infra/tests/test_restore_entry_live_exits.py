@@ -18,11 +18,11 @@ NOW = int(time.time()) - 10_000
 
 STANDBY = '''import sys
 from pathlib import Path
-from vpn2.verify import emergency
+from vpn2.verify import stage as emergency
 
 root = Path(sys.argv[1])
 before_stage = not emergency.newer(root / 'stamp-23', root / 'stamp-10')
-code, output = emergency.standby(root / 'hy2.json', root / 'state/agent.json', before_stage)
+code, output = emergency.emergency_standby(root / 'hy2.json', root / 'state/agent.json', before_stage)
 print(output)
 raise SystemExit(code)
 '''

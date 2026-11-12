@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from vpn2.verify import emergency, host, stage
+from vpn2.verify import stage
 
 BASIC = [
     'sysctl net.ipv4.ip_forward = 1',
@@ -68,9 +68,9 @@ def node(tmp_path, monkeypatch):
     monkeypatch.setattr(stage, 'TLS_CONFIG', tmp_path / 'tls.json')
     monkeypatch.setattr(stage, 'SINGBOX_CONFIG', tmp_path / 'sing-box.json')
     monkeypatch.setattr(stage, 'WARP_STATE', tmp_path / 'warp.json')
-    monkeypatch.setattr(host, 'command', lambda *_argv: (0, ''))
-    monkeypatch.setattr(host, 'recv_queue', lambda: '0')
-    monkeypatch.setattr(emergency, 'ip_certificate', lambda _config, _cert: True)
+    monkeypatch.setattr(stage, 'command', lambda *_argv: (0, ''))
+    monkeypatch.setattr(stage, 'recv_queue', lambda: '0')
+    monkeypatch.setattr(stage, 'ip_certificate', lambda _config, _cert: True)
     names = []
     monkeypatch.setattr(stage.Stage, 'check', lambda _self, label, *_args, **_options: names.append(label))
     monkeypatch.setattr(stage.Stage, 'traffic', lambda _self: names.append(stage.TRAFFIC_LABEL))

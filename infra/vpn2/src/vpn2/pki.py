@@ -1,10 +1,8 @@
-"""PKI: openssl, index.txt, tls-crypt и openssl.cnf для OpenVPN (stdlib only).
+"""PKI поверх openssl: CA OpenVPN (index.txt, CRL, tls-crypt) и свой CA IKEv2 (stdlib only).
 
-Внешняя программа вызывается только через `run=`: тесты подменяют её.
-Проверки, которые отвечают да/нет (`key_valid`, `cert_valid`, `pair_valid`,
-`verify`), не бросают: любой отказ openssl для них - False. Остальные при отказе
-бросают PkiError; в тексте только программа и последняя строка stderr - ни
-аргументов, ни входных данных, значит приватный ключ в исключение не попадает.
+Программы зовутся через `run=` (служба управления подставляет свой ограниченный запуск).
+Проверки да/нет не бросают; остальное бросает PkiError с программой и последней строкой
+stderr - без аргументов и входных данных, приватный ключ в текст не попадает.
 """
 import contextlib
 import ctypes
@@ -89,11 +87,11 @@ class PkiError(Exception):
 
 
 class PkiIdentity(PkiError):
-    """Живой сертификат при битом или пропавшем ключе: заменять нельзя."""
+    """Живой сертификат при битом или пропавшем ключе: заменять нельзя, только восстановить из бэкапа."""
 
 
 class Row(NamedTuple):
-    """Строка index.txt: шесть колонок через табуляцию."""
+    """Строка index.txt."""
     status: str
     expires: str
     revoked: str
@@ -101,14 +99,8 @@ class Row(NamedTuple):
     file: str
     subject: str
 
-    @property
-    def reason(self):
-        """Причина отзыва: то, что в колонке отзыва после запятой."""
-        return self.revoked.partition(',')[2]
-
 
 def run(argv, *, data=None, timeout=60):
-    """subprocess.run в текстовом режиме; нет программы или таймаут - PkiError."""
     try:
         return subprocess.run(argv, input=data, capture_output=True, text=True, errors='replace',
                               timeout=timeout, check=False)
@@ -118,48 +110,27 @@ def run(argv, *, data=None, timeout=60):
         raise PkiError(f'{argv[0]}: {error.strerror or error}') from None
 
 
-def _call(runner, argv, data=None):
-    return runner(argv) if data is None else runner(argv, data=data)
-
-
-def _last_line(done):
-    lines = (done.stderr or '').strip().splitlines()
-    return lines[-1] if lines else '?'
-
-
 def _checked(runner, argv, label, data=None):
-    done = _call(runner, argv, data)
+    done = runner(argv) if data is None else runner(argv, data=data)
     if done.returncode:
-        raise PkiError(f'{label}: {_last_line(done)}', done.returncode)
+        lines = (done.stderr or '').strip().splitlines()
+        raise PkiError(f'{label}: {lines[-1] if lines else "?"}', done.returncode)
     return done
 
 
 def _ok(runner, argv):
     try:
-        return _call(runner, argv).returncode == 0
+        return runner(argv).returncode == 0
     except PkiError:
         return False
 
 
 def tls_crypt_valid(text):
-    """Ключ tls-crypt (`openvpn --genkey secret`): между маркерами V1 ровно 512 hex.
-
-    Строки с `#` и пустые пропускаются; любая другая строка вне формата - отказ.
-    Устаревший static-key режим (--secret) не проверяется.
-    """
-    state, size = 0, 0
-    for line in text.split('\n'):
-        if line.startswith('#') or not line.strip(BLANK):
-            continue
-        if line == KEY_BEGIN and state == 0:
-            state = 1
-        elif line == KEY_END and state == 1:
-            state = 2
-        elif state == 1 and re.fullmatch('[0-9a-fA-F]+', line):
-            size += len(line)
-        else:
-            return False
-    return state == 2 and size == 512
+    """Ключ tls-crypt: между маркерами V1 ровно 512 hex; строки с # и пустые пропускаются."""
+    lines = [line for line in text.split('\n') if line.strip(BLANK) and not line.startswith('#')]
+    body = lines[1:-1]
+    return (len(lines) > 2 and lines[0] == KEY_BEGIN and lines[-1] == KEY_END
+            and all(re.fullmatch('[0-9a-fA-F]+', line) for line in body) and sum(map(len, body)) == 512)
 
 
 def index(text):
@@ -168,38 +139,28 @@ def index(text):
     return [Row(*columns) for columns in rows if len(columns) == 6]
 
 
-def by_cn(rows, cn, *, comma=False, strict=False):
-    """Строки с этим CN (dev_7 не находит dev_70).
-
-    CN ограничен `/`; comma=True - ещё и `,` (так restore читает RFC2253-вид).
-    Плохой hex в serial: strict - PkiError, иначе строка пропускается.
-    """
-    around = '[/,]' if comma else '/'
-    found = re.compile(rf'(?:^|{around})CN={re.escape(cn)}(?:{around}|$)')
+def by_cn(rows, cn, *, strict=False):
+    """Строки с этим CN (dev_7 не находит dev_70); плохой serial: strict - PkiError, иначе пропуск."""
+    found = re.compile(rf'(?:^|/)CN={re.escape(cn)}(?:/|$)')
     matches = []
     for row in rows:
-        if not found.search(row.subject):
-            continue
-        if not HEX.fullmatch(row.serial):
-            if strict:
+        if found.search(row.subject):
+            if HEX.fullmatch(row.serial):
+                matches.append(row)
+            elif strict:
                 raise PkiError(f'index.txt: bad serial for CN={cn}')
-            continue
-        matches.append(row)
     return matches
 
 
 def openssl_cnf(directory='/etc/openvpn/server/pki'):
-    """openssl.cnf для `openssl ca` с каталогом PKI directory."""
     return CNF.replace('@DIR@', str(directory))
 
 
 def key_valid(path, *, run=run):
-    """Приватный ключ читается и проходит `openssl pkey -check`."""
     return _ok(run, ['openssl', 'pkey', '-in', str(path), '-check', '-noout'])
 
 
 def cert_valid(path, *, checkend=0, run=run):
-    """Сертификат читается и не истекает в ближайшие checkend секунд."""
     return _ok(run, ['openssl', 'x509', '-in', str(path), '-noout', '-checkend', str(checkend)])
 
 
@@ -216,15 +177,11 @@ def pair_valid(key, cert, *, run=run):
 
 
 def genkey(path, *, run=run):
-    """Новый приватный ключ EC prime256v1 в path."""
     _checked(run, ['openssl', 'genpkey', *EC_KEY, '-out', str(path)], 'openssl genpkey')
 
 
 def require_key(key, cert, *, run=run):
-    """Ключ годен или создан заново. Битый ключ при живом сертификате - PkiIdentity.
-
-    Это может быть действующая идентичность, её восстанавливают из бэкапа, а не заменяют.
-    """
+    """Ключ годен или создан заново; битый ключ при живом сертификате - PkiIdentity."""
     if key_valid(key, run=run):
         return
     if cert_valid(cert, run=run):
@@ -233,7 +190,6 @@ def require_key(key, cert, *, run=run):
 
 
 def verify(ca, cert, *, crl=None, purpose=None, run=run):
-    """`openssl verify`: сертификат подписан ca; с crl - и не отозван; purpose - как -purpose."""
     argv = ['openssl', 'verify', '-CAfile', str(ca)]
     if crl is not None:
         argv += ['-CRLfile', str(crl), '-crl_check']
@@ -249,33 +205,31 @@ def serial(pem, *, run=run):
     return int(value, 16) if done.returncode == 0 and HEX.fullmatch(value) else None
 
 
-def issue(directory, cn, key, csr, out, *, days=3650, extensions='client_ext', run=run):
-    """Сертификат для key через `openssl ca` (запись в index/serial CA); возвращает serial hex-строкой."""
-    directory = Path(directory)
-    _checked(run, ['openssl', 'req', '-new', '-key', str(key), '-out', str(csr), '-subj', '/CN=' + cn],
-             'openssl req')
-    _checked(run, ['openssl', 'ca', '-batch', '-notext', '-config', str(directory / 'openssl.cnf'),
-                   '-extensions', extensions, '-days', str(days), '-in', str(csr), '-out', str(out)],
-             'openssl ca')
-    done = _checked(run, ['openssl', 'x509', '-in', str(out), '-noout', '-serial'], 'openssl x509')
-    value = done.stdout.strip().partition('=')[2]
+def _x509_serial(runner, cert):
+    value = _checked(runner, ['openssl', 'x509', '-in', str(cert), '-noout', '-serial'],
+                     'openssl x509').stdout.strip().partition('=')[2]
     if not HEX.fullmatch(value):
         raise PkiError('openssl x509 -serial: no serial')
     return value
 
 
+def issue(directory, cn, key, csr, out, *, days=3650, extensions='client_ext', run=run):
+    """Сертификат для key через `openssl ca` (запись в index/serial CA); serial hex-строкой."""
+    _checked(run, ['openssl', 'req', '-new', '-key', str(key), '-out', str(csr), '-subj', '/CN=' + cn],
+             'openssl req')
+    _checked(run, ['openssl', 'ca', '-batch', '-notext', '-config', str(Path(directory) / 'openssl.cnf'),
+                   '-extensions', extensions, '-days', str(days), '-in', str(csr), '-out', str(out)],
+             'openssl ca')
+    return _x509_serial(run, out)
+
+
 def revoke(directory, cert, *, reason=None, run=run):
-    """Отметить сертификат отозванным в базе CA (CRL выпускает gencrl)."""
     _checked(run, ['openssl', 'ca', '-batch', '-config', str(Path(directory) / 'openssl.cnf'),
                    '-revoke', str(cert), *(['-crl_reason', reason] if reason else [])], 'openssl ca -revoke')
 
 
 def gencrl(directory, out, *, verify=True, run=run):
-    """CRL из базы CA в out.
-
-    verify=True: выпуск во временный файл, проверка ca.crt и только потом атомарная
-    запись 0644; не прошло проверку - PkiError, out прежний. verify=False: сразу в out.
-    """
+    """CRL из базы CA в out; verify - сначала во временный файл, проверка ca.crt, затем атомарно 0644."""
     directory, out = Path(directory), Path(out)
     argv = ['openssl', 'ca', '-batch', '-config', str(directory / 'openssl.cnf'), '-gencrl', '-out']
     if not verify:
@@ -289,43 +243,21 @@ def gencrl(directory, out, *, verify=True, run=run):
         atomic(out, crl.read_text(), 0o644)
 
 
-AT_FDCWD = -100
-RENAME_EXCHANGE = 2
-
-
-def _libc():
-    return ctypes.CDLL(None, use_errno=True)
-
-
 def _exchange(source, target):
     """renameat2(RENAME_EXCHANGE): два каталога меняются местами одним syscall."""
-    if _libc().renameat2(AT_FDCWD, os.fsencode(source), AT_FDCWD, os.fsencode(target), RENAME_EXCHANGE):
+    at_fdcwd, rename_exchange = -100, 2
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.renameat2(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target), rename_exchange):
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), str(target))
 
 
-def _copy(source, work):
-    """Как `cp -a --no-preserve=mode source/. work/`: права от umask 077, владельцы - если root."""
-    shutil.copytree(source, work, symlinks=True, dirs_exist_ok=True)
-    for path in [work, *Path(work).rglob('*')]:
-        origin = Path(source) / path.relative_to(work)
-        info = origin.lstat()
-        if os.geteuid() == 0:
-            os.lchown(path, info.st_uid, info.st_gid)
-        if path != Path(work) and not path.is_symlink():
-            path.chmod(info.st_mode & 0o700)
-
-
 @contextlib.contextmanager
 def transaction(target, *, timeout=None):
-    """Комплект target собирается в рабочей копии и подменяет target целиком.
+    """Комплект target собирается в рабочей копии рядом и подменяет target целиком.
 
-    Замок `.<имя>.lock` лежит рядом с target (его делят стадия и панель), timeout - как
-    у fsutil.lock. Внутри блока umask 077 (на весь процесс). Рабочая копия -
-    `<target>.tmp.XXXXXXXX` рядом с target. Исключение в блоке: target не тронут, копия
-    убрана. Успех: права target на копию и renameat2(EXCHANGE), запасного пути нет -
-    отказ syscall это OSError. target ещё нет - простой rename. Остатки чужих упавших
-    запусков (`*.tmp.*`) не трогаются: имя копии случайное, они не мешают.
+    Замок `.<имя>.lock` рядом с target делят стадия и панель. Внутри блока umask 077.
+    Исключение - target не тронут; успех - права target на копию и обмен каталогов.
     """
     target = Path(target)
     umask = os.umask(0o077)
@@ -335,7 +267,16 @@ def transaction(target, *, timeout=None):
             work = Path(tempfile.mkdtemp(prefix=f'{target.name}.tmp.', dir=target.parent))
             try:
                 if target.is_dir():
-                    _copy(target, work)
+                    # Как `cp -a --no-preserve=mode`: права от umask 077, владельцы - если root.
+                    shutil.copytree(target, work, symlinks=True, dirs_exist_ok=True)
+                    for path in Path(work).rglob('*'):
+                        info = (target / path.relative_to(work)).lstat()
+                        if os.geteuid() == 0:
+                            os.lchown(path, info.st_uid, info.st_gid)
+                        if not path.is_symlink():
+                            path.chmod(info.st_mode & 0o700)
+                    if os.geteuid() == 0:
+                        os.lchown(work, target.stat().st_uid, target.stat().st_gid)
                 yield work
                 if os.path.exists(target):
                     work.chmod(os.stat(target).st_mode & 0o777)
@@ -353,12 +294,16 @@ def _require_pair(key, cert, run):
         raise PkiError(f'PKI: invalid or mismatched key/certificate: {cert}')
 
 
-def build_openvpn(directory, *, run=run):
-    """Комплект OpenVPN (CA, сервер, tls-crypt, CRL) в directory.
+def _modes(paths, mode):
+    for path in paths:
+        path.chmod(mode)
 
-    Повтор на готовом комплекте ничего не перевыпускает. openssl.cnf пишется с
-    каталогом по умолчанию (туда комплект попадёт после transaction), а `openssl ca`
-    идёт по build.cnf с каталогом directory, чтобы менялась только эта копия базы.
+
+def build_openvpn(directory, *, run=run):
+    """Комплект OpenVPN (CA, сервер, tls-crypt, CRL) в directory; готовый комплект не перевыпускается.
+
+    openssl.cnf пишется с каталогом по умолчанию (туда комплект попадёт после transaction),
+    `openssl ca` идёт по build.cnf с каталогом directory.
     """
     pki = Path(directory)
     (pki / 'newcerts').mkdir(parents=True, exist_ok=True)
@@ -384,11 +329,7 @@ def build_openvpn(directory, *, run=run):
                        '-days', '3650', '-in', str(csr), '-out', str(cert)], 'openssl ca')
         csr.unlink(missing_ok=True)
     tls, crl = pki / 'tls-crypt.key', pki / 'crl.pem'
-
-    def tls_ok():
-        return tls.is_file() and tls_crypt_valid(tls.read_text(errors='replace'))
-
-    if not tls_ok():
+    if not (tls.is_file() and tls_crypt_valid(tls.read_text(errors='replace'))):
         _checked(run, ['openvpn', '--genkey', 'secret', str(tls)], 'openvpn --genkey')
     crl_check = ['openssl', 'crl', '-in', str(crl), '-noout', '-verify', '-CAfile', str(ca)]
     if not _ok(run, crl_check):
@@ -396,71 +337,55 @@ def build_openvpn(directory, *, run=run):
     _require_pair(key, cert, run)
     _checked(run, ['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(cert)], 'openssl verify')
     _checked(run, crl_check, 'openssl crl')
-    if not tls_ok():
+    if not (tls.is_file() and tls_crypt_valid(tls.read_text(errors='replace'))):
         raise PkiError(f'PKI: invalid tls-crypt key: {tls}')
     build.unlink(missing_ok=True)
-    for path in (ca_key, key, tls):
-        path.chmod(0o600)
-    for path in (ca, cert, crl):
-        path.chmod(0o644)
-
-
-def _san_names(cert, run):
-    try:
-        done = _call(run, ['openssl', 'x509', '-in', str(cert), '-noout', '-ext', 'subjectAltName'])
-    except PkiError:
-        return set()
-    return {part.lstrip(' ') for line in done.stdout.splitlines() for part in line.split(',')}
-
-
-def san_entry(name):
-    """Запись SAN, как её печатает openssl: адрес из цифр и точек - IP, иначе DNS."""
-    return f'IP Address:{name}' if re.fullmatch(r'[0-9.]+', name) else f'DNS:{name}'
+    _modes((ca_key, key, tls), 0o600)
+    _modes((ca, cert, crl), 0o644)
 
 
 def build_ikev2(directory, public, entry_host, *, say=lambda _text: None, run=run):
-    """Свой CA IKEv2 и сертификат сервера в directory.
+    """Свой CA IKEv2 (10 лет, один раз) и сертификат сервера (5 лет) в directory.
 
-    CA выпускается один раз на 10 лет. Сертификат сервера (5 лет) перевыпускается, когда
-    истёк, не сходится с CA или в SAN нет адреса профилей public либо IP входа; ключ и
-    CA при этом прежние, выданные профили продолжают работать.
+    Сертификат перевыпускается, когда истёк, не сходится с CA или в SAN нет адреса профилей
+    public либо IP входа; ключ и CA прежние, выданные профили продолжают работать.
     """
     pki = Path(directory)
-    ca, ca_key = pki / 'ca.crt', pki / 'ca.key'
+    ca, ca_key, key, cert = pki / 'ca.crt', pki / 'ca.key', pki / 'server.key', pki / 'server.crt'
     require_key(ca_key, ca, run=run)
     if not cert_valid(ca, run=run):
         say('generating CA (ECDSA P-256, 10y)')
-        done = _checked(run, ['pki', '--self', '--in', str(ca_key), '--type', 'ecdsa',
-                              '--dn', 'CN=anysda-vpn2 IKEv2 CA', '--ca', '--lifetime', '3650',
-                              '--outform', 'pem'], 'pki --self')
-        ca.write_text(done.stdout)
-    ca_key.chmod(0o600)
-    ca.chmod(0o644)
+        ca.write_text(_checked(run, ['pki', '--self', '--in', str(ca_key), '--type', 'ecdsa',
+                                     '--dn', 'CN=anysda-vpn2 IKEv2 CA', '--ca', '--lifetime', '3650',
+                                     '--outform', 'pem'], 'pki --self').stdout)
+    _modes((ca_key,), 0o600)
+    _modes((ca,), 0o644)
     _require_pair(ca_key, ca, run)
     _checked(run, ['openssl', 'verify', '-CAfile', str(ca), str(ca)], 'openssl verify')
-
     sans = [public] if public == entry_host else [public, entry_host]
-    key, cert = pki / 'server.key', pki / 'server.crt'
     require_key(key, cert, run=run)
-    issue = not (pair_valid(key, cert, run=run) and verify(ca, cert, run=run))
-    if not issue:
-        have = _san_names(cert, run)
+    reissue = not (pair_valid(key, cert, run=run) and verify(ca, cert, run=run))
+    if not reissue:
+        try:
+            text = run(['openssl', 'x509', '-in', str(cert), '-noout', '-ext', 'subjectAltName']).stdout
+        except PkiError:
+            text = ''
+        have = {part.lstrip(' ') for line in text.splitlines() for part in line.split(',')}
         for name in sans:
-            if san_entry(name) not in have:
+            if (f'IP Address:{name}' if re.fullmatch(r'[0-9.]+', name) else f'DNS:{name}') not in have:
                 say(f'SAN не содержит {name}, перевыпуск server cert')
-                issue = True
-    if issue:
+                reissue = True
+    if reissue:
         pub = pki / 'server.pub'
         pub.write_text(_checked(run, ['pki', '--pub', '--in', str(key), '--type', 'ecdsa', '--outform', 'pem'],
                                 'pki --pub').stdout)
-        done = _checked(run, ['pki', '--issue', '--cacert', str(ca), '--cakey', str(ca_key),
-                              '--in', str(pub), '--type', 'pub', '--dn', f'CN={public}',
-                              *(f'--san={name}' for name in sans),
-                              '--flag', 'serverAuth', '--flag', 'ikeIntermediate',
-                              '--lifetime', '1825', '--outform', 'pem'], 'pki --issue')
+        cert.write_text(_checked(run, ['pki', '--issue', '--cacert', str(ca), '--cakey', str(ca_key),
+                                       '--in', str(pub), '--type', 'pub', '--dn', f'CN={public}',
+                                       *(f'--san={name}' for name in sans),
+                                       '--flag', 'serverAuth', '--flag', 'ikeIntermediate',
+                                       '--lifetime', '1825', '--outform', 'pem'], 'pki --issue').stdout)
         pub.unlink()
-        cert.write_text(done.stdout)
     _require_pair(key, cert, run)
     _checked(run, ['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(cert)], 'openssl verify')
-    for path, mode in ((ca_key, 0o600), (key, 0o600), (ca, 0o644), (cert, 0o644)):
-        path.chmod(mode)
+    _modes((ca_key, key), 0o600)
+    _modes((ca, cert), 0o644)

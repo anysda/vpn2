@@ -64,7 +64,7 @@ def test_index_parses_six_columns_and_skips_the_rest():
 
 def test_index_row_reason_is_after_comma():
     rows = pki.index(INDEX)
-    assert [row.reason for row in rows] == ['', 'certificateHold', '']
+    assert [row.revoked.partition(',')[2] for row in rows] == ['', 'certificateHold', '']
     assert rows[1].revoked == '260101000000Z,certificateHold'
 
 
@@ -76,13 +76,12 @@ def test_by_cn_matches_whole_name_only():
     assert pki.by_cn([], 'dev_7') == []
 
 
-def test_by_cn_separators_slash_and_comma():
+def test_by_cn_separator_is_slash():
     text = ''.join(f'V\t3\t\t{n:02X}\tunknown\t{subject}\n' for n, subject in enumerate([
         '/O=a,b/CN=dev_7', '/CN=dev_7/O=x', 'CN=dev_7,O=x', 'O=x,CN=dev_7', '/CN=dev_7,x', '/XCN=dev_7',
     ]))
     rows = pki.index(text)
     assert [row.serial for row in pki.by_cn(rows, 'dev_7')] == ['00', '01']
-    assert [row.serial for row in pki.by_cn(rows, 'dev_7', comma=True)] == ['00', '01', '02', '03', '04']
 
 
 def test_by_cn_cn_is_not_a_regex():
@@ -400,7 +399,7 @@ def test_real_issue_revoke_gencrl_verify(ca, tmp_path):
     pki.revoke(ca, cert)
     pki.gencrl(ca, crl)
     rows = pki.by_cn(pki.index((ca / 'index.txt').read_text()), 'dev_7')
-    assert [(row.status, row.reason) for row in rows] == [('R', '')]
+    assert [(row.status, row.revoked.partition(',')[2]) for row in rows] == [('R', '')]
     assert pki.verify(ca / 'ca.crt', cert)
     assert not pki.verify(ca / 'ca.crt', cert, crl=crl)
     again = pki.run(['openssl', 'verify', '-CAfile', str(ca / 'ca.crt'), '-CRLfile', str(crl), '-crl_check',
@@ -416,7 +415,7 @@ def test_real_revoke_with_reason_and_failures(ca, tmp_path):
     pki.issue(ca, 'dev_8', key, tmp_path / 'csr.pem', cert)
     pki.revoke(ca, cert, reason='certificateHold')
     row, = pki.by_cn(pki.index((ca / 'index.txt').read_text()), 'dev_8')
-    assert (row.status, row.reason) == ('R', 'certificateHold')
+    assert (row.status, row.revoked.partition(',')[2]) == ('R', 'certificateHold')
     with pytest.raises(PkiError, match='openssl ca -revoke: ') as caught:
         pki.revoke(ca, cert)
     assert caught.value.code not in (None, 0)

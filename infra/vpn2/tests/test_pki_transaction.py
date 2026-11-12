@@ -108,7 +108,7 @@ class NoRenameat2:
 
 @pytest.mark.parametrize('code', [errno.ENOSYS, errno.EINVAL])
 def test_without_renameat2_existing_target_fails_untouched(tmp_path, monkeypatch, code):
-    monkeypatch.setattr(pki, '_libc', lambda: NoRenameat2(code))
+    monkeypatch.setattr(pki.ctypes, 'CDLL', lambda *_a, **_k: NoRenameat2(code))
     target = kit(tmp_path)
     before = tree(target)
     with pytest.raises(OSError) as caught:
@@ -120,7 +120,7 @@ def test_without_renameat2_existing_target_fails_untouched(tmp_path, monkeypatch
 
 
 def test_without_renameat2_first_install_still_works(tmp_path, monkeypatch):
-    monkeypatch.setattr(pki, '_libc', lambda: NoRenameat2(errno.ENOSYS))
+    monkeypatch.setattr(pki.ctypes, 'CDLL', lambda *_a, **_k: NoRenameat2(errno.ENOSYS))
     with pki.transaction(tmp_path / 'pki') as work:
         (work / 'a').write_text('a')
     assert tree(tmp_path / 'pki') == {'a': b'a'}

@@ -166,19 +166,6 @@ class YoutubeFailoverTests(unittest.TestCase):
             self.assertFalse(good)
             self.assertIn('обход не измерен', detail)
 
-    def test_status_only_reads_actual_selector(self):
-        watch = load_watch()
-        with tempfile.TemporaryDirectory() as directory:
-            cfg = Path(directory) / 'config.json'
-            cfg.write_text(json.dumps(self.router('zapret', 'allow')))
-            with patch.object(watch, 'CONFIG', cfg), patch.object(watch, 'STATE', cfg.parent / 'absent'), \
-                    patch.object(watch, 'api', return_value={'now': 'foreign-best'}) as api, \
-                    patch.object(watch, 'probe') as probe, patch('builtins.print'), \
-                    patch('sys.argv', ['yt-failover', '--status']):
-                self.assertEqual(watch.main(), 2)
-                api.assert_called_once_with('GET')
-                probe.assert_not_called()
-
 
 if __name__ == '__main__':
     unittest.main()

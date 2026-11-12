@@ -1,20 +1,9 @@
-"""YouTube: три провала видеопотока → VPN, три успеха → zapret.
+"""YouTube: три провала видеопотока - через VPN, три успеха - через zapret.
 
-Вызывается systemd-таймером; отдельная служба не задерживает быстрый сторож
-экзитов. Обход проверяется напрямую даже во время работы через VPN.
-4 МиБ / минимум 250000 байт/с (2 Мбит/с): отсеиваем сильное замедление,
-не обещая HD/4K. Обычно до 1.2 ГиБ/сутки при пятиминутном периоде; фактически меньше,
-поскольку таймер отсчитывает период от окончания предыдущей проверки.
-YT_PROBE_VIDEO позволяет выбрать другой общедоступный длинный ролик
-с разрешённым встраиванием: клиент web_embedded без cookies и PO-токена.
-При неизмеренном ответе — другой ролик (YT_PROBE_POT_VIDEO), mweb и локальный
-PO-токен bgutil. Не более двух попыток; сетевой bad повтором не маскируем.
-Лимит памяти (MemoryMax юнита) и сетевой отказ до YouTube второй заход не
-запускают; убитая по памяти проба не меняет счётчики и маршрут.
-Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
-счётчики и маршрут. «Не измерено» уходит один раз, когда провал длится без
-перерыва дольше часа; «возобновлено» — только после такого алерта.
---status читает selector и последнюю пробу: 2, если свежего измерения нет.
+Пробу запускает таймер anysda-yt-failover. Обход проверяется напрямую и во время
+работы через VPN: 4 МиБ видеопотока не медленнее 250000 байт/с. Неизмеренная проба
+(антибот, экстрактор, лимит памяти) счётчики и маршрут не меняет; «не измерено»
+уходит в бот, когда замера нет дольше часа, «возобновлено» - после такого алерта.
 """
 import json
 import math
@@ -40,22 +29,19 @@ POT_VIDEO = os.environ.get('YT_PROBE_POT_VIDEO', 'https://www.youtube.com/watch?
 SAMPLE_BYTES = 4 * 1024 * 1024
 MIN_BPS = 250000
 HITS = 3
-# Антибот с IP дата-центра роняет замер на отдельные проверки; алерт только
-# если замера нет непрерывно дольше порога, иначе бот шлёт пары каждые 5 мин.
 UNMEASURED_ALERT_AFTER = 3600
 PLAYER_CLIENT = 'web_embedded'
-# Локальные управляющие запросы никогда не отправляем через HTTP_PROXY.
-# Один на процесс: новый opener на каждый запрос оставлял ~90 КиБ RSS.
+# Один на процесс: локальные запросы мимо HTTP_PROXY.
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-# Убийство по MemoryMax юнита - сбой самой пробы, а не YouTube: не считается
-# и не повторяется вторым, более тяжёлым заходом (node + bgutil).
+# Убийство по MemoryMax юнита и сетевой отказ - сбой самой пробы: второй заход
+# (node + bgutil) их не лечит.
 MEMORY_LIMIT = 'проба не удалась: лимит памяти'
 OOM_MARKERS = ('out of memory', 'memoryerror', 'cannot allocate memory', 'sigkill')
-# Сетевой провал до YouTube PO-токен не лечит: второй заход не запускаем.
 NETWORK_FAILURE = 'сетевой отказ до YouTube'
 NETWORK_MARKERS = ('timed out', 'connection refused', 'connection reset', 'network is unreachable',
                    'no route to host', 'name or service not known',
                    'temporary failure in name resolution', 'no address associated with hostname')
+YT_DLP = '/opt/anysda-yt-probe/bin/yt-dlp'
 
 
 def api(method, body=None):
@@ -68,28 +54,24 @@ def api(method, body=None):
 
 def notify(detail):
     event = {'type': 'system_alert', 'subject': 'Маршрут YouTube', 'detail': detail}
-    # Бот необязателен (нет секрета): событие уже записано в journald.
-    if bot.bot_event(event, secret_file=BOT_SECRET, confirm=False,
-                     opener=OPENER) is bot.Outcome.FAILED:
+    if bot.bot_event(event, secret_file=BOT_SECRET, confirm=False, opener=OPENER) is bot.Outcome.FAILED:
         print('YouTube: алерт не доставлен, повтор при следующей проверке', flush=True)
         return False
     return True
 
 
 def media_ok(returncode, stats):
-    """True/False — измеренная загрузка; None — недостаточно сетевых данных."""
+    """True/False - измеренная загрузка; None - недостаточно сетевых данных."""
     if not isinstance(stats, dict):
         return None
     code = stats.get('http_code')
+    # 403/429/5xx, редирект и ответ без Range (200) не измеряют обход.
     if type(code) is not int or code not in (0, 206):
-        # В том числе HTTP 403/429/5xx, редирект и игнорирование Range (200).
         return None
     if code == 206 and not str(stats.get('content_type', '')).startswith('video/'):
         return None
-    # URL Googlevideo уже получен через YouTube: сброс TLS (35) после
-    # ClientHello, таймаут (28) и обрыв потока (18/56) — признаки отказа пути.
-    # Это не устанавливает виновника (DPI/CDN), но требует запасного маршрута.
-    # DNS (6), сертификат (60) и локальные ошибки curl остаются неизмеренными.
+    # URL Googlevideo уже получен: сброс TLS (35), таймаут (28) и обрыв (18/56) -
+    # отказ пути. DNS (6), сертификат (60) и локальные ошибки curl не измерены.
     if returncode in (7, 18, 28, 35, 52, 55, 56):
         return False
     if returncode != 0 or code != 206:
@@ -115,120 +97,110 @@ def oom_kills():
 
 
 def memory_killed(result, before):
-    if result.returncode in (-9, 137):
-        return True
-    if any(marker in (result.stderr or '').lower() for marker in OOM_MARKERS):
+    if result.returncode in (-9, 137) or any(m in (result.stderr or '').lower() for m in OOM_MARKERS):
         return True
     after = oom_kills() if before is not None else None
     return after is not None and after > before
 
 
+def _googlevideo(url):
+    parsed = urllib.parse.urlsplit(url)
+    return parsed if parsed.scheme == 'https' and (parsed.hostname or '').endswith('.googlevideo.com') else None
+
+
+def _extract(prefix, env, video, client, cache):
+    """(media, None) - JSON yt-dlp с URL видеопотока, иначе (None, причина)."""
+    extra = []
+    if cache is not None:
+        extra = ['--source-address', '0.0.0.0', '--extractor-args',
+                 'youtubepot-bgutilscript:server_home=/opt/anysda-yt-probe/bgutil/server']
+    before = oom_kills()
+    info = subprocess.run(prefix + [
+        YT_DLP, '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-warnings', '--proxy', '',
+        '--force-ipv4', '--js-runtimes', 'node:/opt/anysda-yt-probe/bin/node',
+        '--extractor-args', f'youtube:player_client={client}' + (';fetch_pot=always' if cache else ''),
+        '--socket-timeout', '10', '--retries', '0', '--extractor-retries', '0',
+        '-f', 'bestvideo[protocol=https]', '-J', video,
+    ] + extra, env=env, capture_output=True, text=True, timeout=60, check=False)
+    if memory_killed(info, before):
+        return None, f'{MEMORY_LIMIT} (yt-dlp/node, client={client})'
+    if info.returncode:
+        stderr = info.stderr or ''
+        if 'Sign in to confirm' in stderr:
+            return None, 'YouTube требует входа (антибот); обход не измерен'
+        if 'Requested format is not available' in stderr:
+            return None, f'нет HTTPS-видеоформата (SABR/ограничения ролика), client={client}'
+        # HTTP-ответ (403 и т.п.) - YouTube ответил: это не сеть.
+        if 'HTTP Error' not in stderr and any(marker in stderr.lower() for marker in NETWORK_MARKERS):
+            return None, f'{NETWORK_FAILURE} (таймаут, соединение или DNS у yt-dlp), client={client}'
+        return None, (f'не удалось получить URL видеопотока (yt-dlp, client={client}); '
+                      'проверить встраивание ролика/экстрактор/JS-рантайм')
+    media = json.loads(info.stdout)
+    if not isinstance(media, dict) or not isinstance(media.get('url'), str):
+        return None, 'экстрактор не вернул URL видеопотока'
+    parsed = _googlevideo(media['url'])
+    if not parsed:
+        return None, 'экстрактор не вернул HTTPS-видеопоток Googlevideo'
+    if cache is not None and not urllib.parse.parse_qs(parsed.query).get('pot'):
+        return None, f'локальный PO-токен не получен, client={client}'
+    return media, None
+
+
 def probe_media(user, video, client, cache=None):
+    prefix = ['setpriv', f'--reuid={user.pw_uid}', f'--regid={user.pw_gid}', '--clear-groups']
+    # node провайдера PO-токена тоже идёт напрямую, с тем же IPv4 и UID.
+    env = {k: v for k, v in os.environ.items() if k.lower() not in ('http_proxy', 'https_proxy', 'all_proxy')}
+    if cache is not None:
+        env['XDG_CACHE_HOME'] = cache
     try:
-        prefix = ['setpriv', f'--reuid={user.pw_uid}', f'--regid={user.pw_gid}', '--clear-groups']
-        extra = []
-        env = dict(os.environ)
-        # Node провайдера тоже обязан идти напрямую, с тем же IPv4 и UID.
-        for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
-                    'http_proxy', 'https_proxy', 'all_proxy'):
-            env.pop(key, None)
-        if cache is not None:
-            env['XDG_CACHE_HOME'] = cache
-            extra = ['--source-address', '0.0.0.0', '--extractor-args',
-                     'youtubepot-bgutilscript:server_home=/opt/anysda-yt-probe/bgutil/server']
-        before = oom_kills()
-        info = subprocess.run(prefix + [
-            '/opt/anysda-yt-probe/bin/yt-dlp', '--ignore-config', '--no-cache-dir',
-            '--no-playlist', '--no-warnings', '--proxy', '', '--force-ipv4',
-            '--js-runtimes', 'node:/opt/anysda-yt-probe/bin/node',
-            '--extractor-args', f'youtube:player_client={client}' + (';fetch_pot=always' if cache else ''),
-            '--socket-timeout', '10', '--retries', '0',
-            '--extractor-retries', '0', '-f', 'bestvideo[protocol=https]', '-J', video,
-        ] + extra, env=env, capture_output=True, text=True, timeout=60, check=False)
-        if memory_killed(info, before):
-            return None, f'{MEMORY_LIMIT} (yt-dlp/node, client={client})'
-        if info.returncode:
-            stderr = info.stderr or ''
-            if 'Sign in to confirm' in stderr:
-                return None, 'YouTube требует входа (антибот); обход не измерен'
-            if 'Requested format is not available' in stderr:
-                return None, f'нет HTTPS-видеоформата (SABR/ограничения ролика), client={client}'
-            # HTTP-ответ (403 и т.п.) - YouTube ответил: это не сеть.
-            if 'HTTP Error' not in stderr and any(marker in stderr.lower() for marker in NETWORK_MARKERS):
-                return None, f'{NETWORK_FAILURE} (таймаут, соединение или DNS у yt-dlp), client={client}'
-            return None, (f'не удалось получить URL видеопотока (yt-dlp, client={client}); '
-                          'проверить встраивание ролика/экстрактор/JS-рантайм')
-        media = json.loads(info.stdout)
-        if not isinstance(media, dict) or not isinstance(media.get('url'), str):
-            return None, 'экстрактор не вернул URL видеопотока'
-        url = media['url']
-        parsed = urllib.parse.urlsplit(url)
-        if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.googlevideo.com'):
-            return None, 'экстрактор не вернул HTTPS-видеопоток Googlevideo'
-        if cache is not None and not urllib.parse.parse_qs(parsed.query).get('pot'):
-            return None, f'локальный PO-токен не получен, client={client}'
-        # Range ограничивает расход трафика. --max-filesize также защищает от
-        # CDN, игнорирующего Range. Ни HTTP 200, ни оборванная передача не OK.
-        cmd = prefix + ['curl', '-q', '-4', '--noproxy', '*', '--http1.1',
-                        '--silent', '--show-error', '--fail', '--connect-timeout', '5',
-                        '--location', '--max-redirs', '3', '--proto-redir', '=https',
+        media, problem = _extract(prefix, env, video, client, cache)
+        if problem:
+            return None, problem
+        # Range ограничивает трафик, --max-filesize - на CDN без Range; ни 200, ни обрыв не OK.
+        cmd = prefix + ['curl', '-q', '-4', '--noproxy', '*', '--http1.1', '--silent', '--show-error', '--fail',
+                        '--connect-timeout', '5', '--location', '--max-redirs', '3', '--proto-redir', '=https',
                         '--max-time', '20', '--range', f'0-{SAMPLE_BYTES - 1}',
                         '--max-filesize', str(SAMPLE_BYTES), '-o', '/dev/null', '-w', '%{json}']
-        headers = media.get('http_headers', {})
-        if not isinstance(headers, dict) or any(not isinstance(key, str) or not isinstance(value, str)
-                                                for key, value in headers.items()):
-            return None, 'экстрактор вернул некорректные HTTP-заголовки'
-        for key, value in headers.items():
+        for key, value in (media.get('http_headers') or {}).items():
             if key.lower() in ('user-agent', 'referer', 'origin'):
                 cmd += ['-H', f'{key}: {value}']
         before = oom_kills()
-        result = subprocess.run(cmd + [url], env=env, capture_output=True, text=True, timeout=25, check=False)
+        result = subprocess.run(cmd + [media['url']], env=env, capture_output=True, text=True, timeout=25, check=False)
         if memory_killed(result, before):
             return None, f'{MEMORY_LIMIT} (curl, client={client})'
         if result.returncode == 6:
             return None, f'{NETWORK_FAILURE}: DNS Googlevideo (curl=6), client={client}'
         stats = json.loads(result.stdout or '{}')
-        good = media_ok(result.returncode, stats)
         if not isinstance(stats, dict):
             return None, 'curl не вернул объект статистики видеопотока'
-        effective_url = stats.get('url_effective', url)
-        if not isinstance(effective_url, str):
-            return None, 'curl не вернул корректный URL конечного CDN'
-        effective = urllib.parse.urlsplit(effective_url)
-        if effective.scheme != 'https' or not (effective.hostname or '').endswith('.googlevideo.com'):
+        effective = _googlevideo(str(stats.get('url_effective', media['url'])))
+        if not effective:
             return None, 'CDN перенаправил запрос за пределы HTTPS Googlevideo'
-        return good, (f'TCP video: HTTP {stats.get("http_code", 0)}, '
-                      f'{stats.get("size_download", 0)} байт, '
-                      f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}, '
-                      f'CDN={effective.hostname}, client={client}' + (', PO=local' if cache else ''))
+        return media_ok(result.returncode, stats), (
+            f'TCP video: HTTP {stats.get("http_code", 0)}, {stats.get("size_download", 0)} байт, '
+            f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}, '
+            f'CDN={effective.hostname}, client={client}' + (', PO=local' if cache else ''))
     except subprocess.TimeoutExpired as error:
-        # Внешний timeout - повисла утилита или путь: не измерено, как и раньше,
-        # но второй заход bgutil на том же пути повиснет так же.
+        # Повисла утилита или путь: второй заход bgutil на том же пути повиснет так же.
         return None, f'{NETWORK_FAILURE}: видеопроба не завершена: {type(error).__name__}'
-    except (OSError, ValueError, KeyError) as error:
-        # stdout yt-dlp и подписанные URL не пишем в журнал.
-        # Сетевой таймаут как bad подтверждает только --max-time curl (код 28).
+    except (OSError, ValueError, KeyError, AttributeError) as error:
+        # stdout yt-dlp и подписанные URL в журнал не идут.
         return None, f'видеопроба не завершена: {type(error).__name__}'
 
 
 def probe():
     try:
         # Ответ CDN без живой очереди десинка не считается успехом.
-        ready = subprocess.run(['/usr/local/bin/anysda-yt-check'],
-                               capture_output=True, timeout=35, check=False)
+        ready = subprocess.run(['/usr/local/bin/anysda-yt-check'], capture_output=True, timeout=35, check=False)
         if ready.returncode == 1:
             return False, 'очередь, nft-правила или TCP-путь обхода не работают'
         if ready.returncode:
             return None, 'A/B-проверка не завершена; проверить утилиты диагностики'
         user = pwd.getpwnam('ytzdiag')
         good, detail = probe_media(user, VIDEO, PLAYER_CLIENT)
+        # Измеренный ответ, лимит памяти и сеть второй заход не перепроверяет.
         if good is not None or detail.startswith((MEMORY_LIMIT, NETWORK_FAILURE)):
-            # Медленный/оборванный поток — измеренный bad. Другой CDN не
-            # должен маскировать сетевой провал успехом резервного ролика.
-            # Лимит памяти и сеть второй заход не лечит, а память он берёт больше.
             return good, detail
-        # Кэш одноразовый: нет зависимости от /root и состояния прошлого
-        # запуска. Работает с PrivateTmp.
         with tempfile.TemporaryDirectory(prefix='anysda-yt-pot-') as cache:
             os.chown(cache, user.pw_uid, user.pw_gid)
             fallback, fallback_detail = probe_media(user, POT_VIDEO, 'mweb', cache)
@@ -245,28 +217,19 @@ def save(path, state):
 def tick(path, sample):
     try:
         state = json.loads(path.read_text())
-        if not isinstance(state, dict) or not isinstance(state.get('pending'), list):
-            raise ValueError('state')
-        for key in ('good', 'bad'):
-            if type(state.get(key)) is not int or not 0 <= state[key] <= HITS:
-                raise ValueError('counter')
     except (FileNotFoundError, ValueError):
         state = {'good': 0, 'bad': 0, 'pending': []}
     current = api('GET')['now']
     good, detail = sample()
-    unmeasured = good is None
-    now = time.time()
-    was_unmeasured = state.get('unmeasured') is True
-    since = state.get('unmeasured_since')
-    # State прежнего формата без ключа: «не измерено» уже ушло при входе в провал.
-    alerted = state.get('unmeasured_alerted', was_unmeasured) is True
+    unmeasured, now = good is None, time.time()
+    since = state.get('unmeasured_since') if state.get('unmeasured') else None
+    alerted = state.get('unmeasured_alerted') is True
     event = None
     if not unmeasured:
         if alerted:
             event = f'измерение возобновлено: {detail}. Автопереключение снова активно.'
         since, alerted = None, False
-    elif (not was_unmeasured or type(since) not in (int, float)
-          or not math.isfinite(since) or not 0 < since <= now):
+    elif since is None:
         since = now
     elif not alerted and now - since > UNMEASURED_ALERT_AFTER:
         event = f'не измерено: {detail}. Счётчики и маршрут сохранены ({current}).'
@@ -274,18 +237,14 @@ def tick(path, sample):
     if event:
         print('YouTube: ' + event, flush=True)
         state['pending'].append(event)
-    state['unmeasured'] = unmeasured
-    state['unmeasured_since'] = since
-    state['unmeasured_alerted'] = alerted
+    state.update(unmeasured=unmeasured, unmeasured_since=since, unmeasured_alerted=alerted,
+                 last_probe=detail, checked_at=now)
     if not unmeasured:
         state['good'] = min(HITS, state['good'] + 1) if good else 0
         state['bad'] = min(HITS, state['bad'] + 1) if not good else 0
-    state['last_probe'] = detail
-    state['checked_at'] = now
     save(path, state)
-    target = (current if unmeasured else
-              'youtube-ru' if state['good'] >= HITS else
-              'foreign-best' if state['bad'] >= HITS else current)
+    target = (current if unmeasured else 'youtube-ru' if state['good'] >= HITS
+              else 'foreign-best' if state['bad'] >= HITS else current)
     if target != current:
         api('PUT', {'name': target})
         if api('GET')['now'] != target:
@@ -304,52 +263,17 @@ def tick(path, sample):
           f'{"не измерено: " if unmeasured else ""}{detail}', flush=True)
 
 
-def main(argv=None):
-    args = sys.argv[1:] if argv is None else list(argv)
-    cfg = json.loads(CONFIG.read_text())
-    if not any(o.get('tag') == 'youtube-auto' for o in cfg.get('outbounds', [])):
-        # Стадия 19 предшествует 20: старый роутер пока без selector.
-        print('YouTube: ожидаю конфиг youtube-auto от стадии 20', flush=True)
-        return 2 if args == ['--status'] else 0
-    if args == ['--status']:
-        current = api('GET')['now']
-        print('YouTube selector: ' + current)
-        if current not in ('youtube-ru', 'foreign-best'):
-            print('неизвестный выход selector')
-            return 1
-        if not STATE.exists():
-            print('нет измерений видеопотока')
-            return 2
-        state = json.loads(STATE.read_text())
-        if not isinstance(state, dict):
-            print('некорректное состояние видеопробы')
-            return 2
-        detail = state.get('last_probe') or 'нет измерений видеопотока'
-        counters = [state.get(key) for key in ('good', 'bad')]
-        if any(type(value) is not int or not 0 <= value <= HITS for value in counters):
-            print('некорректные счётчики видеопробы')
-            return 2
-        print(f'good={counters[0]} bad={counters[1]}; '
-              f'{"не измерено: " if state.get("unmeasured") else ""}{detail}')
-        if state.get('unmeasured') or not any(counters) or not state.get('last_probe'):
-            return 2
-        stamp = state.get('checked_at')
-        # Период 5 мин + до 240 с на oneshot; старый успех не скрывает остановку проб.
-        if type(stamp) not in (int, float) or not 0 <= time.time() - stamp <= 600:
-            print('нет свежего измерения видеопотока (не старше 600 с)')
-            return 2
-        if counters[1]:
-            print('последняя проба обхода неуспешна; запасной VPN-путь этой пробой не проверяется')
-            return 1
-        return 0
-    tick(STATE, probe)
-    return 0
-
-
 def run(argv=None):
-    """main() для команды: сбой контроллера - строка в stderr и код 1."""
+    """vpn2 watchdog yt: сбой контроллера - строка в stderr и код 1."""
+    del argv
     try:
-        return main(argv)
+        config = json.loads(CONFIG.read_text())
+        if not any(o.get('tag') == 'youtube-auto' for o in config.get('outbounds', [])):
+            # Стадия 19 идёт раньше 20: роутер ещё без selector.
+            print('YouTube: ожидаю конфиг youtube-auto от стадии 20', flush=True)
+            return 0
+        tick(STATE, probe)
     except (OSError, ValueError, KeyError) as failure:
         print(f'YouTube: ошибка контроллера {type(failure).__name__}', file=sys.stderr)
         return 1
+    return 0

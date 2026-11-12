@@ -2,6 +2,7 @@
 
 VPN2_TEST_ROOT - другая ревизия под теми же проверками.
 """
+import fcntl
 import os
 import shlex
 import shutil
@@ -113,16 +114,9 @@ class DeployContractTests(unittest.TestCase):
 
     def test_second_deploy_on_the_machine_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
-            lock = Path(directory) / 'deploy.lock'
-            with open(lock, 'w') as handle, subprocess.Popen(['flock', '-n', str(lock), 'sleep', '30']) as holder:
-                del handle
-                try:
-                    for _ in range(50):
-                        if subprocess.run(['flock', '-n', str(lock), 'true']).returncode:
-                            break
-                    result = deploy(directory, '30-frontend', 'ru')
-                finally:
-                    holder.kill()
+            with open(Path(directory) / 'deploy.lock', 'w') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                result = deploy(directory, '30-frontend', 'ru')
             self.assertEqual(result.returncode, 1)
             self.assertIn('deploy уже выполняется на этой машине', result.stderr)
 

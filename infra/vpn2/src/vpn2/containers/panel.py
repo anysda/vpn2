@@ -11,14 +11,13 @@ import pwd
 import secrets
 import shutil
 import signal
-import string
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from vpn2 import fsutil, svc
-from vpn2.adguard.stage import agh_password
+from vpn2.adguard.stage import admin_password, agh_password
 from vpn2.containers import compose, engine
 from vpn2.containers.transaction import DATA, HEALTH, Transaction
 
@@ -39,7 +38,6 @@ OVPN_INPUTS = ['/usr/sbin/openvpn', '/usr/lib/systemd/system/openvpn-server@.ser
                '/etc/openvpn/server/pki/ca.crt', '/etc/openvpn/server/pki/server.crt',
                '/etc/openvpn/server/pki/server.key', '/etc/openvpn/server/pki/tls-crypt.key']
 APPLY = '/usr/local/sbin/vpn2-apply'
-ALPHABET = string.ascii_letters + string.digits
 
 
 class StageError(Exception):
@@ -51,33 +49,12 @@ def _quiet(*argv):
                           stderr=subprocess.DEVNULL).returncode
 
 
-def _publish(path, text, mode):
-    """Записать файл, если содержимое другое; вернуть, сменился ли он."""
-    path = Path(path)
-    if path.is_file() and path.read_text() == text:
-        return False
-    fsutil.atomic(path, text, mode=mode, encoding='utf-8')
-    return True
-
-
 def db_owner(data=DATA, chown=shutil.chown):
     """Миграция идёт от root и на первой установке создаёт базу с владельцем root."""
     chown(data, 'vpn2-panel', 'vpn2-panel')
     for name in ('db.sqlite', 'db.sqlite-wal', 'db.sqlite-shm'):
         if os.path.lexists(os.path.join(data, name)):
             chown(os.path.join(data, name), 'vpn2-panel', 'vpn2-panel')
-
-
-def admin_password(environ, etc=ETC):
-    """Пароль админа: из config.yaml, иначе прежний, иначе новый. Вернуть (пароль, сменился ли файл)."""
-    path = Path(etc, 'admin-password.txt')
-    changed = False
-    if environ.get('ADMIN_PASSWORD'):
-        changed = _publish(path, environ['ADMIN_PASSWORD'], 0o600)
-    elif not path.is_file():
-        changed = _publish(path, ''.join(secrets.choice(ALPHABET) for _ in range(18)), 0o600)
-    os.chmod(path, 0o600)
-    return path.read_text(), changed
 
 
 def sso(environ, runtime_exists, say=lambda _text: None):
@@ -121,7 +98,7 @@ def write_config(environ, user, password, path=CONFIG, chown=shutil.chown):
     template = Path(environ.get('VPN2_PANEL_CONFIG_TPL') or TEMPLATE)
     if not template.is_file():
         raise StageError(f'{template} не найден')
-    changed = _publish(path, render_config(template.read_text(), user, password), 0o640)
+    changed = fsutil.publish(path, render_config(template.read_text(), user, password), 0o640)
     chown(path, 'root', 'vpn2-panel')
     os.chmod(path, 0o640)
     return changed
@@ -130,7 +107,7 @@ def write_config(environ, user, password, path=CONFIG, chown=shutil.chown):
 def session_secret(etc=ETC):
     """Постоянный секрет сессий: куки переживают пересоздание контейнера."""
     path = Path(etc, 'session-secret.txt')
-    changed = not path.is_file() and _publish(path, secrets.token_hex(32) + '\n', 0o600)
+    changed = not path.is_file() and fsutil.publish(path, secrets.token_hex(32) + '\n', 0o600)
     return path.read_text().strip(), changed
 
 
@@ -270,7 +247,7 @@ def host_tls(environ, say, tx, root='', lib=TLS):
          '--panel-container', compose.PANEL, '--host', tls_host, '--output-dir', root + out,
          '--acme-url', environ.get('TLS_ACME_URL') or 'https://acme-v02.api.letsencrypt.org/directory',
          '--acme-root', environ.get('TLS_ACME_ROOT') or ''], check=True)
-    return tls_host, site, _publish(root + CADDY[0], caddyfile(tls_host, site, root), 0o644)
+    return tls_host, site, fsutil.publish(root + CADDY[0], caddyfile(tls_host, site, root), 0o644)
 
 
 def caddy(regated=False):

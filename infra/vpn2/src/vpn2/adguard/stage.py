@@ -87,29 +87,27 @@ def agh_password(password):
     return password if len(raw) <= 72 else hashlib.sha256(b'vpn2-adguard-v1\0' + raw).hexdigest()
 
 
-def _write_secret(path, text):
-    path = Path(path)
-    if path.is_file() and path.read_text() == text and path.stat().st_mode & 0o777 == 0o600:
-        return False
-    fsutil.atomic(path, text, mode=0o600)
-    return True
+def random_text(length):
+    return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
+
+
+def admin_password(environ, etc=ETC):
+    """Пароль админа: из config.yaml, иначе прежний, иначе новый. Вернуть (пароль, сменился ли файл)."""
+    path = Path(etc, 'admin-password.txt')
+    changed = False
+    if environ.get('ADMIN_PASSWORD'):
+        changed = fsutil.publish(path, environ['ADMIN_PASSWORD'])
+    elif not path.is_file():
+        changed = fsutil.publish(path, random_text(18))
+    os.chmod(path, 0o600)
+    return path.read_text(), changed
 
 
 def credentials(environ, etc=ETC):
-    """Единый логин панели: (пользователь, пароль для AdGuard, сменились ли файлы).
-
-    Пустой ADMIN_PASSWORD - пароль создаётся один раз в admin-password.txt,
-    его же потом берёт стадия 30.
-    """
-    admin = Path(etc, 'admin-password.txt')
-    changed = False
-    if environ.get('ADMIN_PASSWORD'):
-        changed = _write_secret(admin, environ['ADMIN_PASSWORD'])
-    elif not admin.is_file():
-        alphabet = string.ascii_letters + string.digits
-        changed = _write_secret(admin, ''.join(secrets.choice(alphabet) for _ in range(18)))
-    password = agh_password(admin.read_text())
-    changed |= _write_secret(Path(etc, 'adguard-password.txt'), password)
+    """Единый логин панели: (пользователь, пароль для AdGuard, сменились ли файлы)."""
+    password, changed = admin_password(environ, etc)
+    password = agh_password(password)
+    changed |= fsutil.publish(Path(etc, 'adguard-password.txt'), password)
     return environ.get('ADMIN_USER') or 'anysda', password, changed
 
 

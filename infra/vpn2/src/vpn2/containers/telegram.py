@@ -8,12 +8,11 @@ import grp
 import json
 import os
 import pwd
-import secrets
 import shutil
-import string
 from pathlib import Path
 
 from vpn2 import fsutil
+from vpn2.adguard.stage import random_text
 from vpn2.containers import compose, engine
 
 STAGE = '35-telegram'
@@ -21,7 +20,6 @@ ETC = '/etc/anysda'
 RUNTIME_DIR = '/var/lib/anysda-vpn2/runtime'
 BOT_DATA = '/var/lib/anysda-tgbot'
 FIELDS = ('bot_token', 'chat_id', 'admin_username')
-ALPHABET = string.ascii_letters + string.digits
 
 
 def secret(etc=ETC):
@@ -29,8 +27,7 @@ def secret(etc=ETC):
     path = Path(etc, 'tgbot-secret.txt')
     created = not (path.is_file() and path.stat().st_size)
     if created:
-        fsutil.atomic(path, ''.join(secrets.choice(ALPHABET) for _ in range(32)), mode=0o600,
-                      encoding='utf-8')
+        fsutil.atomic(path, random_text(32), mode=0o600)
     os.chmod(path, 0o600)
     return path.read_text(), created
 

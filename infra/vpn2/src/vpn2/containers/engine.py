@@ -10,11 +10,11 @@ import urllib.request
 from pathlib import Path
 
 from vpn2 import fsutil, release
+from vpn2.adguard.stage import resource_tool
 from vpn2.containers import compose
 
 COMPOSE_FILE = '/etc/vpn2/compose/compose.yaml'
 MANIFEST = '/tmp/anysda/release-manifest.json'
-RESOURCES = '/tmp/anysda/entry_resources.py'
 STAMPS = '/var/anysda/.stamps'
 PROJECT_LABEL = 'com.docker.compose.project'
 
@@ -124,10 +124,7 @@ def release_image(environ, component, requested='', pull=True, *, docker=None, e
 
 
 def resource_text(environ, service):
-    tool = environ.get('VPN2_ENTRY_RESOURCES') or RESOURCES
-    env = {**os.environ, 'ENTRY_RESOURCE_OVERRIDES': environ.get('ENTRY_RESOURCE_OVERRIDES', '')}
-    return subprocess.run([sys.executable, tool, '--service', service], capture_output=True, text=True,
-                          check=True, env=env).stdout
+    return resource_tool(environ, '--service', service)
 
 
 def http_ok(url, timeout=2):

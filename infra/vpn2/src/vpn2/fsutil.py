@@ -46,6 +46,19 @@ def atomic(path, body, mode=0o600, encoding=None):
     _fsync_directory(path.parent)
 
 
+def publish(path, body, mode=0o600):
+    """Write body only when the content or the mode differs; return whether it changed."""
+    path = Path(path)
+    raw = body if isinstance(body, bytes) else body.encode('utf-8')
+    try:
+        if path.read_bytes() == raw and path.stat().st_mode & 0o777 == mode:
+            return False
+    except OSError:
+        pass
+    atomic(path, raw, mode)
+    return True
+
+
 def read_json(path, default=_MISSING):
     """Parse a JSON file; a missing file gives default if passed, bad JSON always raises."""
     try:

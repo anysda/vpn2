@@ -31,20 +31,6 @@ def test_error_classes():
     assert not issubclass(WgError, WgUnchecked)
 
 
-def test_valid_key_modes():
-    assert wg.valid_key(A) and wg.valid_key(A, nonzero=True)
-    assert wg.KEY and re.fullmatch(wg.KEY, A)
-    # не канонический: последний знак с лишними битами. strict=False его берёт, strict - нет
-    loose = A[:-2] + 'B='
-    assert not wg.valid_key(loose) and wg.valid_key(loose, strict=False)
-    assert not wg.valid_key(loose, nonzero=True, strict=False)
-    zero = base64.b64encode(bytes(32)).decode()
-    assert wg.valid_key(zero) and not wg.valid_key(zero, nonzero=True)
-    for bad in ('', 'x' * 43, A[:-1], A + '=', A[:-1] + '\n', None, 5, b'a' * 44, 'Я' * 43 + '='):
-        assert not wg.valid_key(bad)
-        assert not wg.valid_key(bad, strict=False)
-
-
 def test_quick_strip_drops_wg_quick_names():
     data = b'[Interface]\nAddress = 192.0.2.1/24\nDNS=1.1.1.1\nListenPort = 1\n[Peer]\nAddress = 1\n'
     assert wg.quick_strip(data) == [(1, b'[Interface]'), (4, b'ListenPort = 1'), (5, b'[Peer]'), (6, b'Address = 1')]
@@ -121,32 +107,21 @@ def test_split_blank_lines_and_latin1_bytes():
     assert tail.encode('latin-1').endswith(b'caf\xe9 \xff\n')
 
 
-def test_private_key_interface_only_vs_any_section():
-    text = HEADER + peer(A, f'PrivateKey = {B}\n')
-    assert wg.private_key(text) == S
-    assert wg.private_key(text, interface_only=False) == B
-    only_peer = f'[Peer]\nPrivateKey = {B}\n'
-    assert wg.private_key(only_peer) is None
-    assert wg.private_key(only_peer, interface_only=False) == B
-
-
 def test_private_key_last_wins_and_blank_forms():
     text = f'[Interface]\nPrivateKey={A}\n  privatekey\t=\t{B} # c\n'
-    assert wg.private_key(text) == B and wg.private_key(text, interface_only=False) == B
-    assert wg.private_key('') is None and wg.private_key('', interface_only=False) is None
+    assert wg.private_key(text) == B
+    assert wg.private_key('') is None
     assert wg.private_key('# PrivateKey = x\n') is None
     # NUL внутри имени и пробелы внутри ключа: wg их не видит
     assert wg.private_key(f'[Interface]\nPriv\x00ateKey = {A[:10]} {A[10:]}\n') == A
-    # пустое значение в awk сбрасывает ключ, в wg_key пустые просто пропускаются
+    # пустое значение сбрасывает ключ, как в awk
     reset = f'[Interface]\nPrivateKey = {A}\nPrivateKey =\n'
     assert wg.private_key(reset) is None
-    assert wg.private_key(reset, interface_only=False) == A
 
 
 def test_private_key_other_section_between_interfaces():
     text = f'[Interface]\nPrivateKey={A}\n[Peer]\nPrivateKey={B}\n[Interface]\nListenPort=1\n'
     assert wg.private_key(text) == A
-    assert wg.private_key(text, interface_only=False) == B
     assert wg.private_key(f'[Interface] x\nPrivateKey={A}\n') is None
 
 

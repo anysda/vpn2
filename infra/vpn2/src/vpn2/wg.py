@@ -1,9 +1,6 @@
-"""wg0.conf: разбор текста так, как его читает wg и wg-quick (stdlib only).
+"""wg0.conf так, как его читают wg и wg-quick, и вывод `wg show` (stdlib only).
 
-Чистые функции без внешних программ: проверка ключа, нарезка на шапку и пиры,
-проверка файла перед установкой, тело для `wg syncconf`, ключи и адреса.
-Файл читается как latin-1, один символ на байт, и пишется обратно так же
-(`vpn2.fsutil.atomic(..., encoding='latin-1')`): байты не меняются.
+Файл читается как latin-1, один символ на байт, и пишется обратно так же: байты не меняются.
 """
 import base64
 import binascii
@@ -37,25 +34,6 @@ class WgError(ValueError):
 
 class WgUnchecked(WgError):
     """Проверить нечем: нет wg, ip, unshare или setpriv, таймаут, сбой шага netns."""
-
-
-def valid_key(value, *, strict=True, nonzero=False):
-    """Ключ wg: 43 знака base64 и `=`.
-
-    strict - канонический (последний знак без лишних битов), как у wg. strict=False -
-    только форма {43}=. nonzero - ещё 32 байта, не нулевых, и канонический вид.
-    """
-    if not isinstance(value, str):
-        return False
-    if not re.fullmatch(KEY if strict else r'[A-Za-z0-9+/]{43}=', value):
-        return False
-    if nonzero:
-        try:
-            raw = base64.b64decode(value, validate=True)
-        except ValueError:
-            return False
-        return len(raw) == 32 and any(raw) and base64.b64encode(raw).decode() == value
-    return True
 
 
 def _lower(text):
@@ -118,29 +96,14 @@ def split(text):
     return '\n'.join(lines[:cut]).rstrip(SPACE) + '\n', '\n'.join(lines[cut:])
 
 
-def _pairs(text):
-    """(имя, значение) каждой строки как их видят wg-quick и wg: NUL вон, до первого #, без пробелов."""
-    return [re.sub(r'[ \t\n\v\f\r]', '', item.replace('\0', '').split('#', 1)[0]).partition('=')
-            for item in text.split('\n')]
-
-
-def private_key(text, *, interface_only=True):
-    """Приватный ключ из wg0.conf (последний) или None.
-
-    interface_only=True - только в [Interface] (роль wireguard и anysda-restore.sh);
-    False - в любой секции (restore.wg_key). Ключ в [Peer] при True не берётся.
-    Пустое значение последней строки в режиме True сбрасывает ключ, как в awk.
-    """
-    if not interface_only:
-        keys = [value for name, eq, value in _pairs(text) if eq and value and _lower(name) == 'privatekey']
-        return keys[-1] if keys else None
+def private_key(text):
+    """Последний PrivateKey из [Interface] wg0.conf или None; пустое значение сбрасывает ключ."""
     key, inside = '', False
     for item in text.replace('\0', '').split('\n'):
         clean = re.sub(r'[ \t\r\v\f]', '', item.split('#', 1)[0])
         if clean.startswith('['):
             inside = _lower(clean) == '[interface]'
-            continue
-        if inside and _lower(clean).startswith('privatekey='):
+        elif inside and _lower(clean).startswith('privatekey='):
             key = clean.partition('=')[2]
     return key or None
 
@@ -163,10 +126,6 @@ def addresses(text):
             found += [part for part in re.split(r'[, \t]+', value) if part]
     return found
 
-
-
-
-# Шаг 2: внешний wg, рендер и вывод `wg show`.
 
 # wg0 в анонимном netns: netns держит только этот процесс и умирает вместе с ним.
 # --kill-child и pdeathsig - убитая проверка (SIGTERM, SIGKILL) не оставляет wg0 с ключами.
@@ -209,7 +168,7 @@ def _tool(argv, runner, *, data=None):
     if done.returncode:
         raise WgError(f'{argv[0]} {argv[1]}: код {done.returncode}')
     out = done.stdout.decode(errors='replace').strip()
-    if not valid_key(out, strict=False):
+    if not re.fullmatch(r'[A-Za-z0-9+/]{43}=', out):
         raise WgError(f'{argv[0]} {argv[1]}: ответ не ключ')
     return out
 

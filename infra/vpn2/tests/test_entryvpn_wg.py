@@ -1,4 +1,5 @@
 """Шаги роли wireguard: исходы сверены со стадией 28-wireguard.sh на тех же каталогах."""
+import re
 import os
 import shutil
 import subprocess
@@ -41,7 +42,7 @@ def shape(key, conf):
 def test_clean_root_gets_new_key_and_initial_conf(tmp_path):
     assert identity(tmp_path) is True
     key = (tmp_path / 'keys/server.priv').read_text().strip()
-    assert wg.valid_key(key)
+    assert re.fullmatch(wg.KEY, key)
     assert tree(tmp_path) == shape(key, (INITIAL.format(key=key), 0o600))
     assert identity(tmp_path) is False
 
@@ -89,7 +90,7 @@ def test_empty_key_file_without_identity_is_regenerated(tmp_path):
     (tmp_path / 'keys').mkdir()
     (tmp_path / 'keys/server.priv').write_text('')
     assert identity(tmp_path) is True
-    assert wg.valid_key((tmp_path / 'keys/server.priv').read_text().strip())
+    assert re.fullmatch(wg.KEY, (tmp_path / 'keys/server.priv').read_text().strip())
 
 
 def runner(answers, calls):

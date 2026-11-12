@@ -1,4 +1,5 @@
 """vpn2.wg: внешний wg (через подмену run), рендер и разбор вывода `wg show`. Ожидания сняты со старого кода."""
+import re
 import base64
 import shutil
 import subprocess
@@ -227,7 +228,7 @@ def test_transfer_not_a_number():
 @pytest.mark.skipif(shutil.which('wg') is None, reason='нет wg')
 def test_real_wg_keys():
     private = wg.genkey()
-    assert wg.valid_key(private, nonzero=True)
+    assert re.fullmatch(wg.KEY, private)
     assert wg.pubkey(private) == wg.pubkey(private) != private
     with pytest.raises(WgError):
         wg.pubkey('garbage')

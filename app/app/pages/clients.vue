@@ -8,6 +8,7 @@ definePageMeta({ title: 'Клиенты и ключи' })
 
 const route = useRoute()
 const router = useRouter()
+const leave = useLeave()
 const mobile = useMobile()
 const { clients: fetched, refresh, status, error } = useClients()
 // Удалённые, которых ещё может вернуть ответ списка, начатый до удаления.
@@ -71,7 +72,7 @@ function select(id: number) {
 let lastIndex = 0
 function selectNeighbour(list: Client[]) {
   selectedId.value = list[Math.min(lastIndex, list.length - 1)]?.id ?? null
-  if (mobile.value && screen.value === 'client') void router.replace({ query: { ...route.query, id: undefined } })
+  if (mobile.value && screen.value === 'client') void leave({ query: { ...route.query, id: undefined } })
 }
 watch(rows, (list) => {
   const at = list.findIndex(c => c.id === selectedId.value)

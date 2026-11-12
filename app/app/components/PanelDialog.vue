@@ -2,6 +2,7 @@
 defineProps<{ title: string, ok?: string, danger?: boolean, busy?: boolean, wide?: boolean }>()
 defineEmits<{ ok: [] }>()
 const open = defineModel<boolean>('open', { default: false })
+useLayer(open)
 </script>
 
 <template>

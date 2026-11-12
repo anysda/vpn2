@@ -1,6 +1,7 @@
 <script setup lang="ts">
 const { user, clear } = useAuthSession()
 const route = useRoute()
+const leave = useLeave()
 const colorMode = useColorMode()
 const pageSub = usePageSub()
 const period = useState<'day' | 'week'>('ov-period', () => 'day')
@@ -48,9 +49,9 @@ onUnmounted(() => ro?.disconnect())
     <div class="light" />
     <div class="wrap">
       <header ref="headEl">
-        <NuxtLink v-if="route.path === '/clients' && route.query.id" to="/clients" class="ib cbk" aria-label="Назад">
+        <button v-if="route.path === '/clients' && route.query.id" type="button" class="ib cbk" aria-label="Назад" @click="leave({ path: '/clients', query: { ...route.query, id: undefined } })">
           <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
-        </NuxtLink>
+        </button>
         <div class="logo">
           <span>anysda-vpn2</span>
         </div>

@@ -15,7 +15,6 @@ from pathlib import Path
 import pwd
 import re
 import secrets
-import socket
 import ssl
 import subprocess
 import tempfile
@@ -314,13 +313,9 @@ def probe(state_dir):
             if time.monotonic() > deadline:
                 return False
             time.sleep(.05)
-        with socket.socket() as reserved:
-            reserved.bind(('127.0.0.1', 0))
-            proxy_port = reserved.getsockname()[1]
         config = {
             'log': {'disabled': True},
-            'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': proxy_port}],
-            'outbounds': [{'type': 'hysteria2', 'server': '127.0.0.1',
+            'outbounds': [{'type': 'hysteria2', 'tag': 'emergency', 'server': '127.0.0.1',
                            'server_port': options['port'], 'password': state['probe_password'],
                            'tls': {'enabled': True, 'server_name': options['server_ip'],
                                    'certificate_path': str(directory / 'fullchain.pem')}}],
@@ -328,24 +323,14 @@ def probe(state_dir):
         with tempfile.TemporaryDirectory(dir=directory, prefix='probe-') as temporary:
             path = Path(temporary) / 'client.json'
             atomic(path, config)
-            process = subprocess.Popen([options['binary'], 'run', '-c', str(path)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            try:
-                while process.poll() is None and time.monotonic() < deadline:
-                    response = subprocess.run([
-                        'curl', '--silent', '--fail', '--noproxy', '', '--max-time', '3',
-                        '--socks5-hostname', f'127.0.0.1:{proxy_port}', options['probe_url'],
-                    ], capture_output=True, timeout=4)
-                    if response.returncode == 0:
-                        return True
-                    time.sleep(.1)
-            finally:
-                process.terminate()
+            fetch = [options['binary'], 'tools', 'fetch', '-c', str(path), '-o', 'emergency', options['probe_url']]
+            while time.monotonic() < deadline:
                 try:
-                    process.wait(5)
+                    if subprocess.run(fetch, capture_output=True, timeout=4).returncode == 0:
+                        return True
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+                    continue
+                time.sleep(.1)
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
         return False
     return False
@@ -426,10 +411,9 @@ def connections(state_dir, generation, *, clock=time.time):
 def firewall(active):
     options = settings()
     uid = pwd.getpwnam('vpn2-hy2').pw_uid
-    existing = subprocess.run(['nft', 'list', 'table', 'inet', 'vpn2_emergency_hy2'],
-                              capture_output=True, timeout=10).returncode == 0
-    prefix = 'delete table inet vpn2_emergency_hy2\n' if existing else ''
-    command(['nft', '-f', '-'], input=(prefix + firewall_rules(uid, options['port'], active)).encode())
+    # add + delete in one transaction: the table is replaced whether it existed or not.
+    reset = 'add table inet vpn2_emergency_hy2\ndelete table inet vpn2_emergency_hy2\n'
+    command(['nft', '-f', '-'], input=(reset + firewall_rules(uid, options['port'], active)).encode())
 
 
 def endpoint(server_ip, port, active, path=None):

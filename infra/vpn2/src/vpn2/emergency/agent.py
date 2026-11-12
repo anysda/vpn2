@@ -21,6 +21,7 @@ import time
 from .. import fsutil
 from ..notify import BotApi
 from . import hy2, notices, readiness, snapshot, spool, web
+from .snapshot import exit_name
 
 LOG = logging.getLogger(__name__)
 ENTRY = '__entry__'
@@ -145,10 +146,6 @@ class Exit(Agent):
     def image(self):
         value = snapshot.load(self.directory, self.wall())
         return value if value and value['installation_id'] == self.installation else None
-
-    def exit_name(self, image):
-        return next((item['name'] for item in (image or {}).get('exits', []) if item['id'] == self.node),
-                    self.node)
 
     def alive(self, now):
         return [name for name in self.order
@@ -358,15 +355,12 @@ class Exit(Agent):
             server.shutdown()
             server.server_close()
 
-    def api(self, image):
-        return BotApi(image['bot_token']) if image and image.get('bot_token') else None
-
     def work(self, now):
         with self.lock:
             leader, role, autonomous = dict(self.leader), self.role, self.autonomous
             silence, cleanup, self.cleanup = self.silence(now), self.cleanup, None
         image, wall = self.image(), self.wall()
-        api = self.api(image)
+        api = BotApi(image['bot_token']) if image and image.get('bot_token') else None
         if cleanup:
             self.end(cleanup)
         self.reinstalled(image)
@@ -392,7 +386,7 @@ class Exit(Agent):
     def serve(self, now, wall, leader, autonomous, image):
         """Лидер: выдача этого поколения, затем сообщения о возврате и его отмене."""
         emergency, generation = leader['emergency'], leader['generation']
-        common = dict(emergency=emergency, generation=generation, exit_name=self.exit_name(image), wall=wall)
+        common = dict(emergency=emergency, generation=generation, exit_name=exit_name(image, self.node), wall=wall)
         if self.issued != (emergency, generation):
             state = hy2.read_state(hy2.home(self.directory))
             resumed = state['active'] and state['generation'] == generation
@@ -417,10 +411,9 @@ class Exit(Agent):
                 return
             self.issued = (emergency, generation)
             self.following = None
-            with self.lock:
-                self.state.pop('retire', None)
             LOG.info('emergency access issued: generation %s, %s devices', generation, len(self.profiles))
             with self.lock:
+                self.state.pop('retire', None)
                 if self.leader.get('generation') == generation:
                     self.leader['ready'] = True
         if now - self.sessions_at >= 12:
@@ -492,7 +485,7 @@ class Exit(Agent):
         pending = self.state.get('reinstalled')
         if pending and image and image['clients']:
             notices.clients(self.directory, image, 'reinstalled', emergency=pending['emergency'], generation=0,
-                            exit_name=self.exit_name(image), wall=self.wall(), only=set(pending['clients']))
+                            exit_name=exit_name(image, self.node), wall=self.wall(), only=set(pending['clients']))
             with self.lock:
                 self.state['reinstalled'] = None
 
@@ -501,7 +494,7 @@ class Exit(Agent):
         image = self.image() or {}
         notices.clients(self.directory, image, 'broadcast', text=text, emergency=self.leader['emergency'],
                         generation=generation, version=secrets.token_hex(8),
-                        exit_name=self.exit_name(image), wall=self.wall())
+                        exit_name=exit_name(image, self.node), wall=self.wall())
 
     # Сообщение админу о тишине entry и ссылка «Запустить сейчас».
 

@@ -80,6 +80,10 @@ def validate(value):
     return value
 
 
+def exit_name(image, exit_id):
+    return next((node['name'] for node in (image or {}).get('exits', []) if node['id'] == exit_id), exit_id)
+
+
 def load(state_dir, now=None):
     """Действующий снимок или None; истёкший срок снимает доступ сразу."""
     now = time.time() if now is None else now

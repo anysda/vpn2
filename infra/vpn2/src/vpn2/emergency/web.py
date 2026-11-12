@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 from .. import fsutil
 from . import hy2, spool
+from .snapshot import exit_name
 
 LOG = logging.getLogger(__name__)
 STATIC_DIR = '/opt/vpn2-emergency/static'
@@ -117,9 +118,6 @@ class Panel:
     def _save(self):
         fsutil.atomic(self.auth_file, json.dumps(self.auth))
 
-    def _exit_name(self, snapshot):
-        return next((x['name'] for x in snapshot.get('exits', []) if x['id'] == self.exit_id), self.exit_id)
-
     @property
     def url(self):
         return _https(self.public_ip)
@@ -142,7 +140,7 @@ class Panel:
             self._save()
             self.redirect = None
             return dict(emergency_id=emergency_id, generation=generation,
-                        exit_name=self._exit_name(self.snapshot_loader(self.directory) or {}),
+                        exit_name=exit_name(self.snapshot_loader(self.directory), self.exit_id),
                         panel_url=self.url, panel_password=self.auth['password'], panel_ready=True,
                         certificate_fingerprint=self.fingerprint)
 
@@ -153,10 +151,9 @@ class Panel:
             self.sessions.clear()
             self._save()
             self.deadline = None
-            self.redirect = None
-            for node in (self.snapshot_loader(self.directory) or {}).get('exits', []):
-                if node['id'] == new_leader_exit_id and node['id'] != self.exit_id:
-                    self.redirect = _https(str(ipaddress.ip_address(node['ip'])))
+            leader = next((node for node in (self.snapshot_loader(self.directory) or {}).get('exits', [])
+                           if node['id'] == new_leader_exit_id and node['id'] != self.exit_id), None)
+            self.redirect = _https(str(ipaddress.ip_address(leader['ip']))) if leader else None
 
     def on_return(self, deadline_wall):
         """Объявленный возврат со временем из сообщений (панель показывает ту же минуту); None - отмена."""
@@ -239,7 +236,7 @@ class Panel:
             age = None
         remaining = max(0, int(self.deadline - time.monotonic())) if self.deadline is not None else None
         # Только перечисленные поля: токен бота и chat id остаются на сервере.
-        return dict(clients=clients, snapshot_age=age, exit_id=self.exit_id, exit_name=self._exit_name(snapshot),
+        return dict(clients=clients, snapshot_age=age, exit_id=self.exit_id, exit_name=exit_name(snapshot, self.exit_id),
                     generation=generation, leader_changed=self.auth.get('event') == 'leader_changed',
                     autonomous=self.auth.get('autonomous', False), cancelled=self.cancelled, remaining=remaining,
                     deadline=(self.auth.get('deadline_wall') or time.time() + remaining)

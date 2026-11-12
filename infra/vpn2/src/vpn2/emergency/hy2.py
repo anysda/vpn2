@@ -7,7 +7,6 @@ ExecStartPre/ExecStopPost через `vpn2 emergency hy2 open|close`.
 import argparse
 import contextlib
 import hashlib
-import http.client
 import ipaddress
 import json
 import logging
@@ -24,6 +23,7 @@ import time
 from urllib.parse import quote, urlencode
 
 from .. import fsutil
+from ..probe import ClashApi
 
 STATE = Path('/var/lib/vpn2-emergency')
 OPTIONS = Path('/etc/vpn2/emergency-hy2.json')
@@ -36,7 +36,7 @@ LOG = logging.getLogger(__name__)
 # потоки; у каждого устройства своё правило маршрута, в его имени - учётка.
 SESSIONS_STALE = 40
 DEVICE_USER = re.compile(r'g(\d+)-d(\d+)')
-SESSION_RULE = re.compile(rb'"rule":"auth_user=g(\d+)-d(\d+) ')
+SESSION_RULE = re.compile(r'auth_user=g(\d+)-d(\d+) ')
 INACTIVE = {'generation': -1, 'active': False}
 END_CERT = '-----END CERTIFICATE-----'
 
@@ -376,23 +376,11 @@ def firewall_rules(uid, port, active):
 
 
 def live_devices(state, *, timeout=3):
-    """Устройства выдачи с живым потоком прямо сейчас; ответ читается кусками."""
-    connection = http.client.HTTPConnection('127.0.0.1', state['options']['port'], timeout=timeout)
-    try:
-        connection.request('GET', '/connections',
-                           headers={'Authorization': 'Bearer ' + state['api_secret']})
-        response = connection.getresponse()
-        if response.status != 200:
-            raise RuntimeError(f'emergency hy2: session API answered {response.status}')
-        found, tail = set(), b''
-        while chunk := response.read(65536):
-            data = tail + chunk
-            found.update(int(match[2]) for match in SESSION_RULE.finditer(data)
-                         if int(match[1]) == state['generation'])
-            tail = data[-64:]
-        return found
-    finally:
-        connection.close()
+    """Устройства выдачи с живым потоком прямо сейчас."""
+    api = ClashApi(f"http://127.0.0.1:{state['options']['port']}", state['api_secret'])
+    return {int(match[2]) for connection in api.connections(timeout=timeout)
+            if (match := SESSION_RULE.match(connection.get('rule', '')))
+            and int(match[1]) == state['generation']}
 
 
 def poll_sessions(state_dir, *, fetch=live_devices, clock=time.time):
@@ -410,7 +398,7 @@ def poll_sessions(state_dir, *, fetch=live_devices, clock=time.time):
     seen = set(previous.get('seen', [])) if previous.get('generation') == state['generation'] else set()
     try:
         live, ok = fetch(state) & issued, True
-    except (OSError, ValueError, RuntimeError, http.client.HTTPException):
+    except (OSError, ValueError):
         live, ok = set(), False
     record = {'generation': state['generation'], 'checked_at': clock(), 'ok': ok,
               'live': sorted(live), 'seen': sorted((seen | live) & issued)}
@@ -460,17 +448,20 @@ def endpoint(server_ip, port, active, path=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('open', 'close', 'probe', 'endpoint'))
-    parser.add_argument('values', nargs='*', help='endpoint: IP, порт, 1 при идущей аварии')
+    parser.add_argument('action', choices=('open', 'close', 'probe', 'endpoint', 'tls-pair'))
+    parser.add_argument('values', nargs='*', help='endpoint: IP, порт, 1 при идущей аварии; tls-pair: IP')
     args = parser.parse_args(argv)
     if args.action == 'endpoint':
         server_ip, port, active = args.values
-        return endpoint(server_ip, port, active == '1')
-    if args.action == 'probe':
+        endpoint(server_ip, port, active == '1')
+    elif args.action == 'tls-pair':
+        tls_pair(STATE, *args.values)
+    elif args.action == 'probe':
         raise SystemExit(0 if probe(STATE) else 1)
-    if args.action == 'open':
-        active_state(STATE / 'hy2')
-    firewall(args.action == 'open')
+    else:
+        if args.action == 'open':
+            active_state(STATE / 'hy2')
+        firewall(args.action == 'open')
 
 
 if __name__ == '__main__':

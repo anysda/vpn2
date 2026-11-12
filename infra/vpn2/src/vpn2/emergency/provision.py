@@ -7,6 +7,8 @@ from pathlib import Path
 import secrets
 import uuid
 
+from .. import fsutil
+
 
 def provision(root):
     import yaml  # только на хосте деплоя: агент на экзите обходится без PyYAML
@@ -23,7 +25,7 @@ def provision(root):
             shared = json.loads(identity.read_text())
         else:
             shared = {'installation_id': str(uuid.uuid4()), 'key': secrets.token_hex(32)}
-            private_json(identity, shared)
+            fsutil.atomic(identity, json.dumps(shared))
         # Underscores cannot occur in user exit tags; "entry" is a valid tag.
         entry_id = '__entry__'
         nodes = {entry_id: {'host': config['entry']['host'], 'port': 51821}}
@@ -32,12 +34,8 @@ def provision(root):
         if len(nodes) != len(config['exits']) + 1 or len(nodes) > 65:
             raise ValueError('invalid observer membership')
         for node in nodes:
-            private_json(directory / (('ru' if node == entry_id else node) + '.json'),
-                         dict(shared, node=node, entry_id=entry_id, nodes=nodes))
-
-
-def private_json(path, data):
-    fsutil.atomic(path, json.dumps(data))
+            fsutil.atomic(directory / (('ru' if node == entry_id else node) + '.json'),
+                          json.dumps(dict(shared, node=node, entry_id=entry_id, nodes=nodes)))
 
 
 def main(argv=None):
@@ -48,5 +46,3 @@ def main(argv=None):
 
 if __name__ == '__main__':
     main()
-
-from .. import fsutil

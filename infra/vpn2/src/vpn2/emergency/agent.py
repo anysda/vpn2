@@ -434,7 +434,7 @@ class Exit(Agent):
             text = notices.ADMIN_RECOVERED.format(deadline=notices.clock(deadline))
             if self.state.get('moved'):
                 text += notices.ADMIN_ENTRY_MOVED.format(address=self.state['moved'])
-            panel.on_entry_recovered(time.monotonic() + deadline - wall, deadline)
+            panel.on_return(deadline)
             notices.admin(self.directory, image, 'recovered', text, version=deadline, **common)
             notices.clients(self.directory, image, 'recovered', version=deadline,
                             only=notices.informed(self.directory, emergency),
@@ -444,7 +444,7 @@ class Exit(Agent):
                                                          state='sent', audience='client')
                      if row['key'].split(':')[2] == str(told)}
             spool.cancel(self.directory, emergency=emergency, event='recovered')
-            panel.on_return_cancelled()
+            panel.on_return(None)
             notices.admin(self.directory, image, 'return_cancelled', notices.ADMIN_RETURN_CANCELLED,
                           version=told, **common)
             notices.clients(self.directory, image, 'return_cancelled', version=told, only=heard, **common)

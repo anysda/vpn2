@@ -21,8 +21,8 @@ def test_wrong_command_prints_usage(argv, capsys):
 
 def test_every_command_has_a_main():
     import importlib
-    for name in dispatcher.COMMANDS.values():
-        assert callable(importlib.import_module(f'vpn2.emergency.{name}').main), name
+    for name in dispatcher.COMMANDS:
+        assert callable(importlib.import_module(f"vpn2.emergency.{name.replace('-', '_')}").main), name
 
 
 def test_module_runs_without_installed_package(tmp_path):

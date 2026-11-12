@@ -215,16 +215,16 @@ class EmergencyWebTests(unittest.TestCase):
     def test_network_partition_recovery_and_cancel(self):
         self.panel.on_emergency_leader('event', 2, True)
         self.assertTrue(self.panel.view()['autonomous'])
-        self.panel.on_entry_recovered(time.monotonic() + 600, time.time() + 600)
+        self.panel.on_return(time.time() + 600)
         self.assertIn(self.panel.view()['remaining'], (599, 600))
         resumed = self.web.Panel(self.directory, **self.options)
         self.assertIn(resumed.view()['remaining'], (599, 600))
-        self.panel.on_return_cancelled()
+        self.panel.on_return(None)
         self.assertTrue(self.panel.view()['cancelled'])
         self.assertIsNone(self.panel.view()['remaining'])
         self.panel.on_step_down()
-        self.panel.on_return_cancelled()
-        self.panel.on_entry_recovered(time.monotonic() + 600, time.time() + 600)
+        self.panel.on_return(None)
+        self.panel.on_return(time.time() + 600)
         self.assertFalse(self.panel.auth)
 
     def test_leader_change_comes_from_the_lifecycle_event(self):
@@ -239,7 +239,7 @@ class EmergencyWebTests(unittest.TestCase):
     def test_panel_shows_the_deadline_from_the_notices(self):
         self.panel.on_emergency_leader('event', 2)
         agreed = (int(time.time()) // 60 + 11) * 60
-        self.panel.on_entry_recovered(time.monotonic() + agreed - time.time(), agreed)
+        self.panel.on_return(agreed)
         self.assertEqual(self.panel.view()['deadline'], agreed)
         self.assertEqual(self.web.Panel(self.directory, **self.options).view()['deadline'], agreed)
 
@@ -372,7 +372,7 @@ class EmergencyWebTests(unittest.TestCase):
 
     def test_instructions_local_public_without_snapshot_even_after_stepdown(self):
         self.start()
-        for transition in (lambda: None, lambda: self.panel.on_entry_recovered(time.monotonic() + 600, time.time() + 600),
+        for transition in (lambda: None, lambda: self.panel.on_return(time.time() + 600),
                            lambda: self.panel.on_step_down('two')):
             transition()
             status, headers, html = self.request('/instructions')

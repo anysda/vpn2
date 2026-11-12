@@ -158,19 +158,13 @@ class Panel:
                 if node['id'] == new_leader_exit_id and node['id'] != self.exit_id:
                     self.redirect = _https(str(ipaddress.ip_address(node['ip'])))
 
-    def on_entry_recovered(self, deadline_monotonic, deadline_wall):
-        """deadline_wall - время из сообщений: панель показывает ту же минуту."""
+    def on_return(self, deadline_wall):
+        """Объявленный возврат со временем из сообщений (панель показывает ту же минуту); None - отмена."""
         with self.lock:
             if self.auth:
-                self.deadline, self.cancelled = deadline_monotonic, False
-                self.auth.update(deadline_wall=deadline_wall, cancelled=False)
-                self._save()
-
-    def on_return_cancelled(self):
-        with self.lock:
-            if self.auth:
-                self.deadline, self.cancelled = None, True
-                self.auth.update(deadline_wall=None, cancelled=True)
+                self.cancelled = deadline_wall is None
+                self.deadline = None if self.cancelled else time.monotonic() + deadline_wall - time.time()
+                self.auth.update(deadline_wall=deadline_wall, cancelled=self.cancelled)
                 self._save()
 
     def login(self, password, address='local'):

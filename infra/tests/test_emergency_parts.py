@@ -1,11 +1,13 @@
 """Части аварийного режима на их границах: снимок и его рассылка, очередь
 Telegram, тексты сообщений, выдача Hysteria2."""
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from urllib.parse import parse_qs, urlsplit
@@ -288,6 +290,31 @@ class Hy2(Temp):
         self.assertEqual(hy2.connections(self.directory, 4, clock=lambda: clock.now), {})
         clock.now += hy2.SESSIONS_STALE + 1
         self.assertEqual(hy2.connections(self.directory, 5, clock=lambda: clock.now), {})
+
+    def test_live_devices_are_read_from_the_instance_clash_api(self):
+        rules = ['auth_user=g5-d11 => route(internet)', 'auth_user=g4-d12 => route(internet)',
+                 'auth_user=g5-d13 => route(internet)', 'ip_is_private=true => reject']
+        body = json.dumps({'connections': [{'id': str(i), 'rule': r} for i, r in enumerate(rules)]},
+                          separators=(',', ':')).encode()
+        seen = []
+
+        class Clash(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                seen.append((self.path, self.headers['Authorization']))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Clash)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        state = {'generation': 5, 'api_secret': 'secret', 'options': {'port': server.server_address[1]}}
+        self.assertEqual(hy2.live_devices(state), {11, 13})
+        self.assertEqual(seen, [('/connections', 'Bearer secret')])
 
     def test_firewall_isolates_the_service_user_and_gates_the_port(self):
         closed, opened = hy2.firewall_rules(990, 18443, False), hy2.firewall_rules(990, 18443, True)

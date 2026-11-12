@@ -11,6 +11,7 @@ for cmd in iptables ip6tables; do
   for address in "${addresses[@]}"; do
     "$cmd" -w -t nat -A ANYSDA_DOH -p tcp -d "$address" --dport 443 -j REDIRECT --to-ports 7899
   done
-  "$cmd" -w -t nat -C OUTPUT -j ANYSDA_DOH 2>/dev/null || \
-    "$cmd" -w -t nat -A OUTPUT -j ANYSDA_DOH
+  # Переход всегда последним в OUTPUT, после перехода Docker, на любом пути установки.
+  while "$cmd" -w -t nat -D OUTPUT -j ANYSDA_DOH 2>/dev/null; do :; done
+  "$cmd" -w -t nat -A OUTPUT -j ANYSDA_DOH
 done

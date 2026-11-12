@@ -7,34 +7,24 @@
 - name: Установка Docker
   when: not base_docker.stat.exists
   block:
-    - name: Дистрибутив и архитектура узла
-      ansible.builtin.setup:
-        gather_subset: [min]
-
-    - name: Каталог ключей apt
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Ключ источника Docker
-      ansible.builtin.get_url:
-        url: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}/gpg"
-        dest: /etc/apt/keyrings/docker.asc
+    # Источник тот же, что у подготовки деплоя и ролей containers и emergency.
+    - name: Общие функции узла
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../lib/anysda-svc.sh"
+        dest: "{{ base_tmp }}/anysda-svc.sh"
         mode: '0644'
-      register: base_docker_key
-      until: base_docker_key is succeeded
-      retries: 3
-      delay: 10
+      changed_when: false
 
     - name: Источник Docker
-      ansible.builtin.copy:
-        content: >
-          deb [arch={{ base_docker_arch[ansible_facts.architecture] }} signed-by=/etc/apt/keyrings/docker.asc]
-          https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}
-          {{ ansible_facts.distribution_release }} stable
-        dest: /etc/apt/sources.list.d/docker.list
-        mode: '0644'
+      ansible.builtin.shell: |
+        source {{ base_tmp }}/anysda-svc.sh
+        docker_apt_source
+      args: {executable: /bin/bash}
+      register: base_docker_source
+      until: base_docker_source is succeeded
+      retries: 3
+      delay: 10
+      changed_when: true
 
     # Без рекомендуемых: rootless-extras, buildx и compose из пакетов узлу не
     # нужны, плагин compose ставит роль containers из выпуска.

@@ -74,7 +74,6 @@ base_packages_zapret:
   - ethtool
 base_packages_backup: [age, sqlite3]
 base_packages_docker: [docker-ce, docker-ce-cli, containerd.io, apparmor, pigz, xz-utils]
-base_docker_arch: {x86_64: amd64, aarch64: arm64}
 base_packages: >-
   {{ base_packages_common
      + (base_packages_entry if base_entry else [])

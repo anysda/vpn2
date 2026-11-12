@@ -148,6 +148,7 @@
   ansible.builtin.systemd_service:
     name: anysda-fq
     enabled: true
+    state: started
     daemon_reload: true
 
 - name: Очередь WAN выставлена

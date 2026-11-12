@@ -128,10 +128,13 @@ def prepare(cfg: Config, state: Path, repo_root: Path):
     old = dict(line.split() for line in (source.read_text().splitlines() if source.exists() else ())
                if len(line.split()) == 2 and not line.startswith('#'))
     pinned = {**old, **{tag: str(octet) for tag, octet in nodevars.mgmt_octets(tags, state=state, repo_root=repo_root).items()}}
-    if pinned != old or not path.exists():
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        path.write_text('# тег → последний октет MGMT_IP (10.99.0.N); номера не меняются: на них метки метрик и mon-порт.\n'
-                        + ''.join(f'{tag} {octet}\n' for tag, octet in sorted(pinned.items(), key=lambda row: int(row[1]))))
+    text = ('# тег → последний октет MGMT_IP (10.99.0.N); номера не меняются: на них метки метрик и mon-порт.\n'
+            + ''.join(f'{tag} {octet}\n' for tag, octet in sorted(pinned.items(), key=lambda row: int(row[1]))))
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not path.exists() or path.read_text() != text:
+        path.write_text(text)
+    # ssh дописывает ключи узлов в файл, не меняя прав: права те же, что после переноса из checkout.
+    (state / 'known_hosts').touch(mode=0o600)
     skipped = sorted(nodevars.excluded_exits(state, repo_root) & set(tags))
     if skipped:
         print(f'исключены по UDP-фильтру: {", ".join(skipped)} ({state}/excluded-exits.txt) — '

@@ -33,7 +33,6 @@ const routeCheck = routes['GET /routes/check']
 vi.mock('../database/client', async () => ({
   ...(await import('../test/stubs')).databaseModule,
   claimUnique: (await vi.importActual<typeof import('../database/client')>('../database/client')).claimUnique,
-  isUniqueViolation: () => false,
 }))
 vi.mock('./auth', async () => (await import('../test/stubs')).authModule)
 vi.mock('./control', () => ({ control: vi.fn(), controlApply: vi.fn() }))

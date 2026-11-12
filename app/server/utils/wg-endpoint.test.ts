@@ -7,7 +7,6 @@ import { buildWgClientConfig } from './wireguard'
 vi.mock('../database/client', async () => ({
   ...(await import('../test/stubs')).databaseModule,
   claimUnique: (await vi.importActual<typeof import('../database/client')>('../database/client')).claimUnique,
-  isUniqueViolation: () => false,
 }))
 vi.mock('./control', () => ({ control: vi.fn(), controlApply: vi.fn() }))
 

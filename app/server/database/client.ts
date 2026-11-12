@@ -72,7 +72,7 @@ export function useDb() {
 }
 
 /** Нарушение UNIQUE: drizzle заворачивает ошибку libsql, смотрим цепочку `cause`. */
-export function isUniqueViolation(err: unknown): boolean {
+function isUniqueViolation(err: unknown): boolean {
   for (let e = err as { code?: unknown, message?: unknown, cause?: unknown } | undefined, i = 0; e && i < 5; e = e.cause as typeof e, i++) {
     if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(String(e.message ?? ''))) return true
   }

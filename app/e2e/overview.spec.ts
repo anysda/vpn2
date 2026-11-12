@@ -137,13 +137,13 @@ test.describe('mobile-overview', { tag: '@mobile' }, () => {
     await expect(entry).toBeVisible()
     await expect(entry.locator('.mgrid > div')).toHaveCount(9)
     await noHorizontalOverflow(page, 'окно ноды')
-    await entry.getByRole('button', { name: 'Закрыть', exact: true }).tap()
+    await entry.getByRole('button', { name: 'Закрыть', exact: true }).last().tap()
     await expect(entry).toHaveCount(0)
 
     await node(page, exits[0]!).tap()
     const ex = page.getByRole('dialog')
     await expect(ex.getByRole('switch')).toBeVisible()
-    await ex.getByRole('button', { name: 'Закрыть', exact: true }).tap()
+    await ex.getByRole('button', { name: 'Закрыть', exact: true }).last().tap()
     await expect(ex).toHaveCount(0)
   })
 

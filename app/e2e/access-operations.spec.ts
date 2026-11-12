@@ -3,16 +3,15 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
-import { eq, sql, and, exists } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { expect, test } from '@playwright/test'
 import type { AccessAdapter } from '../server/utils/access-adapter'
 import type * as Operations from '../server/utils/access-operations'
 import type * as Schema from '../server/database/schema'
 import type * as Database from '../server/database/client'
+import type * as Openvpn from '../server/utils/openvpn'
 import { accessStatus, accessProtocols, protocolNames, type AccessProtocol } from '../shared/access-operation'
-import { runInNewContext } from 'node:vm'
-import ts from 'typescript'
 
 test.describe('access-operations', () => {
   const require = createRequire(import.meta.url)
@@ -381,29 +380,18 @@ test.describe('access-issuance', () => {
       await migrate(db, { migrationsFolder: path.join(root, 'app/server/database/migrations') })
       const [client] = await db.insert(schema.clients).values({ name: 'issue race', password: 'fixture' }).returning()
       const [device] = await db.insert(schema.devices).values({ clientId: client!.id, name: 'phone' }).returning()
-      const source = readFileSync(path.join(root, 'app/server/utils/openvpn.ts'), 'utf8')
-      const start = source.indexOf('async function ensureDeviceOvpnOnce')
-      const end = source.indexOf('/** Перевыпуск OVPN', start)
-      expect(start).toBeGreaterThan(0)
-      expect(end).toBeGreaterThan(start)
-      const code = ts.transpile(source.slice(start, end), { target: ts.ScriptTarget.ES2022 })
-      const promise = runInNewContext(`${code}\nensureDeviceOvpnOnce(${device!.id})`, {
-        useDb: () => db, clientsTable: schema.clients, devicesTable: schema.devices,
-        and, eq, exists,
-        createError: (value: { statusCode: number, message: string }) => Object.assign(new Error(value.message), value),
-        isClientActive: (c: { frozenManual: boolean }) => !c.frozenManual,
-        ovpnCn: (id: number) => `dev_${id}`,
-        issueClientCert: async () => {
-          await db.update(schema.clients).set({ frozenManual: true,
-            ...(schema.clients.accessVersion ? { accessVersion: 1 } : {}),
-          }).where(eq(schema.clients.id, client!.id))
+      // Служба выдала сертификат, а заморозка успела принять новую версию доступа.
+      app.overrides.set('app/server/utils/control.ts', {
+        ControlUnavailable: class extends Error {},
+        controlApply: async () => ({}),
+        control: async (method: string) => {
+          if (method !== 'openvpn.issue') return {}
+          await db.update(schema.clients).set({ frozenManual: true, accessVersion: 1 }).where(eq(schema.clients.id, client!.id))
           return { cert: 'new certificate', key: 'new private key' }
         },
-        ensureDeviceOvpnIp: async () => (await db.select().from(schema.devices))[0],
-        writeCcd: async () => {},
       })
-      // Promise из vm принадлежит другому realm; matcher получает родной Promise.
-      await expect(Promise.resolve(promise)).rejects.toThrow()
+      const ovpn: typeof Openvpn = app.load('app/server/utils/openvpn.ts')
+      await expect(ovpn.ensureDeviceOvpn(device!.id)).rejects.toThrow()
       const [saved] = await db.select().from(schema.devices)
       expect(saved!.ovpnCert).toBeNull()
       expect(saved!.ovpnKey).toBeNull()

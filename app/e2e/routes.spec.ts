@@ -170,8 +170,11 @@ test.describe('routes', () => {
         const q = new URL(route.request().url()).searchParams.get('q')!
         if (q === 'slow.example.com') await held
         const a = answers[q]!
-        await route.fulfill({ status: a.status, contentType: 'application/json', body: JSON.stringify(a.body) })
+        // Запрос «slow» страница может уже отменить: отвечать некому.
+        await route.fulfill({ status: a.status, contentType: 'application/json', body: JSON.stringify(a.body) }).catch(() => {})
       })
+      const isSlow = (r: Request) => r.url().includes('q=slow.example.com')
+      const slowEnded = Promise.race([page.waitForEvent('requestfinished', isSlow), page.waitForEvent('requestfailed', isSlow)])
       const input = page.getByRole('textbox', { name: 'Проверить адрес' })
       const chain = page.getByTestId('route-check')
 
@@ -189,7 +192,7 @@ test.describe('routes', () => {
       await expect(chain.getByTestId('route-why')).toHaveText('ни одно правило не подошло')
       await expect(page.locator('[data-testid="route-rule"][data-hit]')).toHaveCount(0)
       release()
-      await page.waitForResponse(r => r.url().includes('q=slow.example.com'))
+      await slowEnded
       await expect(chain.locator('.tag').first()).toHaveText('other.example.com')
 
       await input.fill('down.example.com')

@@ -74,6 +74,8 @@ const BOT_CLIENT = ['bot/link.post', 'bot/client.get', 'bot/devices/index.post',
 const WG_TEXT = ['clients/[id]/devices/[deviceId]/wg-config.get', 'bot/devices/[deviceId]/wg-config.get']
 const OVPN_TEXT = ['clients/[id]/devices/[deviceId]/ovpn-config.get', 'bot/devices/[deviceId]/ovpn-config.get']
 const SNAPSHOT = 'ops/bot-snapshot.get'
+const R_FRESH = 'подтверждение старше 120 с - «не подтверждено» (shared/access-operation.ts:37): списки читаются в конце обхода, его длительность разная'
+const ACCESS_STATUS = /^(Доступ включён|Доступ отключён|Ключи перевыпущены|Состояние не подтверждено)$/
 
 /** @type {Rule[]} */
 const NORMALIZATION = [
@@ -94,6 +96,7 @@ const NORMALIZATION = [
   { route: 'clients/index.get', kind: 'scope', key: '', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список общий на панель шарда: строки других спеков из эталона исключены' },
   ...rule(['clients/index.get'], 'field', ['*.id'], '<id>', ID, R_ID),
   ...rule(['clients/index.get'], 'field', ['*.createdAt'], '<time>', ISO, R_TIME),
+  ...rule(['clients/index.get'], 'field', ['*.accessStatus'], '<access-status>', ACCESS_STATUS, R_FRESH),
   ...rule(['clients/[id].get'], 'field', ['id', 'devices.*.id'], '<id>', ID, R_ID),
   ...rule(['clients/[id].get'], 'field', ['createdAt', 'devices.*.createdAt'], '<time>', ISO, R_TIME),
   ...rule(['clients/[id].get', ...BOT_CLIENT], 'field', ['devices.*.configName'], '<config-name>', /^e2e-api-[a-z-]*-[0-9a-z]+$/, 'имя конфига содержит идентификатор устройства в base36'),
@@ -118,6 +121,7 @@ const NORMALIZATION = [
   { route: 'bot/admin/clients/index.get', kind: 'scope', key: '', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список общий на панель шарда: строки других спеков из эталона исключены' },
   ...rule(['bot/admin/clients/index.get'], 'field', ['*.id'], '<id>', ID, R_ID),
   ...rule(['bot/admin/clients/index.get'], 'field', ['*.createdAt'], '<time>', ISO, R_TIME),
+  ...rule(['bot/admin/clients/index.get'], 'field', ['*.accessStatus'], '<access-status>', ACCESS_STATUS, R_FRESH),
   ...rule(BOT_CLIENT, 'field', ['id', 'devices.*.id'], '<id>', ID, R_ID),
 
   { route: SNAPSHOT, kind: 'scope', key: 'clients', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список клиентов общий на панель шарда: строки других спеков из эталона исключены' },

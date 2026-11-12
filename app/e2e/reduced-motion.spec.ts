@@ -48,11 +48,12 @@ test.describe('уменьшить движение', () => {
   })
 })
 
-test('без «уменьшить движение» ореол «в сети» в Клиентах бежит', async ({ page }) => {
+// Ореол «в сети» снят вместе с анимациями: клиент в сети отмечен точкой в строке.
+test('без «уменьшить движение» клиент «в сети» отмечен в Клиентах', async ({ page }) => {
   const { id, name } = await onlineClient(page)
   try {
     await openOnline(page, name)
-    expect(await looping(page)).toContain('clp-halo ::after')
+    await expect(clientCard(page, name).getByTestId('client-online')).toBeVisible()
   }
   finally {
     await page.request.delete(`/api/clients/${id}`)

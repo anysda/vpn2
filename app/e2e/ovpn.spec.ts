@@ -1,9 +1,13 @@
 import { X509Certificate } from 'node:crypto'
 import { expect, loginApi, uniq, test } from './support/fixtures'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { runInNewContext } from 'node:vm'
-import ts from 'typescript'
+import { migrate } from 'drizzle-orm/libsql/migrator'
+import type * as Schema from '../server/database/schema'
+import type * as Database from '../server/database/client'
+import type * as Openvpn from '../server/utils/openvpn'
 import { test as baseTest } from '@playwright/test'
 
 test.describe('ovpn-ca', () => {
@@ -38,31 +42,29 @@ test.describe('ovpn-reconcile', () => {
 
   test('OpenVPN повторяет разрыв удалённого устройства после сбоя management', async () => {
     const root = process.env.VPN2_TEST_ROOT || path.resolve('..')
-    const source = readFileSync(path.join(root, 'app/server/utils/openvpn.ts'), 'utf8')
-    const sync = source.slice(source.indexOf('export async function syncOpenvpnConfig'))
-    const code = ts.transpile(sync.replace('export ', ''), { target: ts.ScriptTarget.ES2022 })
-    const killed: string[] = []
-    const db = {
-      select: () => db,
-      from: () => db,
-      innerJoin: async () => [{ id: 43, ovpnCert: 'cert', ovpnIp: '10.67.67.3', frozenManual: false }],
+    const directory = mkdtempSync(path.join(tmpdir(), 'ovpn-reconcile-'))
+    const killed: number[] = []
+    try {
+      const app = createRequire(import.meta.url)('./support/access-harness.cjs')(root, path.join(directory, 'db.sqlite'), {}, { ovpnEnabled: true })
+      const schema: typeof Schema = app.load('app/server/database/schema.ts')
+      const db = (app.load('app/server/database/client.ts') as typeof Database).useDb()
+      await migrate(db, { migrationsFolder: path.join(root, 'app/server/database/migrations') })
+      const [client] = await db.insert(schema.clients).values({ name: 'reconcile', password: 'fixture' }).returning()
+      await db.insert(schema.devices).values({ id: 43, clientId: client!.id, name: 'phone', ovpnCert: 'cert', ovpnIp: '10.67.67.3' })
+      app.overrides.set('app/server/utils/control.ts', {
+        ControlUnavailable: class extends Error {},
+        controlApply: async () => ({}),
+        control: async (method: string, params: { device_id?: number }) => {
+          if (method === 'profile.read') return { ready: true }
+          // Удаление dev_42 уже закоммичено, но разрыв при удалении не дошёл до сервера.
+          if (method === 'state.read') return { sessions: { dev_42: '10.67.67.2', dev_43: '10.67.67.3', external: '10.67.67.240' } }
+          if (method === 'openvpn.disconnect') killed.push(params.device_id!)
+          return { killed: true }
+        },
+      })
+      await (app.load('app/server/utils/openvpn.ts') as typeof Openvpn).syncOpenvpnConfig()
     }
-    await runInNewContext(`${code}\nsyncOpenvpnConfig()`, {
-      withCaLock: (run: () => Promise<void>) => run(),
-      useRuntimeConfig: () => ({ ovpnEnabled: true }),
-      caReady: async () => true,
-      useDb: () => db,
-      devicesTable: {}, clientsTable: {}, eq: () => true,
-      ovpnCn: (id: number) => `dev_${id}`,
-      isClientActive: () => true,
-      writeCcd: async () => {},
-      fs: { readdir: async () => [] }, CCD_DIR: '/unused',
-      // Удаление dev_42 уже закоммичено, но kill при удалении не дошёл до сервера.
-      connectedOvpnClients: async () => new Map([
-        ['dev_42', '10.67.67.2'], ['dev_43', '10.67.67.3'], ['external', '10.67.67.240'],
-      ]),
-      killOvpnClientQuiet: async (cn: string) => { killed.push(cn) },
-    })
-    expect(killed).toEqual(['dev_42'])
+    finally { rmSync(directory, { recursive: true, force: true }) }
+    expect(killed).toEqual([42])
   })
 })

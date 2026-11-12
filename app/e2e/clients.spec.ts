@@ -401,23 +401,20 @@ test.describe('client-gone', () => {
       })
       // Удаление подтвердилось, а ответ списка, начатого раньше, ещё несёт
       // удалённого клиента. Списки с DELETE до подтверждения и 4 с после
-      // отвечают снимком до удаления: подтверждение замечает карточка клиента,
-      // а страница в этом окне видит старый список.
+      // отвечают снимком до удаления: страница в этом окне видит старый список.
       let snapshot: unknown = null
       let deleting = false
       let confirmedAt = 0
+      let operation: Promise<{ id: string }> | undefined
       page.on('response', async (r) => {
         if (!deleting && r.request().method() === 'GET' && /\/api\/clients(\?.*)?$/.test(r.url()) && r.ok()) snapshot = await r.json().catch(() => snapshot)
       })
-      await page.route(/\/api\/access-operations\/[^/]+$/, async (route) => {
-        const response = await route.fetch()
-        const operation: { status: string } = await response.json()
-        if (operation.status === 'confirmed') confirmedAt ||= Date.now()
-        await route.fulfill({ response })
-      })
       await page.route(new RegExp(`/api/clients/${first.id}$`), async (route) => {
-        if (route.request().method() === 'DELETE') deleting = true
-        await route.fallback()
+        if (route.request().method() !== 'DELETE') return route.fallback()
+        deleting = true
+        const response = await route.fetch()
+        operation = response.json().then((body: { operation: { id: string } }) => body.operation)
+        await route.fulfill({ response })
       })
       await page.route(/\/api\/clients(\?.*)?$/, async (route) => {
         const stale = deleting && (!confirmedAt || Date.now() < confirmedAt + 4_000)
@@ -431,7 +428,9 @@ test.describe('client-gone', () => {
       await expect(clientName(panel)).toHaveText(first.name)
       await panel.getByRole('button', { name: 'Удалить клиента' }).click()
       await page.getByRole('dialog', { name: 'Удалить клиента?' }).getByRole('button', { name: 'Удалить' }).click()
-      await expect.poll(() => confirmedAt > 0, { timeout: 45_000 }).toBe(true)
+      await expect.poll(() => operation !== undefined).toBe(true)
+      await waitAccess(page.request, await operation!)
+      confirmedAt = Date.now()
       await expect(clientName(panel)).toHaveText(second.name)
       await expect(clientCard(page, first.name)).toHaveCount(0, { timeout: 15_000 })
       await page.waitForLoadState('networkidle')
@@ -931,7 +930,7 @@ test.describe('mobile-clients', { tag: '@mobile' }, () => {
     await expect(dlg).toBeVisible()
     await noHorizontalOverflow(page, where)
     const vw = page.viewportSize()!.width
-    for (const b of await dlg.locator('.mf .pill').all()) {
+    for (const b of await dlg.locator('[data-slot="footer"] .pill').all()) {
       const box = (await b.boundingBox())!
       expect(box.x, `${where}: кнопка за левым краем`).toBeGreaterThanOrEqual(0)
       expect(box.x + box.width, `${where}: кнопка за правым краем`).toBeLessThanOrEqual(vw)
@@ -1034,7 +1033,7 @@ test.describe('mobile-clients', { tag: '@mobile' }, () => {
           const ike = configDialog(page, device, 'IKEv2')
           await expect(ikeField(ike, 'Сервер')).not.toBeEmpty({ timeout: 30_000 })
           await sheetFits(page, ike, 'шторка IKEv2')
-          await ike.locator('.mf').getByRole('button', { name: 'Копировать', exact: true }).tap()
+          await ike.locator('[data-slot="footer"]').getByRole('button', { name: 'Копировать', exact: true }).tap()
           await expect(toast(page, 'IKEv2 креды скопированы')).toBeVisible()
           await closeSheet(ike)
 

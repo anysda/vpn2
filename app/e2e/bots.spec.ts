@@ -339,7 +339,9 @@ test.describe('bot-delivery-ui', () => {
       await expect(toast(page, `Уведомление клиенту «${name}»: доставка не удалась. Повторов не будет.`)).toBeVisible()
       await page.reload()
       await page.getByRole('button', { name: /^Уведомления:/ }).click()
-      await expect(page.getByText(`Уведомление клиенту «${name}»: доставка не удалась. Повторов не будет.`, { exact: true }).last()).toBeVisible()
+      // После перезагрузки тоста нет: строка - в списке «Уведомлений», со временем под текстом.
+      await expect(page.getByRole('dialog').getByTestId('bell-row')
+        .filter({ hasText: `Уведомление клиенту «${name}»: доставка не удалась. Повторов не будет.` })).toBeVisible()
     }
     finally {
       if (clientId) await page.request.delete(`/api/clients/${clientId}`)

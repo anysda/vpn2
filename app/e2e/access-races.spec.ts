@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -44,7 +45,10 @@ async function panel(runtime: Record<string, unknown> = {}) {
   })
   app.patch('app/server/utils/bot.ts', { actorOf: () => 'panel', BOT_ACTOR: 'bot', recordEvent: async () => {}, joinDetail: () => '' })
   app.overrides.set('app/server/utils/auth.ts', { requireAuth: async () => ({ id: 1, username: 'admin' }) })
-  app.overrides.set('app/server/utils/wireguard.ts', { ensureDeviceWg: async () => {}, syncWireguardConfig: async () => {} })
+  app.overrides.set('app/server/utils/wireguard.ts', {
+    ensureDeviceWg: async () => {}, syncWireguardConfig: async () => {},
+    wgKeypair: () => ({ privateKey: randomBytes(32).toString('base64'), publicKey: randomBytes(32).toString('base64') }),
+  })
   app.overrides.set('app/server/utils/ikev2.ts', { ensureDeviceIkev2: async () => {}, syncIkev2: async () => {} })
   app.overrides.set('app/server/utils/client-prefs.ts', { syncClientPrefsFile: async () => {} })
   const route = (name: string): Handler => app.route(name)

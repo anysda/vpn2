@@ -48,8 +48,8 @@
   ansible.builtin.command:
     argv: [/bin/bash, --norc, -euo, pipefail, -c, "{{ failover_restart_step }}", "{{ failover_tmp }}",
            "{{ failover_wheel_mark }}", /etc/systemd/system/anysda-failover-watchdog.service, "{{ failover_env }}"]
-    vars:
-      failover_restart_step: source "$0/anysda-svc.sh"; svc_restart_if_changed anysda-failover-watchdog "$@"; svc_settle 3
+  vars:
+    failover_restart_step: source "$0/anysda-svc.sh"; svc_restart_if_changed anysda-failover-watchdog "$@"; svc_settle 3
   environment:
     HOST_TAG: "{{ inventory_hostname }}"
   register: failover_restart

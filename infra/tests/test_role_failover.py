@@ -45,6 +45,16 @@ class FailoverRoleTests(unittest.TestCase):
                 copied[item['src']] = (dest, item['mode'])
         self.assertEqual(copied, INSTALLED)
 
+    def test_task_keywords_are_not_module_arguments(self):
+        for path in [*(ROOT / 'infra/ansible/roles/failover/tasks').glob('*.yml'),
+                     *(ROOT / 'infra/ansible/roles/emergency/tasks').glob('*.yml')]:
+            for task in yaml.safe_load(path.read_text()):
+                for inner in task.get('block', [task]):
+                    for key, args in inner.items():
+                        if key.startswith('ansible.builtin.') and isinstance(args, dict):
+                            with self.subTest(file=path.name, task=inner['name']):
+                                self.assertFalse({'vars', 'when', 'register', 'loop', 'environment'} & set(args))
+
     def test_play_runs_role_on_entry_under_stage_tag(self):
         play = site_play('21-failover-watchdog')
         self.assertEqual(play['hosts'], 'entry')

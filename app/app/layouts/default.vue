@@ -60,9 +60,7 @@ onUnmounted(() => {
         </div>
         <div class="mhead">
           <h1>{{ route.meta.title }}</h1>
-          <p v-if="pageSub || route.meta.sub">
-            {{ pageSub || route.meta.sub }}
-          </p>
+          <p v-if="pageSub || route.meta.sub">{{ pageSub || route.meta.sub }}</p>
         </div>
         <button v-if="route.path === '/'" type="button" class="pill mper" @click="period = period === 'day' ? 'week' : 'day'">
           {{ period === 'day' ? 'Сутки' : 'Неделя' }}
@@ -93,7 +91,5 @@ onUnmounted(() => {
     </div>
     <AskDialog />
   </div>
-  <p v-else role="status" class="p-6">
-    Выход…
-  </p>
+  <p v-else role="status" class="p-6">Выход…</p>
 </template>

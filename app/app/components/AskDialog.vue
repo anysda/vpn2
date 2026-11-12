@@ -12,8 +12,6 @@ async function run() {
 
 <template>
   <PanelDialog v-model:open="open" :title="ask?.title ?? ''" :ok="ask?.ok" :danger="ask?.danger" :busy="busy.has('ask')" @ok="run">
-    <p class="mt">
-      {{ ask?.text }}
-    </p>
+    <p class="mt">{{ ask?.text }}</p>
   </PanelDialog>
 </template>

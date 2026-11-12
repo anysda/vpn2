@@ -24,12 +24,8 @@ onUnmounted(() => sync([], false))
       <em v-if="pending.length" class="bd" aria-hidden="true">{{ pending.length }}</em>
     </button>
     <template #content>
-      <h4 class="px-2 pb-2 text-xs text-(--t3)">
-        Доставка уведомлений
-      </h4>
-      <p v-if="!queued && !pending.length" class="px-2 py-1 text-sm">
-        Все уведомления доставлены
-      </p>
+      <h4 class="px-2 pb-2 text-xs text-(--t3)">Доставка уведомлений</h4>
+      <p v-if="!queued && !pending.length" class="px-2 py-1 text-sm">Все уведомления доставлены</p>
       <p v-if="queued" class="flex gap-2.5 px-2 py-1 text-sm">
         <span class="dot mt-1.5" style="background:var(--amber)" />{{ botQueueText(queued) }}
       </p>

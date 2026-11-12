@@ -75,9 +75,7 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
 <template>
   <PanelDialog v-model:open="open" :title="`${KINDS[kind].name} · ${device.name}`" :wide="kind === 'ike' || qrWide">
     <template v-if="kind === 'wg'">
-      <p class="mt">
-        Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.
-      </p>
+      <p class="mt">Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.</p>
       <div v-if="hasAAAA" class="al amb">
         Уберите у домена IPv6-запись (AAAA), иначе у клиентов на Linux VPN может не заработать.
       </div>
@@ -87,9 +85,7 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
       <p class="mt">
         .ovpn-файл с встроенными сертификатами — импортируй в OpenVPN Connect или openvpn3.
       </p>
-      <div v-if="busy.has('load')" class="wait">
-        генерирую сертификат…
-      </div>
+      <div v-if="busy.has('load')" class="wait">генерирую сертификат…</div>
       <div v-else class="kvr">
         <span>Файл</span><code>{{ fileName }}</code><span />
       </div>
@@ -98,9 +94,7 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
       <p class="mt">
         Нативный IKEv2 в iOS / macOS / Android / Windows. Введи поля в настройках VPN системы<template v-if="creds?.caCertPem"> и установи CA-сертификат</template>.
       </p>
-      <div v-if="busy.has('load')" class="wait">
-        генерирую креды…
-      </div>
+      <div v-if="busy.has('load')" class="wait">генерирую креды…</div>
       <div v-if="creds?.certificatePending" class="al amb">
         <b>Ожидается сертификат Caddy</b>
         IKEv2 автоматически перейдёт на домен после выдачи сертификата. Пока действуют временные настройки ниже. После перехода откройте это окно заново.
@@ -132,9 +126,7 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
         <button type="button" class="pill" :disabled="!conf" @click="copy(conf, `.${ext} скопирован`)">
           Копировать
         </button>
-        <button type="button" class="pill" :disabled="!conf" @click="download">
-          Скачать
-        </button>
+        <button type="button" class="pill" :disabled="!conf" @click="download">Скачать</button>
       </template>
       <span :title="tgReason || undefined">
         <button type="button" class="pill w" :disabled="!canSend || busy.has('tg') || (kind === 'ike' ? !creds : !conf)" @click="sendTg">

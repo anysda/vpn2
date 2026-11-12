@@ -103,9 +103,7 @@ function save() {
       </div>
       <div class="fld">
         <span /><code />
-        <button type="submit" class="pill w" :disabled="!dirty">
-          Сохранить
-        </button>
+        <button type="submit" class="pill w" :disabled="!dirty">Сохранить</button>
       </div>
     </fieldset>
   </form>

@@ -77,9 +77,7 @@ const vFocus = { mounted: (el: HTMLInputElement) => el.focus() }
           <div class="logo" style="justify-content:center">
             <span>anysda-vpn2</span>
           </div>
-          <div v-if="ssoErrorText" class="al red" role="alert">
-            {{ ssoErrorText }}
-          </div>
+          <div v-if="ssoErrorText" class="al red" role="alert">{{ ssoErrorText }}</div>
 
           <template v-if="sso.enabled && !needsTotp">
             <a class="pill w lsso" href="/auth/authentik">
@@ -107,9 +105,7 @@ const vFocus = { mounted: (el: HTMLInputElement) => el.focus() }
                 v-model="state.totpCode" v-focus class="in mono" required placeholder="123 456" inputmode="numeric" enterkeyhint="done"
                 autocomplete="one-time-code">
             </label>
-            <div v-if="error" class="al red" role="alert">
-              {{ error }}
-            </div>
+            <div v-if="error" class="al red" role="alert">{{ error }}</div>
             <div class="mf">
               <button v-if="needsTotp" type="button" class="pill" :disabled="loading" @click="reset">
                 Назад

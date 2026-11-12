@@ -219,9 +219,7 @@ async function addDev() {
         <input
           v-model="limDraft" class="in" placeholder="∞" inputmode="numeric" aria-label="Лимит девайсов"
           @change="typedLimit" @keydown.enter.prevent="($event.target as HTMLElement).blur()">
-        <button type="button" aria-label="Больше" @click="stepLimit(1)">
-          +
-        </button>
+        <button type="button" aria-label="Больше" @click="stepLimit(1)">+</button>
       </div>
       <button
         type="button" class="pill" :class="{ on: d.deviceLimit === null }" title="Безлимитно" aria-label="Безлимитно" :aria-pressed="d.deviceLimit === null"
@@ -270,9 +268,7 @@ async function addDev() {
           </button>
         </div>
       </div>
-      <div v-if="!d.devices.length" class="dev nod">
-        Пока нет девайсов — добавь первый.
-      </div>
+      <div v-if="!d.devices.length" class="dev nod">Пока нет девайсов — добавь первый.</div>
     </div>
     <div class="acts">
       <button
@@ -283,9 +279,7 @@ async function addDev() {
       <button type="button" class="pill" :disabled="busy.has('freeze')" @click="toggleFreeze">
         {{ d.frozenManual ? 'Разморозить' : 'Заморозить' }}
       </button>
-      <button type="button" class="pill red" @click="askRemove(d)">
-        Удалить клиента
-      </button>
+      <button type="button" class="pill red" @click="askRemove(d)">Удалить клиента</button>
     </div>
 
     <PanelDialog v-model:open="newDev.open" title="Новый девайс" ok="Добавить" :busy="!newDev.name.trim() || busy.has('dev')" @ok="addDev">

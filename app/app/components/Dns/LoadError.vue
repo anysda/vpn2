@@ -4,9 +4,7 @@ defineProps<{ of: { data: Ref<unknown>, error: Ref<unknown>, status: Ref<string>
 
 <template>
   <div v-if="of.error.value && !of.data.value" class="card lerr">
-    <h3 role="alert">
-      {{ errText(of.error.value) }}
-    </h3>
+    <h3 role="alert">{{ errText(of.error.value) }}</h3>
     <p class="mt">
       <button type="button" class="pill" :disabled="of.status.value === 'pending'" @click="of.refresh()">
         Повторить загрузку

@@ -71,14 +71,10 @@ async function finish(title: string) {
       <span class="tag" :class="{ ok: totpEnabled }">{{ totpEnabled ? 'Включена' : 'Выключена' }}</span>
     </div>
     <template v-if="totpEnabled">
-      <p class="mt">
-        2FA активна. Для отключения подтверди пароль и код из аутентификатора.
-      </p>
+      <p class="mt">2FA активна. Для отключения подтверди пароль и код из аутентификатора.</p>
       <div class="fld">
         <span>Аутентификатор</span><code />
-        <button type="button" class="pill red" @click="disableOpen = true">
-          Выключить 2FA
-        </button>
+        <button type="button" class="pill red" @click="disableOpen = true">Выключить 2FA</button>
       </div>
     </template>
     <form v-else-if="!totpUri" @submit.prevent="startSetup">
@@ -91,15 +87,11 @@ async function finish(title: string) {
       </label>
       <div class="fld">
         <span /><code />
-        <button type="submit" class="pill w" :disabled="busy">
-          Включить 2FA
-        </button>
+        <button type="submit" class="pill w" :disabled="busy">Включить 2FA</button>
       </div>
     </form>
     <form v-else @submit.prevent="confirmSetup">
-      <p class="mt">
-        Отсканируй QR в аутентификаторе или вставь секрет вручную:
-      </p>
+      <p class="mt">Отсканируй QR в аутентификаторе или вставь секрет вручную:</p>
       <div class="qrrow">
         <div class="qr">
           <svg v-if="totpQr" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`" :style="{ width: `${totpQr.size * 4}px` }" shape-rendering="crispEdges">
@@ -115,12 +107,8 @@ async function finish(title: string) {
       </label>
       <div class="fld">
         <span /><code />
-        <button type="button" class="pill" @click="reset">
-          Отмена
-        </button>
-        <button type="submit" class="pill w" :disabled="busy">
-          Подтвердить
-        </button>
+        <button type="button" class="pill" @click="reset">Отмена</button>
+        <button type="submit" class="pill w" :disabled="busy">Подтвердить</button>
       </div>
     </form>
   </div>

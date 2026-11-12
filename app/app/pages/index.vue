@@ -75,9 +75,7 @@ const onlineCards = computed(() => {
             </div>
           </li>
         </ul>
-        <p v-else class="mt-3 text-sm text-(--t3)">
-          Событий пока нет
-        </p>
+        <p v-else class="mt-3 text-sm text-(--t3)">Событий пока нет</p>
       </div>
       <OverviewWave :period="period" />
       <div data-testid="ov-exits" class="card">

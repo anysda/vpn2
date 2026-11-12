@@ -97,9 +97,7 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
 
     <section class="mb-3 grid gap-3 md:grid-cols-[7fr_5fr]">
       <div class="card">
-        <h3 class="text-sm font-medium text-(--t2)">
-          Проверить адрес
-        </h3>
+        <h3 class="text-sm font-medium text-(--t2)">Проверить адрес</h3>
         <label class="inp big2"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg><input
           v-model="query" :placeholder="EXAMPLE" spellcheck="false" aria-label="Проверить адрес"></label>
         <div class="mt-4 flex min-h-10 flex-wrap items-center gap-2 text-sm" :class="{ 'opacity-45': !query.trim() }" data-testid="route-check" :data-example="!query.trim() || undefined">
@@ -112,9 +110,7 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
         </div>
       </div>
       <form class="card" @submit.prevent="add">
-        <h3 class="text-sm font-medium text-(--t2)">
-          Новое правило
-        </h3>
+        <h3 class="text-sm font-medium text-(--t2)">Новое правило</h3>
         <label class="inp big2"><input v-model="newRule.value" placeholder="netflix.com / *.openai.com / 8.8.8.8/32" spellcheck="false" aria-label="Новое правило"></label>
         <div class="mt-3 flex gap-2">
           <USelect v-model="newRule.outbound" :items="cells.map(c => ({ label: c.name, value: c.outbound }))" class="min-w-0 flex-1" size="lg" aria-label="Выход" />
@@ -159,9 +155,7 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
     </p>
 
     <PanelDialog v-model:open="pickOpen" :title="picked?.value ?? ''">
-      <p class="mt">
-        Выход
-      </p>
+      <p class="mt">Выход</p>
       <button
         v-for="c in cells" :key="c.outbound" type="button" class="pill mt-2 w-full justify-between" :class="{ on: c.outbound === picked?.outbound }"
         :aria-pressed="c.outbound === picked?.outbound" @click="pick(c.outbound)">

@@ -11,9 +11,7 @@ const open = defineModel<boolean>('open', { default: false })
     </template>
     <template #footer>
       <slot name="footer">
-        <button type="button" class="pill" @click="open = false">
-          Отмена
-        </button>
+        <button type="button" class="pill" @click="open = false">Отмена</button>
         <button v-if="ok" type="button" class="pill" :class="danger ? 'redw' : 'w'" :disabled="busy" @click="$emit('ok')">
           {{ ok }}
         </button>

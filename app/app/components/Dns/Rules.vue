@@ -61,12 +61,8 @@ const SYNTAX = [
         <h3>Как писать</h3>
         <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           <template v-for="[k, v] in SYNTAX" :key="k">
-            <dt class="mono">
-              {{ k }}
-            </dt>
-            <dd class="text-(--t2)">
-              {{ v }}
-            </dd>
+            <dt class="mono">{{ k }}</dt>
+            <dd class="text-(--t2)">{{ v }}</dd>
           </template>
         </dl>
       </div>

@@ -94,9 +94,7 @@ function toggle(x: NodeMetric) {
         <LineChart :data="series[n.tag] ?? []" :h="70" :col="nodeHealth(n).kind === 'ok' ? 'var(--acc)' : 'var(--red-t)'" />
       </template>
       <template #footer>
-        <button type="button" class="pill" @click="open = false">
-          Закрыть
-        </button>
+        <button type="button" class="pill" @click="open = false">Закрыть</button>
       </template>
     </PanelDialog>
   </section>

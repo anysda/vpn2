@@ -17,12 +17,8 @@ function handleError() {
           <b v-if="error.statusCode" class="big">{{ error.statusCode }}</b>
           <p>Что-то пошло не так.</p>
           <div class="mf" style="justify-content:center">
-            <button type="button" class="pill" @click="handleError">
-              На главную
-            </button>
-            <button type="button" class="pill w" @click="$router.go(0)">
-              Обновить
-            </button>
+            <button type="button" class="pill" @click="handleError">На главную</button>
+            <button type="button" class="pill w" @click="$router.go(0)">Обновить</button>
           </div>
         </div>
       </main>

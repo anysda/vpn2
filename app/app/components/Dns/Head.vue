@@ -6,9 +6,7 @@ defineProps<{ title: string, sub: string }>()
   <div class="fhead">
     <div>
       <h3>{{ title }}</h3>
-      <p class="sub2">
-        {{ sub }}
-      </p>
+      <p class="sub2">{{ sub }}</p>
     </div>
     <slot />
   </div>

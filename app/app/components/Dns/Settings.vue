@@ -89,9 +89,7 @@ function reset(what: keyof typeof RESET) {
         <h3 class="sh">Кэш и ограничения</h3>
         <div class="fld">
           <span>Размер кэша</span><code>{{ data.cache }}</code>
-          <button type="button" class="pill" @click="reset('cache')">
-            Очистить
-          </button>
+          <button type="button" class="pill" @click="reset('cache')">Очистить</button>
         </div>
         <div class="fld">
           <span>Оптимистичный кэш</span><code>отвечать устаревшим, пока обновляется</code>
@@ -99,9 +97,7 @@ function reset(what: keyof typeof RESET) {
         </div>
         <div v-for="[k, name] in ([['ratelimit', 'Лимит запросов'], ['block', 'Ответ на блокировку']] as const)" :key="k" class="fld">
           <span>{{ name }}</span><code class="break-all">{{ data[k] }}</code>
-          <button type="button" class="pill" @click="openEdit(k, name)">
-            Изменить
-          </button>
+          <button type="button" class="pill" @click="openEdit(k, name)">Изменить</button>
         </div>
       </div>
       <div class="card sc">
@@ -120,12 +116,8 @@ function reset(what: keyof typeof RESET) {
         </div>
         <div class="fld">
           <span>Сбросить</span><code />
-          <button type="button" class="pill" @click="reset('log')">
-            Журнал
-          </button>
-          <button type="button" class="pill" @click="reset('stats')">
-            Статистику
-          </button>
+          <button type="button" class="pill" @click="reset('log')">Журнал</button>
+          <button type="button" class="pill" @click="reset('stats')">Статистику</button>
         </div>
       </div>
     </div>

@@ -67,9 +67,7 @@ function rule(r: Row) {
         <input v-model="q" placeholder="Домен или клиент" aria-label="Домен или клиент">
       </label>
       <SegTabs v-model="f" :options="FILTERS" small />
-      <button type="button" class="pill md:ml-auto" @click="refresh">
-        Обновить
-      </button>
+      <button type="button" class="pill md:ml-auto" @click="refresh">Обновить</button>
     </div>
     <div ref="list" class="card scroll max-h-[70vh] max-md:max-h-none" @scroll.passive="onScroll">
       <div

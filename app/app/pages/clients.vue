@@ -189,9 +189,7 @@ const tgText = (c: Client) => c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? '
         <ClientsDetail
           v-if="selectedId !== null && (!mobile || screen === 'client')" :client-id="selectedId" :traffic="t(selectedId)" :exits="exits"
           @changed="refresh" @deleting="onDeleting" @gone="onGone" />
-        <div v-else class="more">
-          Выбери клиента в списке
-        </div>
+        <div v-else class="more">Выбери клиента в списке</div>
       </div>
     </section>
 

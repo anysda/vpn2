@@ -9,14 +9,10 @@
     fail_msg: >-
       {{ router_secrets_file }}: нет файла или в нём чужая строка - экзит отдал не пароль, стадию прерываю
     quiet: true
-  vars:
-    router_secrets_file: "{{ router_secrets }}/foreign-secrets.env"
-    router_secret_lines: "{{ lookup('ansible.builtin.file', router_secrets_file).splitlines() | select | list }}"
 
 - name: Пароли экзитов разобраны
   ansible.builtin.set_fact:
-    router_secret: "{{ dict(lookup('ansible.builtin.file', router_secrets ~ '/foreign-secrets.env').splitlines()
-                       | select | map('split', '=', 1)) }}"
+    router_secret: "{{ dict(router_secret_lines | map('split', '=', 1)) }}"
 
 - name: У каждого экзита все пароли
   ansible.builtin.assert:

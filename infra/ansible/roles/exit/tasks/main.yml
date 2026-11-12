@@ -76,11 +76,13 @@
     enabled: true
     daemon_reload: true
 
-- name: Ресурсы sing-box и сторожа WARP
+- name: Ресурсы sing-box, сторожа WARP и смены портов hy2
   ansible.builtin.include_role:
     name: resources
   vars:
-    resources_units: "{{ ['sing-box'] + (['anysda-warp-watchdog'] if exit_warp_enabled else []) }}"
+    resources_units: >-
+      {{ ['sing-box'] + (['anysda-warp-watchdog'] if exit_warp_enabled else [])
+         + (['anysda-hy2hop'] if exit_hop_enabled else []) }}
 
 # Перезапуск рвёт все туннели entry-экзит: только при смене входов sing-box.
 - name: Служба sing-box перезапущена при смене входов

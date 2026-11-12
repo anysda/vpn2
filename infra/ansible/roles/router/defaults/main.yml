@@ -52,4 +52,6 @@ router_client_blocked: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.2
 
 # Пароль экзита в алфавите его генератора; остальное в файле секретов - чужое.
 router_secret_re: '[A-Z][A-Z0-9_]*_(DIRECT|WARP|OBFS|MGMT|CLASH)=[A-Za-z0-9+/]{16,128}'
+router_secrets_file: "{{ router_secrets }}/foreign-secrets.env"
+router_secret_lines: "{{ lookup('ansible.builtin.file', router_secrets_file).splitlines() | select | list }}"
 router_reality: {}

@@ -32,12 +32,6 @@
         - {src: anysda-hy2hop.service, dest: /etc/systemd/system/anysda-hy2hop.service}
         - {src: 90-anysda-hy2hop.conf, dest: /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf}
 
-    - name: Ресурсы юнита смены портов hy2
-      ansible.builtin.include_role:
-        name: resources
-      vars:
-        resources_units: [anysda-hy2hop]
-
     - name: Служба смены портов hy2 включена
       ansible.builtin.systemd_service:
         name: anysda-hy2hop.service

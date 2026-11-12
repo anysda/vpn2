@@ -46,7 +46,7 @@ sha256sum() {
 
 def candidates():
     sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
-    from vpn2.ports import HY2_PORT_CANDIDATES
+    from vpn2.config import HY2_PORT_CANDIDATES
     return list(HY2_PORT_CANDIDATES)
 
 

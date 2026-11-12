@@ -6,20 +6,16 @@ excluded-exits.txt. Стадии перекатывает deploy.sh: коман�
 <стадия:группа>...` и ждёт код перекатки строкой на stdin; в конце - `summary <строка сводки>`.
 """
 import os
-import re
 import socket
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 from vpn2 import config
+from vpn2.probe import ClashApi
 
-HY2_PORT_CANDIDATES = (443, 4443, 4444, 8443, 8444, 33445)
 UDP_PROBE_PORTS = (33445, 39847, 41001, 51234, 60123)
-CLASH_URL = ('http://10.99.0.1:9090/proxies/hy2-{}-direct/delay'
-             '?timeout=5000&url=http://cp.cloudflare.com/generate_204')
 G, Y, R, E = ('\033[32m', '\033[33m', '\033[31m', '\033[0m') if sys.stderr.isatty() else ('',) * 4
 
 
@@ -35,12 +31,11 @@ def clash_delay(tag):
     """Задержка канала в мс по clash-api роутера entry или None."""
     try:
         secret = Path('/etc/anysda/clash-secret.txt').read_text().rstrip('\n')
-        request = urllib.request.Request(CLASH_URL.format(tag), headers={'Authorization': f'Bearer {secret}'})
-        with urllib.request.urlopen(request, timeout=8) as response:
-            found = re.search(r'"delay":([1-9][0-9]*)', response.read().decode(errors='replace'))
-    except (OSError, ValueError):
+    except OSError:
         return None
-    return int(found[1]) if found else None
+    delay, _reason = ClashApi('http://10.99.0.1:9090', secret).delay(
+        f'hy2-{tag}-direct', 'http://cp.cloudflare.com/generate_204', timeout_ms=5000, http_timeout=8)
+    return delay
 
 
 def on_exit(tag, command):
@@ -102,7 +97,7 @@ def exit_port(tag):
 def rotate(tag, current):
     """Другой порт hy2 для экзита, к которому UDP доходит; True - канал ожил."""
     path = os.environ['VPN2_CONFIG']
-    for port in [port for port in HY2_PORT_CANDIDATES if port != current][:2]:
+    for port in [port for port in config.HY2_PORT_CANDIDATES if port != current][:2]:
         say(f'    → пробую hy2 :{port} ')
         config.set_exit_port(path, tag, port)
         if not rerun(f'rotate-{tag}-{port}.log', f'10-foreign:{tag}', '20-ru-router:ru'):

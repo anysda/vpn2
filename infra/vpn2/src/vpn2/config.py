@@ -16,6 +16,8 @@ STATE_DIR = Path(os.environ.get('VPN2_STATE_DIR') or '/var/lib/anysda-vpn2/state
 BOOL_WORDS = {'true', 'false', 'yes', 'no', 'y', 'n', '1', '0'}
 TRUE_WORDS = {'true', 'yes', 'y', '1'}
 STRICT_STR_WORDS = {'true', 'false', 'yes', 'no'}
+# Порты hy2-direct, которые перебирает проверка после 20-ru-router; диапазоны hy2_hop их не задевают.
+HY2_PORT_CANDIDATES = (443, 4443, 4444, 8443, 8444, 33445)
 
 SCHEMA = {
     'entry': {'host', 'password', 'public_host'},

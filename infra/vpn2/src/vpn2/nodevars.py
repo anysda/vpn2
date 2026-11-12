@@ -8,8 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from vpn2.config import STATE_DIR, TRUE_WORDS, Config, ConfigError
-from vpn2.ports import HY2_PORT_CANDIDATES
+from vpn2.config import HY2_PORT_CANDIDATES, STATE_DIR, TRUE_WORDS, Config, ConfigError
 from vpn2.watchdog.hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields
 
 RESERVED_TAGS = ('ru', 'all', 'exits', 'foreign')

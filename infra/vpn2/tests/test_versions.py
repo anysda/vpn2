@@ -31,17 +31,16 @@ def check_stages(pins):
 
 
 # Пины, записанные в стадиях не переменной в кавычках: ключ -> (файл, строка
-# с версией). Пока стадия жива, её литерал обязан совпадать с versions.yml;
-# роль, пришедшая на смену, читает versions.yml сама, и строка отсюда уходит.
+# с версией). Литерал обязан совпадать с versions.yml.
 STAGE_LINES = {
     'sing_box_sha256_amd64': ('lib/install-sing-box.sh', "readonly SB_SHA256_AMD64='{v}'"),
     'sing_box_sha256_arm64': ('lib/install-sing-box.sh', "readonly SB_SHA256_ARM64='{v}'"),
     'node_exporter': ('ansible/roles/base/defaults/main.yml', "base_node_exporter_version: '{v}'"),
     'adguard': ('vpn2/src/vpn2/adguard/stage.py', "AGH_VER = '{v}'\n"),
-    'yt_node': ('vpn2/src/vpn2/zapret/stage.py', "NODE_VER = '{v}'\n"),
-    'yt_node_sha256': ('vpn2/src/vpn2/zapret/stage.py', "NODE_SHA256 = '{v}'\n"),
-    'yt_pot': ('lib/install-yt-pot.sh', 'pot_version={v}\n'),
-    'yt_pot_sha256': ('lib/install-yt-pot.sh', '{v}'),
+    'yt_node': ('ansible/roles/zapret/defaults/main.yml', 'zapret_node_version: {v}\n'),
+    'yt_node_sha256': ('ansible/roles/zapret/defaults/main.yml', 'zapret_node_sha256: {v}\n'),
+    'yt_pot': ('ansible/roles/zapret/files/install-yt-pot.sh', 'pot_version={v}\n'),
+    'yt_pot_sha256': ('ansible/roles/zapret/files/install-yt-pot.sh', '{v}'),
     'zapret2': ('vpn2/src/vpn2/zapret/stage.py', "ZAPRET_REF = '{v}'\n"),
     'zapret2_sha256': ('vpn2/src/vpn2/zapret/stage.py', "ZAPRET_SHA256 = '{v}'\n"),
 }
@@ -49,13 +48,11 @@ STAGE_LINES = {
 
 def check_lines(pins):
     for key, (relpath, line) in STAGE_LINES.items():
-        path = INFRA / relpath
-        if path.exists():
-            assert line.format(v=pins[key]) in path.read_text(encoding='utf-8'), key
+        assert line.format(v=pins[key]) in (INFRA / relpath).read_text(encoding='utf-8'), key
 
 
 def test_keys():
-    assert set(release.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'aws_cli', 'victoriametrics', *STAGE_PINS,
+    assert set(release.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'victoriametrics', *STAGE_PINS,
                                              *STAGE_LINES}
 
 

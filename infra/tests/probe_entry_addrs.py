@@ -93,11 +93,13 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
         text = text.replace('/etc/sing-box/', f'{etc}/')
         return re.sub(r'/usr/local/sbin/([\w.-]+)', lambda m: str(sbin / m.group(1)), text)
 
-    # Команда пакета из юнита: модуль с подменёнными путями, запускается сам.
+    # Команда пакета из юнита: модуль с подменёнными путями и пакетом из дерева, вход - дописанный main().
     entry_addrs = sbin / 'vpn2-entry-addrs'
-    entry_addrs.write_text(local((ROOT / 'infra/vpn2/src/vpn2/router/entry_addrs.py').read_text()))
+    entry_addrs.write_text(local((ROOT / 'infra/vpn2/src/vpn2/router/entry_addrs.py').read_text())
+                           + '\n\nsys.exit(main())\n')
     unit = (ROOT / 'infra/ansible/roles/router/files/sing-box.service').read_text()
-    unit = unit.replace('/opt/vpn2/venv/bin/vpn2 router entry-addrs', f'{sys.executable} {entry_addrs}')
+    unit = unit.replace('/opt/vpn2/venv/bin/vpn2 router entry-addrs',
+                        f'env PYTHONPATH={ROOT}/infra/vpn2/src {sys.executable} {entry_addrs}')
     assert str(entry_addrs) in unit, unit
     start_pre = [local(line.split('=', 1)[1]) for line in unit.splitlines()
                  if line.startswith('ExecStartPre=')]

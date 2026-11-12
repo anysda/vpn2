@@ -80,7 +80,7 @@ jobs:
 
       # ВМ грузятся, пока собирается образ панели. STAND_OS sudo сам не передаёт.
       - name: up (фоном)
-        run: sudo --preserve-env=STAND_OS infra/tools/ci-stand.sh up-bg
+        run: sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh up-bg
 
       - uses: docker/setup-buildx-action@v4
         with:
@@ -104,30 +104,30 @@ jobs:
 
       - name: up
         id: up
-        run: sudo infra/tools/ci-stand.sh up-wait
+        run: sudo infra/tests/ci-stand.sh up-wait
 
       # Полный деплой сам кончается 99-verify всех узлов.
       - name: deploy
-        run: sudo infra/tools/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
+        run: sudo infra/tests/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
 
       # ansible с entry достаёт все узлы стенда.
       - name: ansible ping
-        run: sudo infra/tools/ci-stand.sh ansible-ping
+        run: sudo infra/tests/ci-stand.sh ansible-ping
 
       # Отрицательный контроль: 99-verify при остановленном OpenVPN обязан упасть.
       - name: verify
         if: ${{ inputs.stop_openvpn && !cancelled() && steps.up.outcome == 'success' }}
-        run: sudo infra/tools/ci-stand.sh verify --stop-openvpn
+        run: sudo infra/tests/ci-stand.sh verify --stop-openvpn
 
       # Положительный контроль: сверка слепка с эталоном после этого обязана упасть.
       - name: snapshot corrupt
         if: ${{ inputs.snapshot_corrupt }}
-        run: sudo infra/tools/ci-stand.sh snapshot-corrupt
+        run: sudo infra/tests/ci-stand.sh snapshot-corrupt
 
       # Слепки в stand-report: collect проверяет их на пароль стенда, а
       # артефакт отчёта их отдаёт.
       - name: snapshot
-        run: sudo infra/tools/ci-stand.sh snapshot stand-report
+        run: sudo infra/tests/ci-stand.sh snapshot stand-report
 
       - name: venv
         run: |
@@ -175,7 +175,7 @@ jobs:
 
       # Сценарий 2 карточки: слепок до и после повторного ./deploy.sh одинаков.
       - name: повторный деплой
-        run: sudo infra/tools/ci-stand.sh deploy-again stand-report
+        run: sudo infra/tests/ci-stand.sh deploy-again stand-report
 
       - name: "повторный деплой: слепок тот же"
         run: |
@@ -189,16 +189,16 @@ jobs:
 
       # Сценарий 5 карточки.
       - name: бот с поддельным токеном
-        run: sudo infra/tools/ci-stand.sh bot-fake-token
+        run: sudo infra/tests/ci-stand.sh bot-fake-token
 
       # Сценарий 3 карточки: restore эталонного архива и сверка с эталоном.
       - name: restore эталонного архива
         if: ${{ !inputs.backup_fixture }}
-        run: sudo infra/tools/ci-stand.sh restore-check ${{ inputs.restore_foreign && '--foreign-pass' || '' }}
+        run: sudo infra/tests/ci-stand.sh restore-check ${{ inputs.restore_foreign && '--foreign-pass' || '' }}
 
       - name: эталонный архив бэкапа
         if: ${{ inputs.backup_fixture }}
-        run: sudo infra/tools/ci-stand.sh backup-fixture backup-fixture && sudo chown -R "$USER" backup-fixture
+        run: sudo infra/tests/ci-stand.sh backup-fixture backup-fixture && sudo chown -R "$USER" backup-fixture
 
       - uses: actions/upload-artifact@v7
         if: ${{ inputs.backup_fixture }}
@@ -209,7 +209,7 @@ jobs:
 
       - name: collect
         if: always()
-        run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
+        run: sudo infra/tests/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -220,7 +220,7 @@ jobs:
 
       - name: down
         if: always()
-        run: sudo infra/tools/ci-stand.sh down
+        run: sudo infra/tests/ci-stand.sh down
 
       - name: apt cache save
         if: ${{ always() && steps.apt-cache.outputs.cache-hit != 'true' }}
@@ -266,7 +266,7 @@ jobs:
 
       # ВМ грузятся, пока собирается образ панели. STAND_OS sudo сам не передаёт.
       - name: up (фоном)
-        run: sudo --preserve-env=STAND_OS infra/tools/ci-stand.sh up-bg
+        run: sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh up-bg
 
       - uses: docker/setup-buildx-action@v4
         with:
@@ -290,7 +290,7 @@ jobs:
 
       - name: up
         id: up
-        run: sudo infra/tools/ci-stand.sh up-wait
+        run: sudo infra/tests/ci-stand.sh up-wait
 
       # Манифест выпуска: образы по digest, как их собрал релиз.
       - name: манифест выпуска
@@ -300,15 +300,15 @@ jobs:
 
       # Сценарий 4 карточки: чистая установка выпуска, поверх - дерево ветки.
       - name: установка выпуска
-        run: sudo infra/tools/ci-stand.sh deploy-release "$UPGRADE_FROM" "$RUNNER_TEMP/release-manifest.json"
+        run: sudo infra/tests/ci-stand.sh deploy-release "$UPGRADE_FROM" "$RUNNER_TEMP/release-manifest.json"
 
       - name: обновление до ветки
-        run: sudo infra/tools/ci-stand.sh deploy-upgrade vpn2-stand/panel:${{ github.sha }} "$UPGRADE_FROM"
+        run: sudo infra/tests/ci-stand.sh deploy-upgrade vpn2-stand/panel:${{ github.sha }} "$UPGRADE_FROM"
 
       # Слепки в stand-report: collect проверяет их на пароль стенда, а
       # артефакт отчёта их отдаёт.
       - name: snapshot
-        run: sudo infra/tools/ci-stand.sh snapshot stand-report
+        run: sudo infra/tests/ci-stand.sh snapshot stand-report
 
       - name: venv
         run: |
@@ -329,7 +329,7 @@ jobs:
 
       - name: collect
         if: always()
-        run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
+        run: sudo infra/tests/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -340,7 +340,7 @@ jobs:
 
       - name: down
         if: always()
-        run: sudo infra/tools/ci-stand.sh down
+        run: sudo infra/tests/ci-stand.sh down
 
       - name: apt cache save
         if: ${{ always() && steps.apt-cache.outputs.cache-hit != 'true' }}
@@ -378,17 +378,17 @@ jobs:
 
       - name: up
         id: up
-        run: sudo infra/tools/ci-stand.sh up
+        run: sudo infra/tests/ci-stand.sh up
 
       - name: deploy
-        run: sudo infra/tools/ci-stand.sh deploy-udp
+        run: sudo infra/tests/ci-stand.sh deploy-udp
 
       - name: udp-cut
-        run: sudo infra/tools/ci-stand.sh udp-cut ${{ inputs.break_tcp_fallback && '--break-tcp-fallback' || '' }}
+        run: sudo infra/tests/ci-stand.sh udp-cut ${{ inputs.break_tcp_fallback && '--break-tcp-fallback' || '' }}
 
       - name: collect
         if: always()
-        run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
+        run: sudo infra/tests/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -399,7 +399,7 @@ jobs:
 
       - name: down
         if: always()
-        run: sudo infra/tools/ci-stand.sh down
+        run: sudo infra/tests/ci-stand.sh down
 
       - name: apt cache save
         if: ${{ always() && steps.apt-cache.outputs.cache-hit != 'true' }}

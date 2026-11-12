@@ -1,1 +1,0 @@
-../tests/ci-stand.sh

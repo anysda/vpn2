@@ -200,34 +200,22 @@ def teardown():
 
 
 def fetch_source(environ, cfg):
-    """Исходники zapret2 на закреплённом коммите: архив выпуска, в разработке - git."""
+    """Исходники zapret2 на закреплённом коммите из архива выпуска."""
     base, ref = Path(cfg['base']), cfg['ref']
-    if environ.get('VPN2_DEVELOPMENT', 'false') != 'true':
-        with tempfile.TemporaryDirectory() as work:
-            archive = os.path.join(work, 'source.tar.gz')
-            if release.main(['--manifest', environ.get('VPN2_RELEASE_MANIFEST') or MANIFEST, 'artifact',
-                             'zapret2-source', archive, '--url', f"{cfg['repo']}/archive/{ref}.tar.gz"]):
-                raise StageError('архив zapret2 не получен')
-            marker = base / '.release-ref'
-            if marker.is_file() and marker.read_text().strip() == ref:
-                return False
-            source = os.path.join(work, 'source')
-            os.mkdir(source)
-            subprocess.run(['tar', '-xzf', archive, '--strip-components=1', '-C', source], check=True)
-            base.mkdir(parents=True, exist_ok=True)
-            subprocess.run(['cp', '-a', f'{source}/.', f'{base}/'], check=True)
-            marker.write_text(ref + '\n')
-        return True
-    git = ['git', '-C', str(base)]
-    if not (base / '.git').is_dir():
-        subprocess.run(['rm', '-rf', str(base)], check=True)
-        subprocess.run(['git', 'clone', '-q', cfg['repo'], str(base)], check=True)
-    elif subprocess.run([*git, 'rev-parse', 'HEAD'], capture_output=True, text=True,
-                        check=True).stdout.strip() == ref:
-        return False
-    else:
-        subprocess.run([*git, 'fetch', '-q', '--all'], check=True)
-    subprocess.run([*git, 'checkout', '-q', ref], check=True)
+    with tempfile.TemporaryDirectory() as work:
+        archive = os.path.join(work, 'source.tar.gz')
+        if release.main(['--manifest', environ.get('VPN2_RELEASE_MANIFEST') or MANIFEST, 'artifact',
+                         'zapret2-source', archive, '--url', f"{cfg['repo']}/archive/{ref}.tar.gz"]):
+            raise StageError('архив zapret2 не получен')
+        marker = base / '.release-ref'
+        if marker.is_file() and marker.read_text().strip() == ref:
+            return False
+        source = os.path.join(work, 'source')
+        os.mkdir(source)
+        subprocess.run(['tar', '-xzf', archive, '--strip-components=1', '-C', source], check=True)
+        base.mkdir(parents=True, exist_ok=True)
+        subprocess.run(['cp', '-a', f'{source}/.', f'{base}/'], check=True)
+        marker.write_text(ref + '\n')
     return True
 
 

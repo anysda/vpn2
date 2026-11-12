@@ -22,7 +22,8 @@ class ExitPinTests(unittest.TestCase):
         tls = hy2_tls(json.loads(text))
         self.assertTrue(any(tag.endswith('-mgmt') for tag in tls))
         for tag, settings in tls.items():
-            self.assertEqual(settings.get('certificate_path'), exit_cert(), tag)
+            pinned = Path(exit_cert()).parent / 'pinned' / f"{tag.removeprefix('transport-').split('-')[1]}.pem"
+            self.assertEqual(settings.get('certificate_path'), str(pinned), tag)
 
     def test_config_flag_reaches_env_and_deploy_warns(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -22,7 +22,7 @@ HEX = re.compile(r'[0-9A-Fa-f]{1,64}')
 BLANK = ' \t\n\v\f\r'
 KEY_BEGIN = '-----BEGIN OpenVPN Static key V1-----'
 KEY_END = '-----END OpenVPN Static key V1-----'
-# openssl.cnf: heredoc стадии 29, каталог PKI - @DIR@.
+# openssl.cnf CA OpenVPN, каталог PKI - @DIR@.
 CNF = '''[ca]
 default_ca = CA_default
 
@@ -354,14 +354,14 @@ def _require_pair(key, cert, run):
 
 
 def build_openvpn(directory, *, run=run):
-    """Комплект OpenVPN (CA, сервер, tls-crypt, CRL) в directory, как стадия 29.
+    """Комплект OpenVPN (CA, сервер, tls-crypt, CRL) в directory.
 
     Повтор на готовом комплекте ничего не перевыпускает. openssl.cnf пишется с
     каталогом по умолчанию (туда комплект попадёт после transaction), а `openssl ca`
     идёт по build.cnf с каталогом directory, чтобы менялась только эта копия базы.
     """
     pki = Path(directory)
-    (pki / 'newcerts').mkdir(parents=True, exist_ok=True)  # стадия 29:50, до транзакции
+    (pki / 'newcerts').mkdir(parents=True, exist_ok=True)
     atomic(pki / 'openssl.cnf', openssl_cnf())
     for name, body in (('index.txt', ''), ('serial', '01\n'), ('crlnumber', '01\n')):
         if not (pki / name).is_file():
@@ -419,7 +419,7 @@ def san_entry(name):
 
 
 def build_ikev2(directory, public, entry_host, *, say=lambda _text: None, run=run):
-    """Свой CA IKEv2 и сертификат сервера в directory, как стадия 27.
+    """Свой CA IKEv2 и сертификат сервера в directory.
 
     CA выпускается один раз на 10 лет. Сертификат сервера (5 лет) перевыпускается, когда
     истёк, не сходится с CA или в SAN нет адреса профилей public либо IP входа; ключ и

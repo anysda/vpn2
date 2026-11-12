@@ -179,21 +179,20 @@ def nft(argv):
     return 0
 
 
-def router(argv):
-    if not argv or argv[0] not in ROUTER:
-        sys.stderr.write('Использование: vpn2 router ' + '|'.join(ROUTER) + ' [аргументы]\n')
+def _subcommand(command, table, argv):
+    if not argv or argv[0] not in table:
+        sys.stderr.write(f'Использование: vpn2 {command} ' + '|'.join(table) + ' [аргументы]\n')
         return 2
-    return _resolve(ROUTER[argv[0]])(argv[1:])
+    run = _resolve(table[argv[0]])
+    return run() if argv[0] == 'failover' else run(argv[1:])
+
+
+def router(argv):
+    return _subcommand('router', ROUTER, argv)
 
 
 def watchdog(argv):
-    if not argv or argv[0] not in WATCHDOGS:
-        sys.stderr.write('Использование: vpn2 watchdog ' + '|'.join(WATCHDOGS) + ' [аргументы]\n')
-        return 2
-    run = _resolve(WATCHDOGS[argv[0]])
-    if argv[0] == 'failover':
-        return run()
-    return run(argv[1:])
+    return _subcommand('watchdog', WATCHDOGS, argv)
 
 
 def verify(argv):

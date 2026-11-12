@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from vpn2 import fsutil, release, resources
+from vpn2.nodevars import env_tag
 
 PROJECT = 'vpn2'
 VM, PANEL, BOT = 'vmsingle', 'anysda-vpn2', 'anysda-tgbot'
@@ -32,10 +33,6 @@ class EngineError(Exception):
 
 def say(text):
     print(f'[{os.environ.get("HOST_TAG") or "anysda"}] {text}', flush=True)
-
-
-def upper(tag):
-    return tag.upper().replace('-', '_')
 
 
 def exit_tags(environ):
@@ -59,7 +56,7 @@ def scrape_config(environ):
              "        labels: { host: ru, instance: '%s:9100' }" % (environ.get('MGMT_IP_RU') or '10.99.0.1')]
     skipped = []
     for tag in exit_tags(environ):
-        address = environ.get('MGMT_IP_' + upper(tag)) or ''
+        address = environ.get('MGMT_IP_' + env_tag(tag)) or ''
         if not address:
             skipped.append(tag)
             continue
@@ -102,12 +99,12 @@ def bot_service(environ, image, values, *, secret, user, panel_gid):
 
 def node_hosts(environ):
     """Публичные адреса нод для карточек мониторинга: «ru=<entry>,<тег>=<адрес>»."""
-    return ','.join(['ru=' + environ['ENTRY_HOST'], *(f'{tag}={environ.get("DOMAIN_" + upper(tag)) or ""}'
+    return ','.join(['ru=' + environ['ENTRY_HOST'], *(f'{tag}={environ.get("DOMAIN_" + env_tag(tag)) or ""}'
                                                       for tag in exit_tags(environ))])
 
 
 def mgmt_ips(environ):
-    pairs = [(tag, environ.get('MGMT_IP_' + upper(tag)) or '') for tag in exit_tags(environ)]
+    pairs = [(tag, environ.get('MGMT_IP_' + env_tag(tag)) or '') for tag in exit_tags(environ)]
     return ','.join(['ru:' + (environ.get('MGMT_IP_RU') or '10.99.0.1'), *(f'{tag}:{ip}' for tag, ip in pairs if ip)])
 
 

@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 from vpn2 import fsutil, resources
+from vpn2.nodevars import env_tag
 from vpn2.adguard.stage import random_text
 from vpn2.containers import compose, panel
 from vpn2.containers.compose import EngineError, say
@@ -36,7 +37,7 @@ def monitoring(environ, docker):
         raise EngineError('EXIT_TAGS пуст')
     text, skipped = compose.scrape_config(environ)
     for tag in skipped:
-        say(f'ВНИМАНИЕ: MGMT_IP_{compose.upper(tag)} не задан — {tag} пропущен в scrape config')
+        say(f'ВНИМАНИЕ: MGMT_IP_{env_tag(tag)} не задан — {tag} пропущен в scrape config')
     os.makedirs(ETC, exist_ok=True)
     os.makedirs('/var/lib/vmsingle', exist_ok=True)
     stamp = compose.prepare_host('25-monitoring')

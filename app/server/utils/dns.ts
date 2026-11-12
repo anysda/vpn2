@@ -479,7 +479,7 @@ const serviceName = (services: Map<string, string>, id = '') => services.get(id)
 export function verdict(r: CheckHost, lists: Map<number, string>, services: Map<string, string>): Verdict {
   const text = r.rules?.[0]?.text ?? ''
   const id = r.rules?.[0]?.filter_list_id ?? 0
-  const list = lists.get(id) ?? `Список ${id}`
+  const list = listName(id, lists)
   const from = id === 0 ? ' из своих правил' : ` из списка «${list}»`
   switch (r.reason) {
     case 'FilteredBlackList': return blocked(['Правило ', text, from])

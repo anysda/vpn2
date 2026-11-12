@@ -28,7 +28,6 @@ function operationView(row: StoredOperation): AccessOperation {
   return { id, clientId, deviceId, kind, version, status, protocols, nextRetry, createdAt }
 }
 
-const operationById = async (id: string) => (await useDb().select().from(accessOperations).where(eq(accessOperations.id, id)))[0]
 const latestRow = async (clientId: number) => (await useDb().select().from(accessOperations)
   .where(eq(accessOperations.clientId, clientId)).orderBy(desc(accessOperations.version)).limit(1))[0]
 
@@ -152,7 +151,7 @@ export async function currentAccessByClient() {
 }
 
 export async function getAccess(id: string) {
-  const row = await operationById(id)
+  const [row] = await useDb().select().from(accessOperations).where(eq(accessOperations.id, id))
   if (!row) throw notFound()
   return operationView(row)
 }

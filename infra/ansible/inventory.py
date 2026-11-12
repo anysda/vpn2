@@ -138,29 +138,6 @@ def prepare(cfg: Config, state: Path, repo_root: Path):
               'их MGMT_IP-индексы зарезервированы и не переиспользуются')
 
 
-def set_port(path: Path, tag, port):
-    """hy2_direct_port экзита в config.yaml; остальные строки и комментарии не трогаются."""
-    import yaml
-    from vpn2.config import _plain_forms
-    lines = path.read_text().splitlines()
-    root = yaml.compose(_plain_forms('\n'.join(lines)))
-    exits = next((value for key, value in root.value if key.value == 'exits'), None)
-    for item in exits.value if exits else ():
-        fields = {key.value: (key, value) for key, value in item.value}
-        if 'tag' not in fields or fields['tag'][1].value != tag:
-            continue
-        if 'hy2_direct_port' in fields:
-            mark = fields['hy2_direct_port'][0].start_mark
-            lines[mark.line] = lines[mark.line][:mark.column] + f'hy2_direct_port: {port}'
-        else:
-            last, value = item.value[-1]
-            lines.insert(value.start_mark.line + 1, ' ' * last.start_mark.column + f'hy2_direct_port: {port}')
-        path.write_text('\n'.join(lines) + '\n')
-        path.chmod(0o600)
-        return print(f'config.yaml: {tag} hy2_direct_port = {port}')
-    sys.exit(f'ERROR: тег "{tag}" не найден в config.yaml')
-
-
 def ancestors():
     """Командные строки процессов-предков, от ближайшего."""
     pid = os.getppid()
@@ -187,10 +164,8 @@ def asked_by_ansible_inventory():
 def main(argv):
     path = Path(os.environ.get('VPN2_CONFIG') or Path(__file__).resolve().parents[2] / 'config.yaml')
     repo = path.parent
-    if argv[:1] in (['--prepare'], ['--env'], ['--set-port']):
+    if argv[:1] in (['--prepare'], ['--env']):
         try:
-            if argv[0] == '--set-port':
-                return set_port(path, *argv[1:3])
             cfg = load(path)
             if argv[0] == '--prepare':
                 return prepare(cfg, STATE_DIR, repo)
@@ -219,7 +194,7 @@ def main(argv):
     if len(argv) == 2 and argv[0] == '--host':
         print('{}')
         return 0
-    print('usage: inventory.py --list | --host <name> | --prepare | --env <node> | --set-port <tag> <port>', file=sys.stderr)
+    print('usage: inventory.py --list | --host <name> | --prepare | --env <node>', file=sys.stderr)
     return 2
 
 

@@ -229,3 +229,25 @@ def load(path='/etc/anysda/config.yaml'):
     with open(path, encoding='utf-8') as handle:
         return loads(handle.read())
 
+
+
+def set_exit_port(path, tag, port):
+    """hy2_direct_port экзита в config.yaml; остальные строки и комментарии не трогаются."""
+    path = Path(path)
+    lines = path.read_text().splitlines()
+    root = yaml.compose(_plain_forms('\n'.join(lines)))
+    exits = next((value for key, value in root.value if key.value == 'exits'), None)
+    for item in exits.value if exits else ():
+        fields = {key.value: (key, value) for key, value in item.value}
+        if 'tag' not in fields or fields['tag'][1].value != tag:
+            continue
+        if 'hy2_direct_port' in fields:
+            mark = fields['hy2_direct_port'][0].start_mark
+            lines[mark.line] = lines[mark.line][:mark.column] + f'hy2_direct_port: {port}'
+        else:
+            last, value = item.value[-1]
+            lines.insert(value.start_mark.line + 1, ' ' * last.start_mark.column + f'hy2_direct_port: {port}')
+        path.write_text('\n'.join(lines) + '\n')
+        path.chmod(0o600)
+        return
+    raise ConfigError('exits', f'тег "{tag}" не найден в config.yaml')

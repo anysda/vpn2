@@ -22,7 +22,7 @@ warn() { printf '%b[%s]%b %s\n' "$C_Y" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }
 die()  { printf '%b[%s] FATAL:%b %s\n' "$C_R" "${HOST_TAG:-?}" "$C_END" "$*" >&2; exit 1; }
 step() { printf '%b==>%b %s\n' "$C_B" "$C_END" "$*"; }
 
-for lib in state-dir anysda-svc ansible-venv deploy-report deploy-prep deploy-backup port-rotate; do
+for lib in state-dir anysda-svc ansible-venv deploy-report deploy-prep deploy-backup; do
   # shellcheck disable=SC1090
   source "$DEPLOY_ROOT/lib/$lib.sh"
 done
@@ -159,6 +159,23 @@ verify() {
     fi
   done
   return "$result"
+}
+
+# После 20-ru-router vpn2 ports check меряет hy2-direct экзитов и подбирает порт. Стадии для
+# перекатки он кладёт в $TMP/ports/rerun (журнал, затем стадия:группа), код ждёт следующим вызовом.
+verify_and_rotate_ports() {
+  local rc='' plan pair
+  step 'verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов'
+  # shellcheck disable=SC2046  # экзиты через пробел
+  while PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B -m vpn2.cli ports check \
+          --state "$TMP/ports" ${rc:+--rerun-rc "$rc"} $(expand_hosts foreign) || exit 1
+        [[ -s "$TMP/ports/rerun" ]]; do
+    mapfile -t plan <"$TMP/ports/rerun"
+    envs_write
+    rc=0
+    ( for pair in "${plan[@]:1}"; do run_stage "${pair%%:*}" "${pair##*:}"; done ) >"${plan[0]}" 2>&1 || rc=$?
+  done
+  mapfile -t -O "${#_STAGE_LOG[@]}" _STAGE_LOG <"$TMP/ports/stagelog"
 }
 
 run_stage() {

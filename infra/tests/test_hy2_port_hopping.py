@@ -45,8 +45,9 @@ sha256sum() {
 
 
 def candidates():
-    text = (ROOT / 'infra/lib/port-rotate.sh').read_text()
-    return [int(p) for p in re.search(r'^HY2_PORT_CANDIDATES=\(([^)]*)\)', text, re.M).group(1).split()]
+    sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+    from vpn2.ports import HY2_PORT_CANDIDATES
+    return list(HY2_PORT_CANDIDATES)
 
 
 def old_config():

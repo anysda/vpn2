@@ -20,6 +20,7 @@ COMMANDS = (
     ('emergency', 'vpn2.emergency.__main__:main'),
     ('host', 'vpn2.cli.host:main'),
     ('nft', 'vpn2.cli:nft'),
+    ('ports', 'vpn2.ports:main'),
     ('release', 'vpn2.release:main'),
     ('restore', 'vpn2.cli:restore'),
     ('router', 'vpn2.cli:router'),

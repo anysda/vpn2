@@ -34,7 +34,6 @@ C_R='' C_G='' C_Y='' C_B='' C_END='' HOST_TAG=deploy _STAGE_LOG=()
 die()  { printf '%b[%s] FATAL:%b %s\n' "$C_R" "${HOST_TAG:-?}" "$C_END" "$*" >&2; exit 1; }
 step() { printf '%b==>%b %s\n' "$C_B" "$C_END" "$*"; }
 inventory() {
-  [[ "$1" != --set-port ]] || echo "set $2 $3" >>"$PORTS_EVENTS"
   PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B "$DEPLOY_ROOT/ansible/inventory.py" "$@"
 }
 envs_write() {
@@ -52,12 +51,12 @@ run_stage() {
   [[ " $PORTS_RERUN_FAIL " != *" $log "* ]] || { echo "stage $1 failed"; exit 1; }
 }
 '''
-OLD = HARNESS + r'''
-source "$DEPLOY_ROOT/lib/port-rotate.sh"
-_clash_delay() { python3 "$PORTS_FAKES" delay "$1"; }
+FUNCTION = re.search(r'^verify_and_rotate_ports\(\) \{.*?^\}$', (ROOT / 'infra/deploy.sh').read_text(),
+                     re.MULTILINE | re.DOTALL)[0]
+SCRIPT = HARNESS + FUNCTION + '''
 envs_write
 verify_and_rotate_ports
-printf '%s\n' "${_STAGE_LOG[@]}" >"$PORTS_STAGELOG"
+printf '%s\\n' "${_STAGE_LOG[@]}" >"$PORTS_STAGELOG"
 '''
 
 
@@ -67,7 +66,8 @@ def run(case, tmp):
         folder.mkdir(parents=True)
     (repo / 'config.yaml').write_text(CONFIG)
     (bin_dir / 'ansible').write_text(f'#!/bin/sh\nexec {sys.executable} {FAKES} ansible "$1" "$@"\n')
-    (bin_dir / 'timeout').write_text(f'#!/bin/sh\nexec {sys.executable} {FAKES} udp "$@"\n')
+    (bin_dir / 'python3').write_text(f'#!/bin/sh\ncase " $* " in *" vpn2.cli "*) exec {sys.executable} {FAKES} "$@" ;; esac\n'
+                                     f'exec {sys.executable} "$@"\n')
     (bin_dir / 'sleep').write_text('#!/bin/sh\n')
     for stub in bin_dir.iterdir():
         stub.chmod(0o755)
@@ -76,9 +76,9 @@ def run(case, tmp):
     env = {**os.environ, 'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'TMP': str(tmp), 'VPN2_ROOT': str(tmp / 'root'),
            'DEPLOY_ROOT': str(ROOT / 'infra'), 'REPO': str(repo), 'VPN2_CONFIG': str(repo / 'config.yaml'),
            'VPN2_STATE_DIR': str(state), 'PORTS_CASE': str(tmp / 'case.json'), 'PORTS_EVENTS': str(tmp / 'events'),
-           'PORTS_FAKES': str(FAKES), 'PORTS_FOREIGN': case['foreign'], 'PORTS_STAGELOG': str(tmp / 'stagelog'),
+           'PORTS_FOREIGN': case['foreign'], 'PORTS_STAGELOG': str(tmp / 'stagelog'),
            'PORTS_RERUN_FAIL': ' '.join(case['rerun_fail'])}
-    done = subprocess.run(['bash', '-c', OLD], env=env, capture_output=True, text=True, timeout=120)
+    done = subprocess.run(['bash', '-c', SCRIPT], env=env, capture_output=True, text=True, timeout=120)
     excluded = state / 'excluded-exits.txt'
 
     def text(path):

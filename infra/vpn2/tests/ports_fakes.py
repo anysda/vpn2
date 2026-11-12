@@ -1,7 +1,8 @@
 """Сеть для проверки портов hy2 по сценарию: задержка clash, вход на экзит, ответ UDP.
 
 Случай лежит JSON-файлом в PORTS_CASE, события пишутся строками в PORTS_EVENTS.
-Запуск файлом - заглушки команд: `ansible <тег> -m raw -a <команда>`.
+Запуск файлом - заглушки команд: `ansible <тег> -m raw -a <команда>` и
+`vpn2 ...` - настоящая команда пакета с сетью из сценария.
 """
 import json
 import os
@@ -44,14 +45,21 @@ def ansible(tag, command):
     return 4 if tag in case()['ssh_fail'] else 0
 
 
+def vpn2(argv):
+    sys.path.insert(0, str(SRC))
+    from vpn2 import cli, config, ports
+    write = config.set_exit_port
+
+    def set_exit_port(path, tag, port):
+        event(f'set {tag} {port}')
+        write(path, tag, port)
+
+    config.set_exit_port, ports.clash_delay, ports.udp_ask = set_exit_port, delay, udp_answer
+    ports.time.sleep = lambda _seconds: None
+    return cli.main(argv)
+
+
 if __name__ == '__main__':
     if sys.argv[1] == 'ansible':
         sys.exit(ansible(sys.argv[2], sys.argv[-1]))
-    if sys.argv[1] == 'delay':
-        value = delay(sys.argv[2])
-        sys.exit(print(value) if value else 1)
-    if sys.argv[1] == 'udp':
-        code = sys.argv[-1]
-        host, port = re.search(r"\('([^']+)', (\d+)\)", code).groups()
-        answer = udp_answer(host, int(port))
-        sys.exit(print(answer) if answer else 124)
+    sys.exit(vpn2(sys.argv[sys.argv.index('vpn2.cli') + 1:]))

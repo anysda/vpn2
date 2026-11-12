@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { botDeliveryText, type BotDelivery } from '#shared/bot-delivery'
+import { botDeliveryText } from '#shared/bot-delivery'
 
 const { status } = useTelegramStatus()
 const delivery = useBotDelivery()
@@ -11,7 +11,7 @@ function send() {
   const text = message.value.trim()
   if (!text || !configured.value) return
   return act('send', async () => {
-    const res = await $fetch<{ recipients: number, delivery: BotDelivery | null }>('/api/admin/broadcast', { method: 'POST', body: { text } })
+    const res = await $fetch('/api/admin/broadcast', { method: 'POST', body: { text } })
     message.value = ''
     return res.delivery
   }, (d) => {

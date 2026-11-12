@@ -1,15 +1,4 @@
-interface TgStatus {
-  configured: boolean
-  running: boolean
-  bot_token_masked: string
-  chat_id: string | number | ''
-  admin_username: string
-  username: string
-  clients_total: number
-  clients_subscribed: number
-  queued: number
-  delivered_day: number
-}
+type TgStatus = Api<'/api/admin/telegram'>
 
 /** Статус бота; сбой опроса оставляет последний удачный, таймаут дольше ворот смены сессии (15 с). */
 export function useTelegramStatus(pollMs = 15_000) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { EventLevel, PanelEvent } from '#shared/events'
+import type { EventLevel } from '#shared/events'
 import { parseOutbound } from '#shared/outbounds'
 
 useHead({ title: 'Обзор — anysda-vpn2' })
@@ -8,11 +8,11 @@ const mobile = useMobile()
 const period = useState<'day' | 'week'>('ov-period', () => 'day')
 onUnmounted(() => { period.value = 'day' })
 
-const { data: nodeList, refresh: refreshNodes } = useFetch<NodeMetric[]>('/api/ops/nodes', { default: () => [], server: false })
+const { data: nodeList, refresh: refreshNodes } = useFetch('/api/ops/nodes', { default: () => [], server: false })
 usePoll(refreshNodes, 2000)
 const nodes = computed(() => sortNodes(nodeList.value))
 // Пинг экзита - задержка его прямого выхода в sing-box.
-const { data: outbounds } = useFetch<Array<{ name: string, delay: number | null }>>('/api/routes/outbounds', { default: () => [], server: false })
+const { data: outbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
 const pings = computed(() => {
   const out: Record<string, number | null> = {}
   for (const o of outbounds.value) {
@@ -22,7 +22,7 @@ const pings = computed(() => {
   return out
 })
 
-const { data: events, refresh: refreshEvents } = useFetch<PanelEvent[]>('/api/events', { query: { limit: 30 }, default: () => [] })
+const { data: events, refresh: refreshEvents } = useFetch('/api/events', { query: { limit: 30 }, default: () => [] })
 usePoll(refreshEvents, 30_000)
 const now = ref(Date.now())
 watch(events, () => { now.value = Date.now() })
@@ -38,13 +38,13 @@ const exits = computed(() => {
   return { total, rows: list.map((x, i) => ({ ...x, c: x.bad ? 'var(--red)' : i === 0 ? 'var(--acc)' : GREYS[(i - 1) % 4]!, pct: total ? Math.round(x.v / total * 100) : 0 })) }
 })
 
-const { data: dns, refresh: refreshDns } = useFetch<{ available: boolean, totalToday: number, blockedToday: number, blockRatePct: number, avgMs: number }>('/api/ops/adguard', { server: false })
+const { data: dns, refresh: refreshDns } = useFetch('/api/ops/adguard', { server: false })
 usePoll(refreshDns, 30_000)
 
-const { data: top } = useFetch<{ clients: { id: number, name: string, rx: number, tx: number, total: number }[] }>('/api/clients/top', { query: { period }, server: false })
+const { data: top } = useFetch('/api/clients/top', { query: { period }, server: false })
 const topRows = computed(() => (top.value?.clients.filter(c => c.total > 0) ?? []).slice(0, mobile.value ? 3 : undefined))
 
-const { data: online, refresh: refreshOnline } = useFetch<{ total: number, online: number, hourly: number[] }>('/api/ops/clients-online', { server: false })
+const { data: online, refresh: refreshOnline } = useFetch('/api/ops/clients-online', { server: false })
 usePoll(refreshOnline, 60_000)
 const onlineCards = computed(() => {
   const d = online.value

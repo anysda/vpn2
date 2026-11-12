@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
 
-interface List { name: string, url: string, enabled: boolean, rules: number, updated: string | null }
-interface View { interval: number, black: List[], white: List[] }
+type View = Api<'/api/dns/filters'>
 
-const { data, load, busy, change } = useDns<View>('/api/dns/filters')
+const { data, load, busy, change } = useDns('/api/dns/filters')
 
 function every(h: number) {
   if (!h) return 'не обновляются'
@@ -22,7 +21,7 @@ const sections = computed(() => {
     { white: true, title: 'Белые списки', sub: 'Адреса отсюда не блокируются никогда', rows: v.white },
   ]
 })
-const updated = (l: List) => !l.enabled ? 'выключен' : l.updated ? todayYesterdayHmLocal(l.updated) : '—'
+const updated = (l: View['black'][number]) => !l.enabled ? 'выключен' : l.updated ? todayYesterdayHmLocal(l.updated) : '—'
 const FIELDS = [{ k: 'name', label: 'Название', placeholder: 'напр. HaGeZi Light' }, { k: 'url', label: 'Адрес списка', placeholder: 'https://…', mono: true }]
 const check = () => change<View & { updated: number }>('check', 'POST', undefined,
   r => r.updated ? `Списки обновлены: ${r.updated} ${plural(r.updated, 'list')}` : 'Списки обновлены, новых правил нет', '/refresh')

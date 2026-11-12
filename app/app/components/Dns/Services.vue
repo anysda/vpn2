@@ -1,8 +1,7 @@
 <script setup lang="ts">
 // Список заблокированных уходит целиком, нажатия - по очереди.
-interface View { all: { id: string, name: string }[], blocked: string[] }
 
-const { data, load, act } = useDns<View>('/api/dns/services')
+const { data, load, act } = useDns('/api/dns/services')
 const blocked = ref(new Set<string>())
 watch(data, v => v && (blocked.value = new Set(v.blocked)), { immediate: true })
 

@@ -1,6 +1,6 @@
 import { parseOutbound } from '#shared/outbounds'
 
-export interface Outbound { name: string, type: string, delay: number | null, isWarp: boolean, isDirectRu: boolean }
+type Outbound = Api<'/api/routes/outbounds'>[number]
 
 interface Cell {
   outbound: string
@@ -23,6 +23,9 @@ export interface Column {
 }
 
 const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
+
+/** Россия первой, экзиты по алфавиту тега. */
+export const ruFirst = (a: string, b: string) => a === 'ru' ? -1 : b === 'ru' ? 1 : a.localeCompare(b)
 
 // Страна по двухбуквенному тегу экзита: «de» → «Германия»; иной тег - как есть.
 export function countryName(tag: string): string {
@@ -52,8 +55,7 @@ export function routeColumns(outbounds: Outbound[]): Column[] {
     col[parsed.variant] = ob
     byTag.set(parsed.tag, col)
   }
-  // Россия первой, экзиты по алфавиту тега — как сетка узлов на Обзоре.
-  const tags = [...byTag.keys()].sort((a, b) => a === 'ru' ? -1 : b === 'ru' ? 1 : a.localeCompare(b))
+  const tags = [...byTag.keys()].sort(ruFirst)
   return tags.map((tag) => {
     const { direct, warp } = byTag.get(tag)!
     const ru = tag === 'ru'

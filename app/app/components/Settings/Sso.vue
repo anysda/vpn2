@@ -34,7 +34,7 @@ async function reload() {
   loaded.value = false
   loadError.value = ''
   try {
-    const { clientSecretMasked, ...rest } = await $fetch<Omit<SsoForm, 'clientSecret'> & { clientSecretMasked: string }>('/api/admin/sso')
+    const { clientSecretMasked, ...rest } = await $fetch('/api/admin/sso')
     Object.assign(form, rest, { clientSecret: '' })
     saved.value = JSON.stringify(form)
     secretMasked.value = clientSecretMasked
@@ -53,7 +53,7 @@ async function runCheck() {
   checking.value = true
   check.value = null
   try {
-    const r = await $fetch<{ issuer: string }>('/api/admin/sso/check', { method: 'POST', body: { authentikUrl: form.authentikUrl, appSlug: form.appSlug } })
+    const r = await $fetch('/api/admin/sso/check', { method: 'POST', body: { authentikUrl: form.authentikUrl, appSlug: form.appSlug } })
     check.value = { ok: true, text: `Discovery отвечает, issuer: ${r.issuer}` }
   }
   catch (e) {

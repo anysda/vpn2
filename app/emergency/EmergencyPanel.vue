@@ -185,7 +185,7 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
           </div>
           <div class="card sc bc ov-broadcast">
             <div class="sh"><h3>Рассылка от бота</h3></div>
-            <textarea v-model="message" maxlength="4096" placeholder="Текст сообщения всем клиентам с ботом" aria-label="Сообщение юзерам" />
+            <textarea v-model="message" class="area" maxlength="4096" placeholder="Текст сообщения всем клиентам с ботом" aria-label="Сообщение юзерам" />
             <div class="arow">
               <span v-if="!state.bot_ready" class="hint">Сначала настройте Telegram-бота</span>
               <button

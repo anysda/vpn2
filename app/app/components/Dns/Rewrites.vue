@@ -1,7 +1,7 @@
 <script setup lang="ts">
-interface Rewrite { domain: string, answer: string, enabled: boolean }
+type Rewrite = Api<'/api/dns/rewrites'>[number]
 
-const { data, load, change } = useDns<Rewrite[]>('/api/dns/rewrites')
+const { data, load, change } = useDns('/api/dns/rewrites')
 const key = (r: Rewrite) => `${r.domain}|${r.answer}`
 const FIELDS = [
   { k: 'domain', label: 'Домен', placeholder: 'напр. nas.home', mono: true },

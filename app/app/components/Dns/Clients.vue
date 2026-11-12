@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
 
-interface Row { name: string, tg: string, ips: string[], filters: 'common' | 'off', safesearch: 'global' | 'on' | 'off', services: string | null, queries: number }
 
-const { data, load } = useDns<Row[]>('/api/dns/clients')
+const { data, load } = useDns('/api/dns/clients')
 const tag = computed(() => {
   const n = data.value?.length ?? 0, ips = (data.value ?? []).reduce((a, r) => a + r.ips.length, 0)
   return `${n} ${plural(n, 'client')} · ${ips} ${plural(ips, 'address')}`

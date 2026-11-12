@@ -2,7 +2,7 @@
 import type { Device } from '~/composables/useClients'
 
 type Kind = 'wg' | 'ovpn' | 'ike'
-interface Ike { server: string, remoteId: string, username: string, password: string, caCertPem: string | null, certificatePending: boolean }
+type Ike = Api<'/api/clients/:id/devices/:deviceId/ikev2-credentials'>
 
 const props = defineProps<{ clientId: number, device: Device, kind: Kind }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -35,7 +35,7 @@ async function load() {
   if (props.kind === 'wg') {
     // Без метки браузер показал бы из кэша QR старого ключа после перевыпуска.
     qr.value = `${base.value}/wg-qrcode.svg?t=${Date.now()}`
-    void $fetch<{ hasAAAA: boolean }>('/api/wg-endpoint-warning', { timeout: 1000, retry: 0 }).then(w => r === request && (hasAAAA.value = w.hasAAAA), () => {})
+    void $fetch('/api/wg-endpoint-warning', { timeout: 1000, retry: 0 }).then(w => r === request && (hasAAAA.value = w.hasAAAA), () => {})
   }
   await act('load', async () => {
     const res = props.kind === 'ike' ? await $fetch<Ike>(url) : await $fetch<string>(url, { responseType: 'text' })

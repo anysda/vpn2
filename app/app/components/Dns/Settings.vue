@@ -1,23 +1,7 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
 
-interface View {
-  upstreams: string
-  mode: 'load_balance' | 'parallel' | 'fastest_addr'
-  bootstrap: string
-  safebrowsing: boolean
-  parental: boolean
-  safesearch: boolean
-  dnssec: boolean
-  noAaaa: boolean
-  cache: string
-  optimistic: boolean
-  ratelimit: string
-  block: string
-  logHours: number
-  statsHours: number
-  anonymize: boolean
-}
+type View = Api<'/api/dns/settings'>
 type Tog = 'safebrowsing' | 'parental' | 'safesearch' | 'dnssec' | 'noAaaa' | 'optimistic' | 'anonymize'
 type Edit = 'bootstrap' | 'ratelimit' | 'block'
 
@@ -37,7 +21,7 @@ const RESET = {
   stats: { title: 'Сбросить статистику?', text: 'Все записи статистики удалятся. Восстановить их будет нельзя.', ok: 'Сбросить', done: 'Статистика сброшена' },
 }
 
-const { data, load, toast, busy, act, change } = useDns<View>('/api/dns/settings')
+const { data, load, toast, busy, act, change } = useDns('/api/dns/settings')
 const ask = useAsk()
 // Пока серверы сохраняются, поле только для чтения: ответ иначе затёр бы допечатанное.
 const ups = ref('')
@@ -53,7 +37,7 @@ function saveUps() {
   if (data.value && norm !== data.value.upstreams) void patch({ upstreams: ups.value }, 'Серверы выше: сохранено')
 }
 const check = () => act('check', async () => {
-  const r = await $fetch<{ total: number, failed: string[] }>('/api/dns/settings/upstreams-check', { method: 'POST', body: { upstreams: ups.value, bootstrap: data.value?.bootstrap ?? '' } })
+  const r = await $fetch('/api/dns/settings/upstreams-check', { method: 'POST', body: { upstreams: ups.value, bootstrap: data.value?.bootstrap ?? '' } })
   if (r.failed.length) toast.add({ title: `Не отвечают: ${r.failed.join(', ')}`, color: 'error' })
   else toast.add({ title: r.total === 1 ? 'Сервер отвечает' : `Все ${r.total} ${plural(r.total, 'server')} отвечают` })
 })

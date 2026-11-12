@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
-import type { Outbound } from '~/utils/routes-view'
 
-interface Route { id: number, type: 'domain' | 'ip_cidr', value: string, outbound: string, createdAt: string }
-interface Check { query: string, reason: keyof typeof WHY, rule: string, routeId: number | null, outbound: string, delay: number | null }
+type Route = Api<'/api/routes'>[number]
+type Check = Api<'/api/routes/check'>
 const WHY = {
   manual: 'своё правило',
   client: 'выбран у клиента',
@@ -20,8 +19,8 @@ definePageMeta({ title: 'Маршруты' })
 const { act } = useAct()
 const mobile = useMobile()
 
-const { data: rules, refresh } = useFetch<Route[]>('/api/routes', { default: () => [], server: false })
-const { data: outbounds, refresh: refreshOutbounds } = useFetch<Outbound[]>('/api/routes/outbounds', { default: () => [], server: false })
+const { data: rules, refresh } = useFetch('/api/routes', { default: () => [], server: false })
+const { data: outbounds, refresh: refreshOutbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
 usePoll(() => Promise.all([refresh(), refreshOutbounds()]), 4000)
 const count = computed(() => `${rules.value.length} ${plural(rules.value.length, 'rule')}`)
 usePageSub(() => `${count.value} · какой сайт через какой выход`)
@@ -82,7 +81,7 @@ let seq = 0, timer: ReturnType<typeof setTimeout> | undefined
 async function runCheck() {
   const my = ++seq
   try {
-    const r = await $fetch<Check>('/api/routes/check', { query: { q: query.value.trim() || EXAMPLE } })
+    const r = await $fetch('/api/routes/check', { query: { q: query.value.trim() || EXAMPLE } })
     if (my === seq) [checked.value, checkError.value] = [r, '']
   }
   catch (e) {

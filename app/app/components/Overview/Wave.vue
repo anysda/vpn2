@@ -1,9 +1,8 @@
 <script setup lang="ts">
 // Трафик всех экзитов за сутки по часам или за неделю по суткам МСК и сравнение с тем же окном раньше.
-interface Traffic { period: 'day' | 'week', step: number, starts: number[], total: number[], sum: number, prev: number | null }
 
 const props = defineProps<{ period: 'day' | 'week' }>()
-const { data, refresh } = useFetch<Traffic>('/api/ops/traffic', { query: computed(() => ({ period: props.period })), server: false })
+const { data, refresh } = useFetch('/api/ops/traffic', { query: computed(() => ({ period: props.period })), server: false })
 usePoll(refresh, 60_000)
 
 const gb = computed(() => (data.value?.total ?? []).map(b => b / 1e9))

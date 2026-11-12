@@ -1,24 +1,5 @@
 <script setup lang="ts">
-interface Summary {
-  units: 'hours' | 'days'
-  queries: number
-  blocked: number
-  blockedPct: number
-  threats: number
-  avgMs: number
-  cachedPct: number | null
-  q: number[]
-  b: number[]
-  t: number[]
-  ms: number[]
-  upstreams: Array<{ url: string, pct: number, ms: number }>
-  mode: string
-  clients: Array<[string, number]>
-  domains: Array<[string, number]>
-  blocks: Array<[string, number]>
-}
-
-const { data, error, refresh } = useFetch<Summary>('/api/dns/summary', { server: false, lazy: true })
+const { data, error, refresh } = useFetch('/api/dns/summary', { server: false, lazy: true })
 usePoll(refresh, 60_000)
 
 const ms = (v: number) => v < 10 ? ru(v, 1) : ru(v)

@@ -1,4 +1,4 @@
-import type { Serialize, Simplify } from 'nitropack/types'
+import type { InternalApi, Serialize, Simplify } from 'nitropack/types'
 import type { api } from '../server/plugins/api'
 type Table = typeof api
 type Routes = {
@@ -9,6 +9,11 @@ type Routes = {
 declare module 'nitropack/types' {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface InternalApi extends Routes {}
+}
+declare global {
+  type ApiPath = keyof InternalApi
+  /** Ответ маршрута в браузере: `Api<'/api/clients'>`, `Api<'/api/dns/check', 'post'>`. */
+  type Api<P extends keyof InternalApi, M extends keyof InternalApi[P] = 'get' & keyof InternalApi[P]> = InternalApi[P][M]
 }
 declare module '#app' {
   /** Заголовок и постоянный подзаголовок раздела для шапки телефона. */

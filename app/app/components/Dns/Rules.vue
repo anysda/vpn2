@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Поле - весь набор своих правил: до ответа GET закрыто, пока идёт «Применить» - только для чтения.
-interface Verdict { kind: 'blk' | 'ok' | 'rw', label: string, why: [string, string, string] }
+type Verdict = Api<'/api/dns/check'>
 
-const { data, load, toast, busy, act } = useDns<{ text: string }>('/api/dns/rules')
+const { data, load, toast, busy, act } = useDns('/api/dns/rules')
 const text = ref('')
 watch(data, v => v && (text.value = v.text), { immediate: true })
 const q = ref('')
@@ -19,7 +19,7 @@ async function check() {
     return
   }
   try {
-    const v = await $fetch<Verdict>('/api/dns/check', { query: { name } })
+    const v = await $fetch('/api/dns/check', { query: { name } })
     if (my !== seq) return
     res.value = v
     if (Date.now() < settleUntil) setTimeout(() => my === seq && void check(), 250)

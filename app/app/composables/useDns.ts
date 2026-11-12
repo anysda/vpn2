@@ -1,7 +1,8 @@
 type Method = 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
 /** Снимок подраздела DNS: применяется ответ последнего запроса, после отказа снимок перечитывается. */
-export function useDns<T>(url: string) {
+export function useDns<P extends ApiPath>(url: P) {
+  type T = Api<P>
   const { toast, busy, act } = useAct()
   const load = useFetch<T>(url, { server: false, lazy: true })
   const data = load.data as Ref<T | undefined>

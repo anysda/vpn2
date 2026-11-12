@@ -1,6 +1,6 @@
 <script setup lang="ts">
 type Kind = 'ok' | 'blk' | 'rw' | 'safe'
-interface Row { time: string, domain: string, type: string, kind: Kind, detail: string, client: string, ip: string }
+type Row = Api<'/api/dns/log'>['rows'][number]
 
 const FILTERS = [{ value: 'all', label: 'Все' }, { value: 'blk', label: 'Заблокированные' }, { value: 'ok', label: 'Разрешённые' }, { value: 'rw', label: 'Перезаписанные' }] as const
 const TAGS: Record<Kind, [string, string]> = { ok: ['ok', 'разрешён'], blk: ['badt', 'заблокирован'], rw: ['', 'перезаписан'], safe: ['badt', 'угроза'] }
@@ -19,7 +19,7 @@ async function load(more = false) {
   const my = ++seq
   loading.value = true
   try {
-    const r = await $fetch<{ rows: Row[], older: string | null }>('/api/dns/log', {
+    const r = await $fetch('/api/dns/log', {
       query: { f: f.value, q: q.value.trim() || undefined, older: more ? older.value ?? undefined : undefined },
     })
     if (my !== seq) return

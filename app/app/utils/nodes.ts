@@ -1,43 +1,7 @@
-export interface NodeMetric {
-  tag: string
-  label: string
-  host: string | null
-  instance: string
-  cpu: number | null
-  iowait: number | null
-  steal: number | null
-  ram: number | null
-  rxMbps: number | null
-  txMbps: number | null
-  uptimeSec: number | null
-  diskFreeBytes: number | null
-  diskFreePct: number | null
-  /** Возраст последних метрик, сек; null - данных нет. */
-  staleSec: number | null
-  /** Байты через WAN с 00:00 МСК. */
-  rxTodayBytes: number | null
-  txTodayBytes: number | null
-  /** Экзит выключен из панели: watchdog обходит его как мёртвый. */
-  disabled: boolean
-  /** Через экзит сейчас идёт иностранный трафик вне дорожек. */
-  active: boolean
-  activeDevices: number | null
-  lanes: number | null
-  lanesWarp: number | null
-}
+export type NodeMetric = Api<'/api/ops/nodes'>[number]
 
-const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
-/** nl → «Нидерланды», entry - «Entry». */
-export function exitName(tag: string): string {
-  if (tag === 'ru') return 'Entry'
-  try {
-    const name = regions.of(tag.toUpperCase())
-    return name && name !== tag.toUpperCase() ? name : tag.toUpperCase()
-  }
-  catch {
-    return tag.toUpperCase()
-  }
-}
+/** nl → «Нидерланды», entry - «Entry»; тег с цифрами - как есть. */
+export const exitName = (tag: string) => tag === 'ru' ? 'Entry' : /\d/.test(tag) ? tag.toUpperCase() : countryName(tag)
 
 export function uptimeShort(sec: number | null | undefined): string {
   if (!sec || sec < 0) return '—'
@@ -64,7 +28,7 @@ export function nodeHealth(n: NodeMetric) {
 }
 
 /** Entry первым, дальше экзиты по тегу. */
-export const sortNodes = (list: NodeMetric[]) => [...list].sort((a, b) => a.tag === 'ru' ? -1 : b.tag === 'ru' ? 1 : a.tag.localeCompare(b.tag))
+export const sortNodes = (list: NodeMetric[]) => [...list].sort((a, b) => ruFirst(a.tag, b.tag))
 
 /** Окно из `len` соседних точек с наибольшей суммой - подсвеченная полоса графика. */
 export function peakBand(data: number[], len = 4): [number, number] | null {

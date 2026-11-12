@@ -2,7 +2,7 @@
 import '~/assets/css/clients.css'
 import { inDaysRu, plural } from '#shared/plural'
 import { parseOutbound } from '#shared/outbounds'
-import type { Client, ClientTraffic } from '~/composables/useClients'
+import type { Client } from '~/composables/useClients'
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
 definePageMeta({ title: 'Клиенты и ключи' })
@@ -15,9 +15,9 @@ const { clients: fetched, refresh, status, error } = useClients()
 const removed = ref<number[]>([])
 const clients = computed(() => fetched.value.filter(c => !removed.value.includes(c.id)))
 
-const { data: traffic, refresh: refreshTraffic } = useFetch<Record<number, ClientTraffic>>('/api/clients/traffic', { default: () => ({}), server: false })
+const { data: traffic, refresh: refreshTraffic } = useFetch('/api/clients/traffic', { default: () => ({}) as Api<'/api/clients/traffic'>, server: false })
 usePoll(refreshTraffic, 3000)
-const { data: outbounds } = useFetch<{ name: string }[]>('/api/routes/outbounds', { default: () => [], server: false })
+const { data: outbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
 const exits = computed(() => [...new Set(outbounds.value.map(o => parseOutbound(o.name))
   .filter(p => p?.variant === 'direct' && p.tag !== 'ru').map(p => p!.tag))].sort())
 

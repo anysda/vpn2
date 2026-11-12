@@ -2,8 +2,7 @@
 import { plural } from '#shared/plural'
 
 // Недели столбцами, дни строками. «Онлайн» - клиентов в сети за сутки, «Трафик» - ГБ всех клиентов за сутки МСК.
-interface Day { day: number, online: number, bytes: number }
-const { data, refresh } = useFetch<{ today: number, days: Day[] }>('/api/ops/activity', { server: false })
+const { data, refresh } = useFetch('/api/ops/activity', { server: false })
 usePoll(refresh, 300_000)
 
 const MODES = [{ value: 'on', label: 'Онлайн' }, { value: 'tr', label: 'Трафик' }] as const
@@ -12,7 +11,7 @@ const SHADE = [0.05, 0.14, 0.28, 0.5, 0.9]
 const mode = ref<'on' | 'tr'>('on')
 const mobile = useMobile()
 const date = (day: number) => new Date(day * 864e5)
-const raw = (d?: Day) => d ? (mode.value === 'on' ? d.online : d.bytes) : 0
+const raw = (d?: Api<'/api/ops/activity'>['days'][number]) => d ? (mode.value === 'on' ? d.online : d.bytes) : 0
 
 const grid = computed(() => {
   if (!data.value) return null

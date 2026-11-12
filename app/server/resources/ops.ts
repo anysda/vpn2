@@ -29,7 +29,7 @@ export default {
   'GET /ops/activity': admin(() => activityDays()),
   'GET /ops/adguard': admin(async () => {
     const snap = await fetchAdguardStats()
-    return snap ? { available: true, ...snap } : { available: false }
+    return snap ? { available: true as const, ...snap } : { available: false as const }
   }),
   'GET /ops/traffic': admin(event => exitTraffic(getQuery(event).period === 'week' ? 'week' : 'day')),
 

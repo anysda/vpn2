@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { botDeliveryText, botDeliveryTime, botQueueText, type BotDelivery } from '#shared/bot-delivery'
+import { botDeliveryText, botDeliveryTime, botQueueText } from '#shared/bot-delivery'
 
 const { rows, queued, sync } = useBotDelivery()
 const pending = computed(() => rows.value.filter(r => r.status !== 'accepted'))
@@ -7,7 +7,7 @@ const label = computed(() => pending.value.length ? `Уведомления: ${p
 let first = true
 
 async function refresh() {
-  const list = await $fetch<BotDelivery[]>('/api/admin/bot-deliveries').catch(() => null)
+  const list = await $fetch('/api/admin/bot-deliveries').catch(() => null)
   if (!list) return
   sync(list, !first)
   first = false

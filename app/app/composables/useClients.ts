@@ -1,47 +1,15 @@
 import type { AccessOperation } from '#shared/access-operation'
 
-export interface Client {
-  accessStatus: string
-  id: number
-  name: string
-  filterTraffic: boolean
-  expiresAt: string | null
-  deviceLimit: number | null
-  frozenManual: boolean
-  createdAt: string
-  status: 'active' | 'frozen'
-  tgLinked: boolean
-  tgUsername: string | null
-  /** Предпочитаемый экзит (тег узла) или null - авто. */
-  preferredExit: string | null
-  deviceCount: number
-  rxTotal: number
-  txTotal: number
-}
-
-export interface Device {
-  id: number
-  name: string
-  /** Имя файла конфига: до 15 ASCII-символов с уникальным суффиксом. */
-  configName: string
-  createdAt: string
-  rxTotal: number
-  txTotal: number
-}
-
-export type ClientDetail = Omit<Client, 'accessStatus' | 'deviceCount'> & {
-  operation: AccessOperation | null
-  deleting: boolean
-  devices: Device[]
-}
-
+export type Client = Api<'/api/clients'>[number]
+export type ClientDetail = Api<'/api/clients/:id'>
+export type Device = ClientDetail['devices'][number]
 /** Трафик клиента: за всё время, с 00:00 МСК, за 5 минут; online - выше шума keepalive. */
-export interface ClientTraffic { rxBytes: number, txBytes: number, dayRx: number, dayTx: number, recentBytes: number, online: boolean }
+export type ClientTraffic = Api<'/api/clients/traffic'>[number]
 
 /** Список клиентов раз в 3 с; сбой опроса оставляет последний удачный список. */
 export function useClients() {
   const last = useState<Client[]>('clients-last', () => [])
-  const { data, refresh, status, error } = useFetch<Client[]>('/api/clients', {
+  const { data, refresh, status, error } = useFetch('/api/clients', {
     key: 'clients',
     default: () => last.value,
     transform: list => (last.value = list),
@@ -61,7 +29,7 @@ function send<T>(path: string, method: Method, body?: object, once = false): Pro
   return $fetch<unknown>(`/api/clients${path}`, { method, body, headers }) as Promise<T>
 }
 
-export const fetchClient = (id: number) => $fetch<ClientDetail>(`/api/clients/${id}`)
+export const fetchClient = (id: number) => $fetch(`/api/clients/${id}`)
 export const createClient = (c: { name: string, filterTraffic: boolean, expiresAt: string | null, deviceLimit: number | null }) =>
   send<Client & Warned>('', 'POST', c)
 type Patch = Partial<Pick<Client, 'name' | 'expiresAt' | 'deviceLimit' | 'frozenManual' | 'preferredExit'>>

@@ -19,6 +19,8 @@ ENTRY = [
     'mgmt scrape: все ожидаемые targets up после свежего скрейпа',
     'ssh nl через hy2-mgmt',
     'ssh de через hy2-mgmt',
+    'nl: транспорт hy2, не запасной TCP',
+    'de: транспорт hy2, не запасной TCP',
     'frontend: 127.0.0.1:80 отвечает через Caddy',
     'vmsingle: 127.0.0.1:8428 healthy',
     'tproxy: правило fwmark 0x42 → table 101',
@@ -141,3 +143,28 @@ def test_check_result_and_code(tmp_path, rc, output, unmeasured, result, reason,
         ('ikev2', 'проба', result, reason), ('ru', 'проба узла', 'Работает', 'проверка прошла')]
     assert current.code() == code
     assert json.loads((tmp_path / 'rows.jsonl').read_text().splitlines()[0])['time']
+
+
+class Proxies:
+    def __init__(self, answer):
+        self.answer = answer
+
+    def proxies(self, *, timeout):
+        assert timeout
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+@pytest.mark.parametrize('answer, rc, reason', [
+    ({'transport-nl-direct': {'now': 'transport-hy2-nl-direct'}, 'hy2-nl-mgmt': {'now': 'transport-hy2-nl-mgmt'}}, 0, ''),
+    ({'transport-nl-direct': {'now': 'transport-tcp-nl-direct'}, 'transport-nl-warp': {'now': 'transport-hy2-nl-warp'},
+      'hy2-nl-mgmt': {'now': 'transport-tcp-nl-mgmt'}}, 1,
+     'hy2 до экзита nl не работает, трафик на запасном TCP (VLESS Reality): transport-nl-direct, hy2-nl-mgmt'),
+    ({'hy2-nl-mgmt': {'type': 'Hysteria2'}}, 0, ''),
+    (ConnectionRefusedError('refused'), 2, 'clash-api sing-box не ответил: refused'),
+], ids=['hy2', 'tcp-fallback', 'without-fallback', 'api-down'])
+def test_exit_transport_reports_tcp_fallback(monkeypatch, answer, rc, reason):
+    # Маршруты на VLESS-TCP проходят: закрытый hy2 видно только по селекторам.
+    monkeypatch.setattr(stage.ClashApi, 'from_config', classmethod(lambda _cls, _path: Proxies(answer)))
+    assert stage.exit_transport('nl') == (rc, reason)

@@ -19,6 +19,7 @@ import time
 import traceback
 
 from vpn2 import fsutil
+from vpn2.probe import ClashApi
 from vpn2.watchdog import warp, yt
 
 REPORT = '/var/lib/anysda/verify-report.json'
@@ -240,6 +241,22 @@ def mgmt_scrape(tag, expected, timeout, interval):
         if time.monotonic() < deadline:
             time.sleep(float(interval))
     return 1, '\n'.join(lines + [f'[{tag}] mgmt scrape: таймаут — {detail}'])
+
+
+def exit_transport(tag):
+    """Транспорт до экзита по селекторам sing-box: 0 - hy2, 1 - канал на запасном TCP, 2 - API не ответил.
+
+    На VLESS-TCP трафик идёт, маршруты проходят: без этой проверки verify зелёный при закрытом hy2.
+    """
+    try:
+        proxies = ClashApi.from_config(SINGBOX_CONFIG).proxies(timeout=5)
+    except (OSError, ValueError, KeyError) as error:
+        return 2, f'clash-api sing-box не ответил: {error}'
+    selectors = (f'transport-{tag}-direct', f'transport-{tag}-warp', f'hy2-{tag}-mgmt')
+    on_tcp = [name for name in selectors if str(proxies.get(name, {}).get('now', '')).startswith('transport-tcp-')]
+    if on_tcp:
+        return 1, f'hy2 до экзита {tag} не работает, трафик на запасном TCP (VLESS Reality): {", ".join(on_tcp)}'
+    return 0, ''
 
 
 def exit_ssh(tag, limit):
@@ -525,6 +542,7 @@ def entry(stage):
     curl = ('curl', '-fsS', '--max-time', '5', '-o', '/dev/null')
     stage.checks([
         *((f'ssh {tag} через hy2-mgmt', exit_ssh, tag, stage.env.get('SSH_PROBE_TIMEOUT', '30')) for tag in stage.exits),
+        *((f'{tag}: транспорт hy2, не запасной TCP', exit_transport, tag) for tag in stage.exits),
         ('frontend: 127.0.0.1:80 отвечает через Caddy', command, *curl, 'http://127.0.0.1:80/'),
         ('vmsingle: 127.0.0.1:8428 healthy', command, *curl, 'http://127.0.0.1:8428/-/healthy'),
         ('tproxy: правило fwmark 0x42 → table 101', grep, ('ip', 'rule', 'list'), r'fwmark 0x42 lookup 101(\s|$)'),

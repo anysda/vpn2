@@ -300,6 +300,8 @@ class VerifyTest(unittest.TestCase):
                 + ('def api(*_):\n    raise OSError("clash api")\n' if fault == 'yt-failover'
                    else 'def api(*_):\n    return {"now": "youtube-ru"}\n')
                 + 'stage.yt.api = api\n'
+                # Селекторы транспорта sing-box: hy2 на всех экзитах.
+                + 'stage.exit_transport = lambda _tag: (0, "")\n'
                 'raise SystemExit(stage.run(dict(os.environ)))\n')
             command = [sys.executable, '-B', str(script)]
             # VERIFY_REF - ревизия с прежней стадией на bash: эталон вывода для сверки переноса.

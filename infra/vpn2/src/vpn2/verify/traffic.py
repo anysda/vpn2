@@ -249,7 +249,20 @@ def source():
     return src if src and src != NS_IP else None
 
 
-class WireGuard:
+class Protocol:
+    """Временный клиент протокола; доступ, который панель не снимает, ни возвращать, ни терять нечего."""
+
+    def ensure(self):
+        return False
+
+    def lost(self, _identity, _linked):
+        return False
+
+    def cleanup(self):
+        self.down()
+
+
+class WireGuard(Protocol):
     name = 'WireGuard'
     proto = 'udp'
 
@@ -309,11 +322,8 @@ class WireGuard:
         peer = self.peers[identity]
         return not peer['revoked'] and peer['public'] not in run('wg', 'show', 'wg0', 'peers').stdout.split()
 
-    def cleanup(self):
-        self.down()
 
-
-class OpenVPN:
+class OpenVPN(Protocol):
     name = 'OpenVPN'
 
     def __init__(self):
@@ -386,17 +396,8 @@ class OpenVPN:
             with contextlib.suppress(OSError):
                 sock.recv(4096)
 
-    def ensure(self):
-        pass
 
-    def lost(self, _identity, _linked):
-        return False
-
-    def cleanup(self):
-        self.down()
-
-
-class IKEv2:
+class IKEv2(Protocol):
     name = 'IKEv2'
     proto = 'udp'
 
@@ -482,9 +483,6 @@ class IKEv2:
             run('swanctl', '--terminate', '--ike', 'vpn', '--force', '--timeout', '5', '--uri', self.vici(),
                 check=False)
 
-    def ensure(self):
-        pass
-
     @staticmethod
     def server_sas(eap_id):
         """uniqueid живых IKE_SA сервера с этим EAP-логином, разбор как у vpn2.control.backend.
@@ -565,26 +563,21 @@ def manual_markers(tags, add):
     return markers
 
 
-def server_peers():
-    return run('wg', 'show', 'wg0', 'peers', check=False).stdout.split()
+def stale_peers():
+    """Открытые ключи пиров проверки, что ещё стоят на wg0."""
+    peers = run('wg', 'show', 'wg0', 'peers', check=False).stdout.split()
+    return [key for path in WORK.glob('wg-*.pub') if (key := path.read_text().strip()) in peers]
 
 
 def leftovers():
-    found = []
-    if NS in run('ip', 'netns', 'list', check=False).stdout.split():
-        found.append('netns')
-    if run('ip', 'link', 'show', HOST_IF, check=False).returncode == 0:
-        found.append('veth')
-    if SWAN_FILE.exists():
-        found.append('conn IKEv2')
-    if any(CCD.glob('vpn2-verify-*')):
-        found.append('ccd OpenVPN')
-    peers = server_peers()
-    if any(path.read_text().strip() in peers for path in WORK.glob('wg-*.pub')):
-        found.append('пир WireGuard')
-    if any(MARKER in path.read_text() for path in MANUAL_DIR.glob('*.json')):
-        found.append('ручное правило')
-    return found
+    return [name for name, present in (
+        ('netns', NS in run('ip', 'netns', 'list', check=False).stdout.split()),
+        ('veth', run('ip', 'link', 'show', HOST_IF, check=False).returncode == 0),
+        ('conn IKEv2', SWAN_FILE.exists()),
+        ('ccd OpenVPN', any(CCD.glob('vpn2-verify-*'))),
+        ('пир WireGuard', bool(stale_peers())),
+        ('ручное правило', any(MARKER in path.read_text() for path in MANUAL_DIR.glob('*.json'))),
+    ) if present]
 
 
 def cleanup(protocols=()):
@@ -606,10 +599,8 @@ def cleanup(protocols=()):
         SWAN_FILE.unlink()
         run('swanctl', '--load-all', '--noprompt', check=False)
     manual_markers((), add=False)
-    peers = server_peers()
-    for path in WORK.glob('wg-*.pub'):
-        if path.read_text().strip() in peers:
-            run('wg', 'set', 'wg0', 'peer', path.read_text().strip(), 'remove', check=False)
+    for key in stale_peers():
+        run('wg', 'set', 'wg0', 'peer', key, 'remove', check=False)
     shutil.rmtree(WORK, ignore_errors=True)
 
 

@@ -21,7 +21,8 @@ from pathlib import Path
 from vpn2.verify import stage as emergency
 
 root = Path(sys.argv[1])
-before_stage = not emergency.newer(root / 'stamp-23', root / 'stamp-10')
+emergency.STAMPS = root
+before_stage = not emergency.after_stage()
 code, output = emergency.emergency_standby(root / 'hy2.json', root / 'state/agent.json', before_stage)
 print(output)
 raise SystemExit(code)
@@ -44,7 +45,7 @@ class TestStandbyBeforeStage23(unittest.TestCase):
 
     def standby(self, stage23_newer, active):
         (self.root / 'state/agent.json').write_text(json.dumps({'leader': {'active': active}}))
-        stamps = [self.root / 'stamp-10', self.root / 'stamp-23']
+        stamps = [self.root / '10-foreign', self.root / '23-emergency']
         for index, path in enumerate(stamps if stage23_newer else stamps[::-1]):
             path.touch()
             os.utime(path, (NOW + index, NOW + index))

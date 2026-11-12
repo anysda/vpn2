@@ -168,14 +168,12 @@ def image(manifest, component, requested='', pull=True, arch=None):
     # Classic Docker uses the config digest as Id; the containerd store uses
     # a manifest/index digest. RepoDigests bind the selected image to the
     # release on both stores, including when selected is a mutable tag.
-    descriptor = actual.get('Descriptor') or {}
-    matches = (reference in (actual.get('RepoDigests') or [])
-               or descriptor.get('digest') == expected['digest'])
     # Legacy save/load can lose RepoDigests. Only the classic representation
     # (no content descriptor) can use Id as the config digest: it binds the
     # executable configuration and ordered rootfs DiffIDs.
-    if not descriptor:
-        matches = matches or actual['Id'] == expected['config']
+    descriptor = actual.get('Descriptor') or {}
+    matches = (reference in (actual.get('RepoDigests') or []) or descriptor.get('digest') == expected['digest']
+               or not descriptor and actual['Id'] == expected['config'])
     if not matches or actual['Architecture'] != arch:
         raise ReleaseError(f'{component}: digest mismatch; image rejected')
     return digest(actual['Id'])  # Store-native immutable handle, never a tag.

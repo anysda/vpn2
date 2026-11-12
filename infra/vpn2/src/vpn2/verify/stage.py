@@ -4,6 +4,7 @@
 собирается в VERIFY_REPORT, секретов в нём нет. Каждая проверка - команда
 узла или функция, отдающая (код, вывод), как команда shell.
 """
+import collections
 import datetime
 import json
 import math
@@ -275,21 +276,16 @@ def exit_ssh(tag, limit):
     return rc, stdout[stdout.index(MARK) + len(MARK):].removeprefix('\n')
 
 
-def newer(path, other):
-    """`[[ path -nt other ]]`: path новее other или other нет."""
+def after_stage():
+    """Стадия 23 этого deploy уже прошла: её штамп новее штампа 10-foreign или того нет."""
     try:
-        own = os.stat(path).st_mtime_ns
+        own = (STAMPS / '23-emergency').stat().st_mtime_ns
     except OSError:
         return False
     try:
-        return own > os.stat(other).st_mtime_ns
+        return own > (STAMPS / '10-foreign').stat().st_mtime_ns
     except OSError:
         return True
-
-
-def after_stage():
-    """Стадия 23 этого deploy уже прошла: её штамп новее штампа 10-foreign."""
-    return newer(STAMPS / '23-emergency', STAMPS / '10-foreign')
 
 
 def stamp_kind(stamp):
@@ -473,9 +469,7 @@ class Stage:
             self.line(f'✗ отчёт: не записан {path}', sys.stderr)
             self.failures += 1
             return
-        counts = {}
-        for row in rows:
-            counts[row['result']] = counts.get(row['result'], 0) + 1
+        counts = collections.Counter(row['result'] for row in rows)
         self.line(f'отчёт: {path} — ' + ', '.join(f'{name}: {count}' for name, count in sorted(counts.items())))
 
     def code(self):

@@ -204,6 +204,20 @@ def _sections(root):
     return out
 
 
+def _key_at(text, line, column):
+    """Ключ через точку, в значении которого ошибка разбора; вне значений ключей - yaml."""
+    path = []
+    for number, row in enumerate(text.splitlines()[:line + 1]):
+        if not row.strip() or row.lstrip().startswith('#'):
+            continue
+        match = re.match(r'((?: *- )* *)([A-Za-z_][\w-]*)? *(:)?', row)
+        depth = len(match[1])
+        path = [(level, key) for level, key in path if level < depth]
+        if match[2] and match[3] and (number < line or column >= match.end(3)):
+            path.append((depth, match[2]))
+    return '.'.join(key for _, key in path) or 'yaml'
+
+
 def loads(text):
     """Config из текста config.yaml; неверный файл - ConfigError.
 
@@ -214,9 +228,12 @@ def loads(text):
         _reject_foreign(text)
         root = yaml.compose(text, Loader=yaml.SafeLoader)
     except yaml.YAMLError as error:
-        mark = getattr(error, 'problem_mark', None)
+        # Сломанная строка в кавычках: начало значения, а не место, где сканер упёрся в конец.
+        scanner = isinstance(error, yaml.scanner.ScannerError) and getattr(error, 'context_mark', None)
+        mark = scanner or getattr(error, 'problem_mark', None)
         where = f', строка {mark.line + 1}' if mark else ''
-        raise ConfigError('yaml', f'{getattr(error, "problem", None) or "ошибка разбора"}{where}') from None
+        raise ConfigError(_key_at(text, mark.line, mark.column) if mark else 'yaml',
+                          f'{getattr(error, "problem", None) or "ошибка разбора"}{where}') from None
     if root is None:
         raise ConfigError('<корень>', 'пустой файл или не словарь ключей')
     sections = _sections(root)

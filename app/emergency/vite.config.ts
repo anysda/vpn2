@@ -28,16 +28,15 @@ function colorModeScript(): Plugin {
   }
 }
 
+const here = (path: string) => fileURLToPath(new URL(path, import.meta.url))
+
 export default defineConfig({
-  root: fileURLToPath(new URL('.', import.meta.url)),
+  root: here('.'),
   plugins: [vue(), colorModeScript()],
-  resolve: { alias: { '#shared': fileURLToPath(new URL('../shared', import.meta.url)) } },
+  resolve: { alias: { '#shared': here('../shared') } },
   build: {
-    outDir: fileURLToPath(new URL('../../infra/emergency/vpn2_emergency/static', import.meta.url)),
+    outDir: here('../../infra/emergency/vpn2_emergency/static'),
     emptyOutDir: true,
-    rollupOptions: { input: {
-      panel: fileURLToPath(new URL('./index.html', import.meta.url)),
-      instructions: fileURLToPath(new URL('./instructions.html', import.meta.url)),
-    } },
+    rollupOptions: { input: { panel: here('./index.html'), instructions: here('./instructions.html') } },
   },
 })

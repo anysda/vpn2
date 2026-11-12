@@ -459,18 +459,19 @@ class Exit(Agent):
             with self.lock:
                 self.state['retire'] = wall + TRANSITION
         elif retire is not None and wall >= retire:
-            hy2.stop(self.directory)
-            self.issued, self.profiles = None, {}
-            with self.lock:
-                self.state.pop('retire', None)
+            self.revoke()
             LOG.info('previous emergency credentials retired')
+
+    def revoke(self):
+        hy2.stop(self.directory)
+        self.issued, self.profiles = None, {}
+        with self.lock:
+            self.state.pop('retire', None)
 
     def end(self, emergency):
         self.close_panel()
-        hy2.stop(self.directory)
-        self.issued, self.profiles, self.following = None, {}, None
-        with self.lock:
-            self.state.pop('retire', None)
+        self.revoke()
+        self.following = None
         if emergency == 'foreign':
             spool.clear(self.directory)
         else:

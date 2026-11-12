@@ -247,6 +247,9 @@ class Watchdog:
             if text:
                 log(text)
 
+    def groups(self, prefix):
+        return sorted(name for name, p in self.proxies.items() if name.startswith(prefix) and _selector(p))
+
     def select(self, group, tag, why=''):
         self.api.select(group, tag, timeout=API_TIMEOUT)
         self.proxies[group]['now'] = tag
@@ -470,7 +473,7 @@ class Watchdog:
         перезапусков - одно событие, и больше не лечим, пока не оживёт.
         """
         h = self.health
-        bases = sorted(n[4:] for n, p in self.proxies.items() if n.startswith('pin-') and _selector(p))
+        bases = [name[4:] for name in self.groups('pin-')]
         stuck = []
         for base in bases:
             if base in self.up:
@@ -504,10 +507,8 @@ class Watchdog:
         """pin-<выход> на своём выходе, пока узел включён, выход жив и узел не в штрафной;
         иначе на foreign-best, а warp-выход - на живой WARP-ноге другого узла."""
         t = clock()
-        for name, p in self.proxies.items():
-            if not name.startswith('pin-') or not _selector(p):
-                continue
-            base = name[4:]
+        for name in self.groups('pin-'):
+            p, base = self.proxies[name], name[4:]
             node = node_of(base)
             if base in self.up:
                 self.pin_dead.discard(base)
@@ -586,7 +587,7 @@ class Watchdog:
 
     def lanes(self, conns):
         """Раскладка дорожек по экзитам; BALANCE=off - дорожки повторяют foreign-best."""
-        lanes = sorted(n for n, p in self.proxies.items() if n.startswith('lane-') and _selector(p))
+        lanes = self.groups('lane-')
         cur = {lane: self.proxies[lane].get('now') or '' for lane in lanes}
         if not BALANCE:
             for lane in lanes:

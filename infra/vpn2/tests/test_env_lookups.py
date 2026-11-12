@@ -11,7 +11,9 @@ LOOKUPS_LEFT = {
 }
 CALL = re.compile(r"(?:lookup|query)\(\s*'(?:ansible\.builtin\.)?env'\s*,\s*([^)]*)\)")
 NAME = r'[A-Z][A-Z0-9_]*'
-LIST_KEY = re.compile(r'^([a-z0-9_]+_env_(?:names|common|exit_prefix|exit_suffix)):\s*(.*)$')
+LIST_KEY = re.compile(r'^([a-z0-9_]+_env_(?:names|common)):\s*(.*)$')
+# Другое имя того же словаря: router_env: "{{ vpn2_env }}" в defaults, {%- set env = router_env -%} в шаблоне.
+ALIAS = re.compile(r'^([a-z0-9_]+):\s*"\{\{\s*vpn2_env\s*\}\}"\s*$|\{%-?\s*set\s+(\w+)\s*=\s*(\w+)\s*-?%\}', re.M)
 
 
 def sources():
@@ -41,6 +43,35 @@ def listed():
     return out
 
 
+def aliases():
+    found, pairs = {'vpn2_env'}, []
+    for path in sources():
+        for match in ALIAS.finditer(path.read_text(encoding='utf-8')):
+            if match[1]:
+                found.add(match[1])
+            else:
+                pairs.append((match[2], match[3]))
+    while new := {name for name, source in pairs if source in found} - found:
+        found |= new
+    return found
+
+
+def reads():
+    """Имена, которые роли берут из vpn2_env: (простые, приставки экзита, окончания экзита)."""
+    plain, prefixes, suffixes = set(), set(), set()
+    names = '|'.join(sorted(aliases()))
+    for path in sources():
+        text = path.read_text(encoding='utf-8')
+        plain |= set(re.findall(rf'\b(?:{names})\.({NAME})\b', text))
+        for key in re.findall(rf'\b(?:{names})\[([^\]]*)\]', text):
+            plain |= set(re.findall(rf"^\s*'({NAME})'\s*$", key))
+            prefixes |= set(re.findall(rf"'({NAME})_'\s*~", key))
+            suffixes |= set(re.findall(rf"~\s*'_({NAME})'", key))
+        # verify собирает <ТЕГ>_HY2_INSECURE из тегов: map('regex_replace', '$', '_HY2_INSECURE').
+        suffixes |= set(re.findall(rf"regex_replace',\s*'\$',\s*'_({NAME})'", text))
+    return plain, prefixes, suffixes
+
+
 def owner(path):
     """Роль, которой принадлежит файл; плеи и общие файлы считаются под своим путём."""
     parts = path.relative_to(ANSIBLE).parts
@@ -67,20 +98,19 @@ def test_counter_sees_every_spelling():
 
 def test_every_name_roles_read_is_in_hostvars():
     lists = listed()
-    assert {'adguard_env_names', 'containers_env_common', 'router_env_exit_suffix', 'verify_env_names',
+    assert {'adguard_env_names', 'containers_env_common', 'verify_env_names',
             'zapret_env_names'} <= set(lists), 'списки имён ролей не найдены: разбор defaults устарел'
-    plain = {name for _, args in calls() for name in re.findall(rf"'({NAME})'", args)}
-    # Роль, ушедшая на hostvars, читает те же имена как vpn2_env.ИМЯ.
-    plain |= {name for path in sources()
-              for name in re.findall(rf'\bvpn2_env\.({NAME})\b', path.read_text(encoding='utf-8'))}
-    for key, names in lists.items():
-        if key.endswith('_exit_prefix'):
-            assert set(names) <= set(nodevars.EXIT_PREFIXES), key
-        elif key.endswith('_exit_suffix'):
-            assert set(names) <= set(nodevars.EXIT_SUFFIXES), key
-        else:
-            plain |= set(names)
+    plain, prefixes, suffixes = reads()
+    assert {'env', 'router_env'} <= aliases(), 'другие имена vpn2_env не найдены: разбор устарел'
+    assert {'MGMT_IP'} <= prefixes and {'HY2_UP_MBPS', 'HY2_INSECURE'} <= suffixes, 'имена с тегом не найдены'
+    # Приставка без тега экзита (HY2_HOP_ ~ канал) - начало готовых имён в hostvars.
+    known = nodevars.CONFIG_NAMES | nodevars.RUN_NAMES
+    stray = {p for p in prefixes - set(nodevars.EXIT_PREFIXES) if not any(n.startswith(f'{p}_') for n in known)}
+    assert stray == set(), sorted(stray)
+    assert suffixes <= set(nodevars.EXIT_SUFFIXES), sorted(suffixes - set(nodevars.EXIT_SUFFIXES))
+    plain |= {name for _, args in calls() for name in re.findall(rf"'({NAME})'", args)}
+    for names in lists.values():
+        plain |= set(names)
     assert len(plain) >= 90
-    # <ТЕГ>_HY2_INSECURE verify собирает сам: имя с тегом экзита.
-    unknown = plain - nodevars.CONFIG_NAMES - nodevars.RUN_NAMES
+    unknown = plain - known
     assert unknown == set(), f'этих имён в hostvars (vpn2_env) нет, добавь в vpn2.nodevars: {sorted(unknown)}'

@@ -17,7 +17,7 @@
   tasks:
     - name: Узел отвечает
       ansible.builtin.wait_for_connection:
-        timeout: "{{ lookup('env', 'PREFLIGHT_BUDGET') | default(90, true) | int }}"
+        timeout: "{{ vpn2_env.PREFLIGHT_BUDGET | default(90, true) | int }}"
       register: seen
       ignore_errors: true
     - name: Причина отказа
@@ -196,7 +196,7 @@
       args: {executable: /bin/bash}
       changed_when: false
     - name: Сторож фаервола - откат, если новые ssh-входы пропадут
-      ansible.builtin.command: bash --norc /tmp/anysda/fw-guard.sh arm {{ stage }} {{ lookup('env', 'VPN2_FW_GUARD_WINDOW') | default(90, true) }}
+      ansible.builtin.command: bash --norc /tmp/anysda/fw-guard.sh arm {{ stage }} {{ vpn2_env.VPN2_FW_GUARD_WINDOW | default(90, true) }}
       changed_when: false
       when: stage in guarded
 

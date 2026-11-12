@@ -19,9 +19,10 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
+
+from vpn2.fsutil import atomic as write
 
 RESOURCES = {
     'sing-box': {'path': '/etc/sing-box/config.json', 'mode': 0o600, 'unit': 'sing-box'},
@@ -89,19 +90,6 @@ def stopping():
     finally:
         for number, handler in previous.items():
             signal.signal(number, handler)
-
-
-def write(path, body, mode):
-    descriptor, name = tempfile.mkstemp(prefix='.vpn2-apply-', dir=path.parent)
-    try:
-        with os.fdopen(descriptor, 'w') as output:
-            os.fchmod(output.fileno(), mode)
-            output.write(body)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(name, path)
-    finally:
-        Path(name).unlink(missing_ok=True)
 
 
 SPACE = ' \t\n\v\f\r\0'  # C isspace() and the terminator, not Python's wider isspace

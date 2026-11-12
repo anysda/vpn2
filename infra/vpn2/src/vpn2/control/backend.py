@@ -420,7 +420,7 @@ class Backend:
                 if len(row) >= 7 and row[0] == 'CLIENT_LIST' and re.fullmatch(r'dev_[1-9][0-9]*', row[1]):
                     rows.append({'device_id': int(row[1][4:]), 'rx': int(row[6]), 'tx': int(row[5])})
             return {'samples': rows}
-        # The existing host sampler is read-only after the API migration.
+        # Written by the host sampler; the service only reads it.
         data = json.loads(self.path('/etc/anysda/ikev2-status.json').read_text())
         require(time.time() - data['updated'] < 30, 'unavailable')
         return {'samples': [{name: item[name] for name in ('uniqueid', 'username', 'rx', 'tx')}
@@ -433,7 +433,7 @@ class Backend:
         previous = path.read_bytes().decode('latin-1')
         header = wg.split(previous)[0]
         require(any(wg.line(line)[0] == '[Interface]' for line in header.split('\n')), 'unavailable')
-        # The persisted key pair is authoritative, as in the former panel.
+        # The persisted key pair is authoritative.
         # A keys-only restore can leave this host's old rendered wg0.conf.
         # Never regenerate a key or return it to the API caller.
         private = self.path('/etc/wireguard/server.priv')

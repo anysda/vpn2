@@ -126,7 +126,7 @@ CADDYFILE = '''{
     # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
     # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
     # Порт занят -> «bind: address already in use», и QUIC-ответы не доходят
-    # НИ ДО ОДНОГО клиента туннеля (VPN2-22). Панели h3 не нужен.
+    # НИ ДО ОДНОГО клиента туннеля. Панели h3 не нужен.
     servers {
         protocols h1 h2
     }
@@ -134,14 +134,14 @@ CADDYFILE = '''{
 # Пути бота — только для самой ноды: бот ходит на 127.0.0.1:51821 мимо
 # Caddy. Caddy сам подключается к
 # панели с 127.0.0.1, поэтому проверка loopback в панели отсюда бесполезна:
-# закрываем здесь (VPN2-51). Остальной /api/ops (nodes, adguard) зовёт
+# закрываем здесь. Остальной /api/ops (nodes, adguard) зовёт
 # браузер админа со страницы мониторинга — его не трогаем.
 (internal_only) {
     @internal path /api/bot /api/bot/* /api/ops/bot-snapshot
     respond @internal 404
 }
 # X-Forwarded-For панели ставит только Caddy, перезаписывая присланный
-# клиентом: по нему считается лимит попыток входа (VPN2-63). По умолчанию
+# клиентом: по нему считается лимит попыток входа. По умолчанию
 # Caddy и так перезаписывает, но с trusted_proxies начал бы дописывать;
 # его предупреждение «Unnecessary header_up» при запуске ожидаемо.
 (to_panel) {
@@ -260,8 +260,6 @@ def caddy(regated=False):
     from vpn2 import firewall
     firewall.ufw_reconcile('caddy HTTP + ACME challenge', ['80/tcp'], ['caddy HTTP панель'])
     firewall.ufw_reconcile('caddy HTTPS панель', ['443/tcp'])
-    # Веб-интерфейс AdGuard наружу не открыт; порт 3001 прошлых установок закрываем.
-    _quiet('ufw', 'delete', 'allow', '3001/tcp')
     if _quiet('caddy', 'validate', '--config', CADDY[0]):
         raise StageError('конфиг caddy невалиден')
     if regated:

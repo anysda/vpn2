@@ -37,7 +37,6 @@ class E2ePathsTests(unittest.TestCase):
                 (['infra/tests/speedtest.py'], 'true'),
                 (['infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py'], 'true'),
                 (['infra/tests/test_speedtest.py'], 'true'),
-                (['infra/tests/test_deploy.py'], 'true'),
                 (['infra/tests/test_panel_proxy.py'], 'true'),
                 (['infra/ansible/roles/router/templates/config-base.json.j2'], 'true'),
                 (['infra/tests/router_support.py'], 'true'),

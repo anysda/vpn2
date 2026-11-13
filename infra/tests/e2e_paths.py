@@ -18,7 +18,6 @@ DEPENDENCIES = {
     'infra/vpn2/src/vpn2/containers/panel.py',
     'infra/tests/speedtest.py',
     'infra/tests/test_speedtest.py',
-    'infra/tests/test_deploy.py',
     'infra/tests/test_panel_proxy.py',
     'infra/ansible/inventory.py',
     'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py',

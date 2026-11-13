@@ -2,7 +2,7 @@
 
 Источники собираются без правки самих источников:
   example - config.example.yaml из корня репы;
-  tests   - строковые константы infra/tests/*.py, где с нулевого отступа
+  tests   - строковые константы infra/tests/*.py и infra/vpn2/tests/*.py, где с нулевого отступа
             начинается строка entry:, exits:, admin: или panel:;
   wizard  - config.yaml, который пишет мастер setup.sh на ответы эталона
             fixtures/setup/minimal.
@@ -36,12 +36,12 @@ def example_samples():
 
 def tests_samples():
     found = {}
-    for path in sorted((ROOT / 'infra/tests').glob('*.py')):
+    for path in sorted([*(ROOT / 'infra/tests').glob('*.py'), *(ROOT / 'infra/vpn2/tests').glob('*.py')]):
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             text = _constant_text(node)
             if text is not None and TOP_KEY.search(text):
-                found[f'tests:{path.name}:{node.lineno}'] = text
+                found[f'tests:{path.relative_to(ROOT)}:{node.lineno}'] = text
     return found
 
 

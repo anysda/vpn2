@@ -37,15 +37,13 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 CHUNK = 4
-HOST_STATE = re.compile(r'test_wg_conf_wg_oracle|/run/netns')
+HOST_STATE = re.compile(r'/run/netns')
 # Seconds of a partition on GitHub, the slower variant of infra and telegram (refresh from the
 # «===== name: ... seconds=» lines of a green run): queue order and --shard split only. Unlisted ones go
 # after, larger first; a new slow module goes there or ends up in the run's tail.
-# test_deploy_lock_orphan_session is left out: in the first wave its 15 s step overruns and fails the run
 WEIGHT = json.loads((HERE / 'partition-weights.json').read_text())
 # One test of these classes takes most of a CHUNK and holds the run's tail alone
-SINGLE = ('test_verify.VerifyTest', 'test_deploy_verify.DeployVerifyTests', 'test_delivery.DeliveryProcessTests',
-          'test_pki.PkiTests')
+SINGLE = ('test_delivery.DeliveryProcessTests',)
 # Elapsed time against a limit with a margin of 0.1-2 s: parallel load is enough to cross it
 # A divisible class this heavy holds the part's finish alone: one test per part (169 s of three
 # swap tests in one process against 20-60 s each, run 42509594204)
@@ -53,8 +51,7 @@ LONG = 40
 # Priority of chains off the critical path: on a 4-CPU runner the 192 s verify test ran 129 s with less beside it
 NICE = 10
 CRITICAL = 0.6
-QUIET = ('test_verify_exit_ssh_limit_edge', 'test_verify_exit_ssh_remote_code', 'test_ssh_limit_remote_code',
-         'test_release', 'test_probe_reads', 'test_udp_cut_switch_time', 'test_watchdog_package')
+QUIET = ('test_release', 'test_probe_reads')
 
 
 def flatten(suite):

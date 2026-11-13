@@ -5,7 +5,7 @@ import tempfile
 import time
 import unittest
 
-from test_deploy import bash, source
+from infra_support import bash, source
 
 
 class AptListsTests(unittest.TestCase):

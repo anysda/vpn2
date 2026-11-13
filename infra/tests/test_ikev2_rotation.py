@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_deploy import ROOT, bash
+from infra_support import ROOT, bash
 
 
 class Ikev2RotationTests(unittest.TestCase):

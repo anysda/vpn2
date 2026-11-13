@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT
+from infra_support import ROOT
 import vpn_roles
 
 OPENVPN = '/usr/sbin/openvpn'

@@ -12,7 +12,7 @@ import unittest
 import urllib.parse
 import urllib.request
 
-from test_deploy import ROOT
+from infra_support import ROOT
 
 
 class PanelCallFixture(unittest.TestCase):

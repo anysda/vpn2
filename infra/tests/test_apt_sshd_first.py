@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_deploy import bash, source
+from infra_support import bash, source
 
 
 class AptSshdFirstTests(unittest.TestCase):

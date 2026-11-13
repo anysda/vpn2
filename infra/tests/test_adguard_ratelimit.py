@@ -21,7 +21,7 @@ import unittest
 import yaml
 
 from adguard_support import stage
-from test_deploy import ROOT, source
+from infra_support import ROOT, source
 from vpn2.adguard import dns
 
 

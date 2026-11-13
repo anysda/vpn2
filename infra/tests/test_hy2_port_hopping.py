@@ -16,7 +16,7 @@ import unittest
 
 
 from router_support import ROOT, generate, run_generator
-from test_deploy import write_envs
+from infra_support import write_envs
 
 
 CHANNELS = ('direct', 'warp', 'mgmt')

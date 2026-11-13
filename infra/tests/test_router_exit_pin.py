@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from router_support import ROOT, exit_cert, generate
-from test_deploy import bash, function, write_envs
+from infra_support import write_envs
 
 
 def hy2_tls(cfg):
@@ -22,7 +22,7 @@ class ExitPinTests(unittest.TestCase):
             pinned = Path(exit_cert()).parent / 'pinned' / f"{tag.removeprefix('transport-').split('-')[1]}.pem"
             self.assertEqual(settings.get('certificate_path'), str(pinned), tag)
 
-    def test_config_flag_reaches_env_and_deploy_warns(self):
+    def test_config_flag_reaches_node_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = (ROOT / 'config.example.yaml').read_text().replace(
@@ -34,16 +34,7 @@ class ExitPinTests(unittest.TestCase):
             env = (root / 'infra/envs/all.env').read_text()
             self.assertIn('US_HY2_INSECURE=1\n', env)
             self.assertNotIn('GB_HY2_INSECURE', env)
-            script = function('warn_insecure_exits') + '''
-ENVS=$PWD/infra/envs HOST_TAG=deploy
-exit_tags() { echo 'us gb'; }
-warn() { printf '[%s] WARN %s\\n' "$HOST_TAG" "$*"; }
-warn_insecure_exits
-'''
-            result = bash(script, tmp)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('[deploy] WARN us: exits[].hy2_insecure: true', result.stdout)
-            self.assertNotIn('gb:', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

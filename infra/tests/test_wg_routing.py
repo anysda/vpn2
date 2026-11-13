@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 
-from test_deploy import bash
+from infra_support import bash
 from vpn_roles import routing as role_routing
 
 

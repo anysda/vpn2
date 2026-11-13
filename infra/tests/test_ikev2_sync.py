@@ -2,7 +2,7 @@
 import types
 import unittest
 
-from test_deploy import ROOT
+from infra_support import ROOT
 
 SAS = '''anysda-ikev2: #7, ESTABLISHED, IKEv2, cbd5867eca6763b0_i 0cf6cdcbdda975d6_r*
   remote '192.0.2.10' @ 198.51.100.7[1445] EAP: 'phone' [10.68.68.1]

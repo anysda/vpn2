@@ -6,7 +6,7 @@ import unittest
 
 from adguard_support import Hub
 from router_support import exit_cert, render
-from test_deploy import ROOT, bash, source
+from infra_support import ROOT, bash, source
 from test_ufw_reconcile import FAKE_UFW
 import vpn_roles
 

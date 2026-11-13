@@ -11,7 +11,7 @@ import unittest
 
 import yaml
 
-from test_deploy import ROOT, source
+from infra_support import ROOT, source
 import vpn_roles
 
 

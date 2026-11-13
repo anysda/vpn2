@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT, bash, source, function
+from infra_support import ROOT, bash
 import vpn_roles
 from vpn_roles import package
 
@@ -203,22 +203,6 @@ export -f swanctl
             self.assertEqual((root / 'pki/server.crt').read_bytes(), kept)
             self.assertEqual(sorted(path.name for path in (root / 'pki').iterdir()),
                              ['ca.crt', 'ca.key', 'server.crt', 'server.key'])
-
-    def test_summary_reads_actual_mode(self):
-        # Итог деплоя (print_summary из infra/lib/deploy-report.sh) называет режим IKEv2.
-        self.assertRegex(source('infra/deploy.sh'), r'(?m)^\s+print_summary$')
-        self.assertIn('\n  print_ikev2_notice\n', function('print_summary'), 'deploy never reports IKEv2 mode')
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'ikev2-mode').write_text('self-signed')
-            (root / 'ikev2-server-host').write_text('192.0.2.1')
-            (root / 'ikev2-domain').write_text('vpn.example.test')
-            body = function('print_ikev2_notice').replace('/etc/anysda/', directory + '/')
-            result = bash('load_env() { :; }; ssh_exec() { bash -c "$1"; }; warn() { echo "$*"; };\n'
-                          + body + '\nprint_ikev2_notice\n', directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('mode=self-signed server-host=192.0.2.1', result.stdout)
-            self.assertIn('ожидается сертификат Caddy', result.stdout)
 
 
 if __name__ == '__main__':

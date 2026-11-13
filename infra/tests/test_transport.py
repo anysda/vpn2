@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-from test_deploy import write_envs
+from infra_support import write_envs
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))

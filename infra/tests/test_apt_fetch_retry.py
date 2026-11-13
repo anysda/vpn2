@@ -8,7 +8,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from test_deploy import source
+from infra_support import source
 
 TOOLS = ('apt-get', 'dpkg-deb', 'gpg')
 # Proxy's «Remote or cache error» hits every file of the suite, the Release fallback too

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_deploy import bash
+from infra_support import bash
 import vpn_roles
 
 

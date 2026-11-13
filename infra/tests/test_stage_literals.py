@@ -13,7 +13,7 @@ import yaml
 from adguard_support import Hub
 from containers_support import compose
 from vpn2 import containers
-from test_deploy import write_envs
+from infra_support import write_envs
 from zapret_support import VPN2_MOCK, render
 
 

@@ -18,11 +18,29 @@ def inventory(directory, *args, env=None):
                           capture_output=True, text=True, env=environ, timeout=30)
 
 
-def node_env(directory, text=CONFIG, node='ru', env=None):
-    """(результат --prepare, {имя: значение} узла или None при отказе) для config.yaml `text`."""
+def parse(text):
+    return dict(pair.split('=', 1) for pair in shlex.split(text))
+
+
+def node_envs(directory, text=CONFIG, env=None):
+    """(результат --prepare, {узел: вывод --env}) для ru и каждого экзита; {} при отказе."""
     (Path(directory) / 'config.yaml').write_text(text)
     prepared = inventory(directory, '--prepare', env=env)
     if prepared.returncode:
-        return prepared, None
-    out = inventory(directory, '--env', node, env=env).stdout
-    return prepared, dict(pair.split('=', 1) for pair in shlex.split(out))
+        return prepared, {}
+    ru = inventory(directory, '--env', 'ru', env=env).stdout
+    tags = parse(ru).get('EXIT_TAGS', '').split()
+    return prepared, {'ru': ru, **{tag: inventory(directory, '--env', tag, env=env).stdout for tag in tags}}
+
+
+def node_env(directory, text=CONFIG, node='ru', env=None):
+    """(результат --prepare, {имя: значение} узла или None при отказе) для config.yaml `text`."""
+    prepared, texts = node_envs(directory, text, env)
+    return prepared, parse(texts[node]) if texts else None
+
+
+def sourced(directory, text, script):
+    """Вывод --env узла через `source` в bash: значения доходят до shell целыми и без исполнения."""
+    (Path(directory) / 'node.env').write_text(text)
+    return subprocess.run(['bash', '-euc', f'set -a; source node.env; {script}'], cwd=directory,
+                          capture_output=True, text=True, timeout=5)

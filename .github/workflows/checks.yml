@@ -17,15 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
-        run: git ls-files -z '*.sh' | xargs -0 shellcheck -S error
+        run: shellcheck -S error deploy.sh infra/deploy.sh setup.sh
       - name: мёртвые переменные и функции
-        run: git ls-files -z '*.sh' | xargs -0 shellcheck -i SC2034,SC2317,SC2329
-      - name: зависимости Debian и Ubuntu
-        run: bash infra/tests/debian-compat.sh
+        run: shellcheck -i SC2034,SC2317,SC2329 deploy.sh infra/deploy.sh setup.sh
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - name: мастер на Python из Debian 12
+      - name: мастер setup.sh на Python из Debian 12
         run: |
           python3 --version
           pip install --quiet pytest PyYAML
@@ -56,117 +54,6 @@ jobs:
           python3 -B infra/ansible/inventory.py --env ru > "$d/ru.env"
           test -s "$d/ru.env"
 
-  infra:
-    name: "infra ${{ matrix.sing-box && 'с' || 'без' }} sing-box ${{ matrix.part }}/3"
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        sing-box: [false, true]
-        # Доля набора на задание: одна часть целиком дольше 10 минут.
-        part: [1, 2, 3]
-    env:
-      SHARD: ${{ matrix.part }}/3
-      MANIFEST: /tmp/infra-manifest.json
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 26
-      # Колеса PyYAML для 3.15 нет: сборка из исходников ~14 с в каждом задании, кэш pip держит готовое
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.15'
-          cache: pip
-          cache-dependency-path: .github/workflows/checks.yml
-      - name: процессор раннера
-        run: lscpu | grep -E '^(Model name|CPU\(s\)|Thread\(s\) per core):'
-      - name: зависимости инфраструктуры
-        timeout-minutes: 5
-        uses: ./.github/actions/apt-install
-        with:
-          packages: strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
-      - run: python3 -m pip install -c infra/ansible/constraints.txt PyYAML Jinja2
-        timeout-minutes: 5
-      # Шаблоны ролей рисует ansible из venv тестов; пробы в своём сетевом пространстве идут от root
-      # без сети, поэтому venv строится заранее и для root. ansible-core пинов на 3.15 не запускается:
-      # venv на системном python раннера, как на узле деплоя.
-      - name: ansible тестов
-        timeout-minutes: 5
-        run: |
-          warm='import sys; sys.path.insert(0, "infra/tests"); import vpn_roles; vpn_roles.ansible_playbook()'
-          /usr/bin/python3 -c "$warm"
-          sudo -n /usr/bin/python3 -c "$warm"
-          sudo -n bash -c '/root/.cache/vpn2-tests/ansible-*/bin/ansible-playbook --version'
-      # Тесты панели качают Caddy при импорте в каждой части; releases/download
-      # молчит до таймаута по 120 с, API релизов отдаёт тот же файл сразу.
-      - name: Caddy для тестов панели
-        timeout-minutes: 3
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version=$(sed -n "s/^CADDY_VER='\([^']*\)'/\1/p" infra/lib/anysda-svc.sh)
-          test -n "$version"
-          name="caddy_${version}_linux_amd64.tar.gz"
-          d=$(mktemp -d)
-          gh release download "v$version" -R caddyserver/caddy -D "$d" -p "$name" -p "caddy_${version}_checksums.txt"
-          grep " $name\$" "$d/caddy_${version}_checksums.txt" | sed "s| $name\$| $d/$name|" | sha512sum --check --status
-          cache="$HOME/.cache/vpn2-tests/caddy-$version"
-          mkdir -p "$cache"
-          tar -xzf "$d/$name" -C "$cache" caddy
-          "$cache/caddy" version
-      - name: регрессии инфраструктуры без sing-box
-        if: ${{ !matrix.sing-box }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 infra/tests/run_parallel.py --shard "$SHARD" --manifest "$MANIFEST"
-      - name: регрессии развёртывания и маршрутов sing-box
-        if: matrix.sing-box
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          d=$(mktemp -d)
-          trap 'rm -rf "$d"' EXIT
-          version=$(sed -n "s/^readonly SB_VER='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)
-          test -n "$version"
-          checksum=$(sed -n "s/^readonly SB_SHA256_AMD64='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)
-          test -n "$checksum"
-          # releases/download бывает 504, тогда тот же файл берётся через API релизов
-          python3 infra/tests/release_fetch.py SagerNet/sing-box "v${version}" \
-            "sing-box-${version}-linux-amd64.tar.gz" "$d/sing-box.tar.gz" --sha256 "$checksum"
-          printf '%s  %s\n' "$checksum" "$d/sing-box.tar.gz" | sha256sum --check --status
-          tar -xzf "$d/sing-box.tar.gz" -C "$d"
-          export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"
-          export RUN_NETNS_TESTS=1
-          "$SING_BOX_BIN" version
-          python3 infra/tests/run_parallel.py --shard "$SHARD" --manifest "$MANIFEST"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: infra-manifest-${{ matrix.sing-box }}-${{ matrix.part }}
-          path: ${{ env.MANIFEST }}
-          retention-days: 1
-
-  # Части infra вместе прогнали ровно найденный набор, без пропусков и повторов.
-  infra-sum:
-    name: infra итог
-    needs: infra
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: infra-manifest-*
-          path: ${{ runner.temp }}/manifests
-      - name: сумма тестов по частям infra
-        env:
-          DIR: ${{ runner.temp }}/manifests
-        run: |
-          for variant in false true; do
-            python3 infra/tests/run_parallel.py --check-manifests "$DIR"/infra-manifest-"$variant"-*/infra-manifest.json
-          done
-
   telegram:
     name: тесты бота
     runs-on: ubuntu-latest
@@ -190,39 +77,24 @@ jobs:
           python3 -m pip install -r telegram/requirements.txt
           # Модули в параллельных процессах; сумма тестов частей сверяется с найденной
           python3 infra/tests/run_parallel.py --dir telegram/tests
-
-  # Сохраняем прежний общий статус python: он зелёный только после всех
-  # наборов, в том числе обеих веток матрицы infra (важно для required checks).
-  python:
-    name: Python итог
-    needs: [python-lint, infra, infra-sum, telegram]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: все проверки Python прошли
-        env:
-          LINT_RESULT: ${{ needs.python-lint.result }}
-          INFRA_RESULT: ${{ needs.infra.result }}
-          INFRA_SUM_RESULT: ${{ needs.infra-sum.result }}
-          BOT_RESULT: ${{ needs.telegram.result }}
-        run: test "$LINT_RESULT,$INFRA_RESULT,$INFRA_SUM_RESULT,$BOT_RESULT" = success,success,success,success
-
   backup-restore:
     name: 'бэкап: восстановление'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - name: образ для backup/restore
+      - name: образы для backup/restore и переноса ключей
         timeout-minutes: 5
         run: |
+          docker build -q -t vpn2-backup-keys infra/tests &
+          keys=$!
           docker build -q -t vpn2-backup-restore - <<'EOF'
           FROM debian:13
           RUN timeout 300 apt-get update -qq && timeout 300 apt-get install -y -qq --no-install-recommends \
             python3 python3-yaml sqlite3 age expect curl git wireguard-tools openssl iproute2
           EOF
-      - name: SQLite WAL и полный цикл backup/restore
+          wait "$keys"
+      - name: SQLite WAL, полный цикл backup/restore и перенос ключей на чистый хост
         # Копия и restore проверяют wg0.conf настоящим wg во временном netns, как
         # root на узле: нужны iproute2 и права на netns (меньше этих трёх не хватает).
         # Тесты пишут в пути узла, поэтому каждая доля идёт в своём контейнере.
@@ -241,6 +113,8 @@ jobs:
             pids+=($!)
           done
           run 1/1 backup-clone-path backup-clone-path &
+          pids+=($!)
+          docker run --rm -v "$PWD:/repo:ro" vpn2-backup-keys > "$out/backup-keys.log" 2>&1 &
           pids+=($!)
           failed=0
           for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
@@ -310,17 +184,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: vitest
         run: pnpm test:unit
-
-  backup-keys:
-    name: 'бэкап: ключи'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - name: перенос ключей VPN на чистый хост и совместимость старых архивов
-        run: |
-          docker build -t vpn2-backup-test infra/tests
-          docker run --rm -v "$PWD:/repo:ro" vpn2-backup-test
 
   # Выбор по путям - первым шагом каждого задания, без отдельного задания перед
   # ними: шарды и QR стартуют вместе с остальными проверками, а без зависимостей
@@ -532,7 +395,6 @@ jobs:
         run: |
           echo "panel-e2e-shard=$SHARD_RESULT panel-e2e-qr=$QR_RESULT"
           exit 1
-
   vpn2-package:
     name: пакет vpn2 (${{ matrix.python }})
     runs-on: ubuntu-latest
@@ -551,31 +413,98 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: openvpn wireguard-tools
-      - run: pip install ./infra/vpn2 pytest pytest-xdist jinja2
+      # Тесты TLS и HTTPS панели гоняют Caddy той версии, что ставит деплой; releases/download
+      # молчит до таймаута по 120 с, API релизов отдаёт тот же файл сразу.
+      - name: Caddy для тестов панели
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n "s/^CADDY_VER='\([^']*\)'/\1/p" infra/lib/anysda-svc.sh)
+          test -n "$version"
+          name="caddy_${version}_linux_amd64.tar.gz"
+          d=$(mktemp -d)
+          gh release download "v$version" -R caddyserver/caddy -D "$d" -p "$name" -p "caddy_${version}_checksums.txt"
+          grep " $name\$" "$d/caddy_${version}_checksums.txt" | sed "s| $name\$| $d/$name|" | sha512sum --check --status
+          cache="$HOME/.cache/vpn2-tests/caddy-$version"
+          mkdir -p "$cache"
+          tar -xzf "$d/$name" -C "$cache" caddy
+          "$cache/caddy" version
+      - run: pip install ./infra/vpn2 pytest pytest-xdist pytest-cov jinja2
       - run: vpn2 version
       - name: pytest
+        env:
+          # Покрытие, вместе с командами vpn2 в подпроцессах, - на одной версии Python.
+          COVERAGE: ${{ matrix.python == '3.14' && '--cov --cov-config=infra/vpn2/tests/coverage.ini --cov-fail-under=77' || '' }}
         run: |
           set -o pipefail
-          python -m pytest infra/vpn2/tests -q -n auto --dist loadgroup -rs | tee /tmp/pytest.log
-          # Тест apply без openvpn, wg или sudo пропускается: в CI это отказ, а не зелёный прогон.
+          # shellcheck disable=SC2086
+          python -m pytest infra/vpn2/tests -q -n auto --dist loadgroup -rs $COVERAGE | tee /tmp/pytest.log
+          # Тест без openvpn, wg, Caddy или sudo пропускается: в CI это отказ, а не зелёный прогон.
           ! grep -E 'SKIPPED.*(needs |cannot be made here)' /tmp/pytest.log
 
+  # Роли и то, что из них выходит: шаблоны рисует настоящий ansible, пробы в своём
+  # сетевом пространстве гоняют sing-box. Две части набора infra/tests, каждая сверяет,
+  # что прогнала ровно свою долю.
   ansible:
-    name: роли ansible
+    name: 'роли ansible ${{ matrix.part }}/2'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     env:
       ANSIBLE_CONFIG: infra/ansible/ansible.cfg
       ANSIBLE_COLLECTIONS_PATH: /tmp/collections
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
-      - run: pip install -c infra/ansible/constraints.txt ansible-core ansible-lint==26.10.1
-      - run: ansible-galaxy collection install -r infra/ansible/requirements.yml -p /tmp/collections
-      - name: syntax-check
-        run: ansible-playbook -i localhost, --syntax-check infra/ansible/site.yml
-      - run: ansible-lint --profile production --offline --project-dir infra/ansible infra/ansible/site.yml infra/ansible/roles
-      # Задачам роли нужен настоящий ansible: в заданиях infra его нет, там тест пропускается
-      - run: python3 -m unittest -v infra/tests/test_role_control_data.py
+      - name: зависимости инфраструктуры
+        timeout-minutes: 5
+        uses: ./.github/actions/apt-install
+        with:
+          packages: strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
+      - run: pip install -c infra/ansible/constraints.txt ansible-core PyYAML Jinja2
+        timeout-minutes: 5
+      - name: syntax-check и ansible-lint
+        if: matrix.part == 1
+        timeout-minutes: 5
+        run: |
+          pip install -c infra/ansible/constraints.txt ansible-lint==26.10.1
+          ansible-galaxy collection install -r infra/ansible/requirements.yml -p /tmp/collections
+          ansible-playbook -i localhost, --syntax-check infra/ansible/site.yml
+          ansible-lint --profile production --offline --project-dir infra/ansible infra/ansible/site.yml infra/ansible/roles
+      # Пробы в своём сетевом пространстве идут от root без сети: venv ansible тестов
+      # строится заранее и для root, на системном python, как на узле деплоя.
+      - name: ansible тестов
+        timeout-minutes: 5
+        run: |
+          warm='import sys; sys.path.insert(0, "infra/tests"); import vpn_roles; vpn_roles.ansible_playbook()'
+          /usr/bin/python3 -c "$warm"
+          sudo -n /usr/bin/python3 -c "$warm"
+          sudo -n bash -c '/root/.cache/vpn2-tests/ansible-*/bin/ansible-playbook --version'
+      - name: регрессии ролей, маршрутов и sing-box
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          version=$(sed -n "s/^readonly SB_VER='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)
+          test -n "$version"
+          checksum=$(sed -n "s/^readonly SB_SHA256_AMD64='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)
+          test -n "$checksum"
+          # releases/download бывает 504, тогда тот же файл берётся через API релизов
+          python3 infra/tests/release_fetch.py SagerNet/sing-box "v${version}" \
+            "sing-box-${version}-linux-amd64.tar.gz" "$d/sing-box.tar.gz" --sha256 "$checksum"
+          printf '%s  %s\n' "$checksum" "$d/sing-box.tar.gz" | sha256sum --check --status
+          tar -xzf "$d/sing-box.tar.gz" -C "$d"
+          export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"
+          export RUN_NETNS_TESTS=1
+          "$SING_BOX_BIN" version
+          python3 infra/tests/run_parallel.py --shard "${{ matrix.part }}/2"

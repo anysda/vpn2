@@ -19,16 +19,15 @@ WORKFLOW = ROOT / '.github/workflows/checks.yml'
 USUAL_MINUTES = {
     'shell': 1,
     'python-lint': 1,
-    'infra': 26,
     'telegram': 4,
-    'python': 1,
     'backup-restore': 8,
     'panel': 1,
-    'backup-keys': 1,
-    'panel-e2e-paths': 1,
+    'panel-unit': 1,
     'panel-e2e-shard': 9,
     'panel-e2e-qr': 4,
     'panel-e2e': 1,
+    'vpn2-package': 4,
+    'ansible': 5,
 }
 JOB_CEILING = 60
 APT_STEP_CEILING = 10

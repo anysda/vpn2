@@ -120,12 +120,17 @@ jobs:
           docker create --name smoke --network none smoke/emergency >/dev/null
           docker cp smoke:/opt/vpn2-emergency/. "$work/"
           python3 -c 'import json, sys; json.load(open(sys.argv[1]))["revision"]' "$work/image.json"
+          # Панель поднимает сам агент, как на экзите; подменены только порт и пути (без root).
           PYTHONPATH=infra/vpn2/src python3 -B -c '
-          import sys
-          from vpn2.emergency import web
-          web.make_server(sys.argv[1], exit_id="smoke", public_ip="127.0.0.1",
-                          address=("127.0.0.1", 31822), static_dir=sys.argv[2],
-                          cert_dir=sys.argv[1]).serve_forever()
+          import functools, sys, threading
+          from vpn2.emergency import agent
+          state, static = sys.argv[1:]
+          agent.web.make_server = functools.partial(agent.web.make_server, address=("127.0.0.1", 31822),
+                                                    static_dir=static, cert_dir=state)
+          nodes = {agent.ENTRY: {"host": "127.0.0.2", "port": 1}, "smoke": {"host": "127.0.0.1", "port": 1}}
+          config = {"installation_id": "smoke", "key": "00" * 32, "node": "smoke", "nodes": nodes}
+          agent.Exit(config, state).panel()
+          threading.Event().wait()
           ' "$work/state" "$work/static" &
           server=$!
           for _ in $(seq 1 30); do

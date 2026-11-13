@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -74,6 +75,18 @@ curl() { return 0; }
         command = ast.literal_eval(start.args[-1])
         self.assertIn('node scripts/migrate.mjs;', command)
         self.assertLess(command.index('node scripts/migrate.mjs;'), command.index('exec node'))
+
+    def test_emergency_smoke_serves_carrier_through_agent(self):
+        step = next(step for step in yaml.safe_load((ROOT / '.github/workflows/images.yml').read_text())
+                    ['jobs']['build']['steps'] if step.get('name') == 'smoke emergency')
+        with tempfile.TemporaryDirectory() as carrier:
+            (Path(carrier) / 'static').mkdir()
+            (Path(carrier) / 'static/instructions.html').write_text('Временное подключение Hysteria2')
+            (Path(carrier) / 'image.json').write_text('{"revision": "x"}')
+            fake = f'docker() {{ if [[ $1 == cp ]]; then cp -r {carrier}/. "$3"; fi; }}\n'
+            result = subprocess.run(['bash', '-e', '-c', fake + step['run']], cwd=ROOT,
+                                    capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
 
 
 if __name__ == '__main__':

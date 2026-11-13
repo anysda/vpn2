@@ -99,3 +99,11 @@ def test_failed_old_layout_or_complete_never_announces_success(tree):  # noqa: F
                           env=environ(tree, FAKE_RULES=json.dumps([['--tags complete', 2, 0]])))
     assert done.returncode == 1 and 'запись о выпуске не закрыта' in done.stderr
     assert 'деплой завершён' not in done.stdout
+
+
+def test_insecure_exit_is_warned(monkeypatch, capsys):
+    deploy = run.Deploy.__new__(run.Deploy)
+    deploy.nodes = {'ru': {'EXIT_TAGS': 'us de-2', 'DE_2_HY2_INSECURE': '1', 'US_HY2_INSECURE': ''}}
+    deploy.warn_insecure_exits()
+    said = capsys.readouterr().err
+    assert '[deploy] de-2: exits[].hy2_insecure: true — сертификат экзита не проверяется' in said and 'us:' not in said

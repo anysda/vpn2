@@ -132,3 +132,16 @@ def test_wheel_path_is_the_built_wheel(box):
     assert deploy.wheel_path() is None
     deploy.ensure_venv()
     assert deploy.wheel_path() == Path(box / 'opt/wheels/vpn2-0.1.0-py3-none-any.whl')
+
+
+def test_missing_command_is_installed_by_package_name(monkeypatch, capsys):
+    """На entry проверяются команды, apt получает имена пакетов: ssh - это openssh-client."""
+    asked = []
+    monkeypatch.setattr(deploy.shutil, 'which', lambda name: None if name in ('ssh', 'sshpass') else f'/usr/bin/{name}')
+    monkeypatch.setattr(deploy, 'apt_have', lambda *_packages: True)
+    monkeypatch.setattr(deploy, 'svc', lambda _script, *packages, **_options: asked.extend(packages) or 0)
+    monkeypatch.setattr(deploy, 'ensure_venv', lambda: None)
+    monkeypatch.setattr(deploy, 'wheel_path', lambda: 'vpn2.whl')
+    monkeypatch.setattr(deploy.Path, 'is_file', lambda path: str(path) == '/etc/debian_version' or Path.exists(path))
+    deploy.install_prereqs()
+    assert asked == ['openssh-client', 'sshpass'] and 'ставлю недостающее: ssh sshpass' in capsys.readouterr().out

@@ -33,7 +33,7 @@ class Deploy:
     def __init__(self, development, manifest):
         self.development, self.manifest = development, manifest
         self.tmp = Path(tempfile.mkdtemp())
-        self.stages = stages.load()
+        self.stages = stages.load(SITE)
         self.stage_log, self.verify_warnings, self.deploy_warnings, self.skipped = [], [], [], []
         self.mutating = self.opened = self.guard_warned = False
         self.children, self.beat, self.nodes = set(), None, {}

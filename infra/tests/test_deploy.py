@@ -1,4 +1,4 @@
-"""Договор ./deploy.sh с оператором до изменений на узлах и общие помощники тестов деплоя.
+"""Общие помощники тестов деплоя (договор ./deploy.sh - infra/vpn2/tests/test_deploy_cli.py).
 
 VPN2_TEST_ROOT - другая ревизия под теми же проверками.
 """
@@ -89,52 +89,3 @@ def deploy(directory, *args, config=CONFIG, without=()):
         env.pop(name, None)
     return subprocess.run(['bash', str(root / 'deploy.sh'), *args], input='', capture_output=True, text=True,
                           timeout=60, env=env)
-
-
-class DeployContractTests(unittest.TestCase):
-    def test_help_needs_no_config(self):
-        for flag in ('--help', '-h'):
-            for config in (None, 'invalid config: ['):
-                with self.subTest(flag=flag, config=config), tempfile.TemporaryDirectory() as directory:
-                    result = deploy(directory, flag, config=config)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn('./deploy.sh <stage> <group>', result.stdout)
-
-    def test_missing_or_invalid_config_is_refused(self):
-        with tempfile.TemporaryDirectory() as directory:
-            result = deploy(directory, config=None)
-            self.assertEqual(result.returncode, 1)
-            self.assertIn('config.yaml не найден', result.stdout)
-            self.assertIn('./setup.sh', result.stdout)
-        with tempfile.TemporaryDirectory() as directory:
-            result = deploy(directory, '30-frontend', 'ru', config="entry:\n  password: 'CANARY\n")
-            self.assertEqual(result.returncode, 1)
-            self.assertIn('ERROR: config.yaml:', result.stderr)
-            self.assertNotIn('CANARY', result.stdout + result.stderr)
-
-    def test_second_deploy_on_the_machine_is_refused(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with open(Path(directory) / 'deploy.lock', 'w') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                result = deploy(directory, '30-frontend', 'ru')
-            self.assertEqual(result.returncode, 1)
-            self.assertIn('deploy уже выполняется на этой машине', result.stderr)
-
-    def test_wrong_arguments_are_refused_before_any_change(self):
-        cases = ((('30-frontend',), 'использование: ./deploy.sh <stage> <group>'),
-                 (('30-frontnd', 'ru'), 'нет такой стадии: 30-frontnd'),
-                 (('30-frontend', 'nosuch'), 'unknown host group: nosuch'),
-                 (('30-frontend', 'us'), '30-frontend - стадия entry, на экзитах её нет'),
-                 (('30-frontend',), 'использование'))
-        for index, (args, text) in enumerate(cases):
-            without = ('HOME',) if index == len(cases) - 1 else ()
-            with self.subTest(args=args, without=without), tempfile.TemporaryDirectory() as directory:
-                result = deploy(directory, *args, without=without)
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn(text, result.stderr)
-                self.assertNotIn('unbound variable', result.stderr)
-                self.assertNotIn('проверяю локальные зависимости', result.stdout + result.stderr)
-
-
-if __name__ == '__main__':
-    unittest.main()

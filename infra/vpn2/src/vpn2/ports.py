@@ -2,8 +2,7 @@
 
 Молчит канал - UDP-пробник по высоким портам: путь есть - пробуется другой порт hy2
 (config.yaml, перекатка 10-foreign и 20-ru-router), пути нет вовсе - экзит уходит в
-excluded-exits.txt. Стадии перекатывает deploy.sh: команда пишет в fd 3 `rerun <журнал>
-<стадия:группа>...` и ждёт код перекатки строкой на stdin; в конце - `summary <строка сводки>`.
+excluded-exits.txt. Стадии перекатывает деплой: check получает от него run(журнал, [(стадия, группа)...]).
 """
 import os
 import socket
@@ -98,11 +97,10 @@ def probe_udp(tag, host, port):
     return 0 if answer == f'PONG-PING-{port}' else 1
 
 
-def rerun(log, *stages):
-    """Перекатка стадий руками deploy.sh с выводом в журнал log; False - перекатка упала."""
+def rerun(run, log, *stages):
+    """Перекатка стадий деплоем с выводом в журнал log; False - перекатка упала."""
     path = config.STATE_DIR / log
-    os.write(3, f'rerun {path} {" ".join(stages)}\n'.encode())
-    if sys.stdin.readline().strip() == '0':
+    if run(path, [tuple(stage.split(':')) for stage in stages]):
         return True
     tail = path.read_text(errors='replace').splitlines()[-5:] if path.exists() else []
     say(f'{R}    ✗ перекатка упала, полный вывод: {path}{E}\n' + ''.join(f'      {line}\n' for line in tail))
@@ -117,13 +115,13 @@ def exit_port(tag):
     return int(item.get('hy2_direct_port', default)), default, item['host']
 
 
-def rotate(tag, current):
+def rotate(tag, current, run):
     """Другой порт hy2 для экзита, к которому UDP доходит; True - канал ожил."""
     path = os.environ['VPN2_CONFIG']
     for port in [port for port in config.HY2_PORT_CANDIDATES if port != current][:2]:
         say(f'    → пробую hy2 :{port} ')
         config.set_exit_port(path, tag, port)
-        if not rerun(f'rotate-{tag}-{port}.log', f'10-foreign:{tag}', '20-ru-router:ru'):
+        if not rerun(run, f'rotate-{tag}-{port}.log', f'10-foreign:{tag}', '20-ru-router:ru'):
             continue
         delay = clash_delay(tag)
         if delay:
@@ -133,11 +131,11 @@ def rotate(tag, current):
     say(f'  {Y}⚠ hy2 rotation не подобрала рабочий порт для {tag} (UDP-путь есть, но\n'
         f'    hy2-кандидаты режутся). Откатываю порт на дефолт, оставляю как direct-dead.{E}\n')
     config.set_exit_port(path, tag, exit_port(tag)[1])
-    rerun(f'rotate-{tag}-rollback.log', f'10-foreign:{tag}', '20-ru-router:ru')
+    rerun(run, f'rotate-{tag}-rollback.log', f'10-foreign:{tag}', '20-ru-router:ru')
     return False
 
 
-def check_exit(tag):
+def check_exit(tag, run):
     """'ok', 'rotated', 'dead' или 'unknown' (на экзит не вошли)."""
     current, _default, host = exit_port(tag)
     name = f'hy2-{tag}-direct'
@@ -157,13 +155,13 @@ def check_exit(tag):
         say(f'{R}все 5 портов фильтруются → exit МЁРТВ, исключаю{E}\n')
         return 'dead'
     say(f'{G}UDP проходит на :{port}{E} — пробую hy2 rotation\n')
-    return 'rotated' if rotate(tag, current) else 'unknown'
+    return 'rotated' if rotate(tag, current, run) else 'unknown'
 
 
-def check(tags):
-    """Проверка всех экзитов; строки сводки деплоя - в fd 3."""
+def check(tags, run):
+    """Проверка всех экзитов; итог - строки сводки деплоя «стадия\tгруппа\tвремя»."""
     started = time.time()
-    found = {tag: check_exit(tag) for tag in tags}
+    found = {tag: check_exit(tag, run) for tag in tags}
     dead = [tag for tag in tags if found[tag] == 'dead']
     listed = config.STATE_DIR / 'excluded-exits.txt'
     if dead == tags:
@@ -175,25 +173,21 @@ def check(tags):
         listed.chmod(0o644)
         say(f'\n  {Y}⚠ Полностью недостижимые экзиты исключены из деплоя: {" ".join(dead)}{E}\n'
             f'    Записано в {listed}\n')
-        if not rerun('excluded-reroute.log', '20-ru-router:ru'):
+        if not rerun(run, 'excluded-reroute.log', '20-ru-router:ru'):
             fatal('entry не пересобран после исключения экзитов')
     else:
         listed.unlink(missing_ok=True)
     seconds = int(time.time() - started)
     took = f'{seconds // 60}m {seconds % 60}s'.removeprefix('0m ')
     say('\n')
-    if 'rotated' in found.values():
-        os.write(3, f'summary [port-rotate]\tforeign\t{took}\n'.encode())
-    if dead:
-        os.write(3, f'summary [excluded]\t{" ".join(dead)}\t{took}\n'.encode())
+    return ([f'[port-rotate]\tforeign\t{took}'] if 'rotated' in found.values() else []) + \
+        ([f'[excluded]\t{" ".join(dead)}\t{took}'] if dead else [])
 
 
 def main(argv):
-    """vpn2 ports check ЭКЗИТ... | vpn2 ports echo ПОРТ"""
+    """vpn2 ports echo ПОРТ"""
     if argv[:1] == ['echo'] and len(argv) == 2:
         echo(int(argv[1]))
-    elif argv[:1] == ['check'] and len(argv) > 1:
-        check(argv[1:])
     else:
         sys.stderr.write(main.__doc__ + '\n')
         return 2

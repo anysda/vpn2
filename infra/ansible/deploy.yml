@@ -6,10 +6,10 @@
 #   abort      снимок снят, но узлы не менялись: журнал закрывается
 #   complete   запись установленного состава, журнал закрыт
 #   secrets    пароли каналов, сертификаты и ключи экзитов для 20-ru-router
-#   prepare    /tmp/anysda, apt, сторож фаервола; идёт одним запуском со стадией
+#   prepare    /tmp/anysda, apt, сторож фаервола (guard=true); идёт одним запуском со стадией
 #   artifacts  пакет vpn2 и журнал выпуска в /tmp/anysda (откат панели)
 #   beat       пульс сторожу новым ssh-входом; finish - снять сторожа
-# Переменные запуска (-e): stage, out, manifest, partial, bundle.
+# Переменные запуска (-e): stage, guard, out, manifest, partial, bundle.
 
 - name: Вход по ssh
   hosts: all
@@ -174,16 +174,13 @@
 - name: Подготовка узла к стадии
   hosts: all
   tags: [prepare]
-  vars:
-    guarded: [00-bootstrap, 05-mgmt-mesh, 10-foreign, 19-yt-zapret, 20-ru-router, 22-adguard, 23-emergency,
-              27-ikev2, 28-wireguard, 29-openvpn, 30-frontend]
   tasks:
     - name: Каталог выкладки
       ansible.builtin.file: {path: /tmp/anysda, state: directory, mode: "0700"}
       changed_when: false
     - name: Общие функции и сторож фаервола
-      ansible.builtin.copy: {src: "../lib/{{ item }}", dest: "/tmp/anysda/{{ item }}", mode: "0700"}
-      loop: [anysda-svc.sh, fw-guard.sh]
+      ansible.builtin.copy: {src: "{{ item }}", dest: /tmp/anysda/, mode: "0700"}
+      loop: [../lib/anysda-svc.sh, ../vpn2/src/vpn2/fwguard.py]
       changed_when: false
     - name: Манифест сборки
       ansible.builtin.copy: {src: "{{ manifest }}", dest: /tmp/anysda/release-manifest.json, mode: "0600"}
@@ -198,9 +195,9 @@
       args: {executable: /bin/bash}
       changed_when: false
     - name: Сторож фаервола - откат, если новые ssh-входы пропадут
-      ansible.builtin.command: bash --norc /tmp/anysda/fw-guard.sh arm {{ stage }} {{ vpn2_env.VPN2_FW_GUARD_WINDOW | default(90, true) }}
+      ansible.builtin.command: python3 -I /tmp/anysda/fwguard.py arm {{ stage }} {{ vpn2_env.VPN2_FW_GUARD_WINDOW | default(90, true) }}
       changed_when: false
-      when: stage in guarded
+      when: guard | default(false) | bool
 
 # Вход на entry снаружи видят только экзиты: сам entry до себя дойдёт и при сломанном правиле.
 - name: Вход на entry с экзитов
@@ -219,7 +216,7 @@
   tags: [beat]
   tasks:
     - name: Новый ssh-вход прошёл
-      ansible.builtin.raw: test ! -e /run/vpn2-fw-guard/fw-guard.sh || bash --norc /run/vpn2-fw-guard/fw-guard.sh beat
+      ansible.builtin.raw: touch -c /run/vpn2-fw-guard/alive 2>/dev/null || true
       changed_when: false
       when: >-
         inventory_hostname != 'ru' or not (entry_outside | default(false) | bool)
@@ -237,7 +234,7 @@
   tags: [finish]
   tasks:
     - name: Сторож не откатывал фаервол
-      ansible.builtin.command: bash --norc /run/vpn2-fw-guard/fw-guard.sh disarm {{ stage }}
+      ansible.builtin.command: python3 -I /run/vpn2-fw-guard/fwguard.py disarm {{ stage }}
       changed_when: false
 
 - name: Выкладка стадии с экзита убрана

@@ -2,15 +2,12 @@
 
 VPN2_TEST_ROOT - другая ревизия под теми же проверками.
 """
-import fcntl
 import os
 import shlex
 import shutil
 import sys
 from pathlib import Path
 import subprocess
-import tempfile
-import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))

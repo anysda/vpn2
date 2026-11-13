@@ -172,9 +172,11 @@ def build_wheel(out):
             os.mkdir(f'{tmp}/out')
             call(out, PYTHON, '-I', '-c', 'import sys, os; sys.path.insert(0, sys.argv[1]); os.chdir(sys.argv[2])\n'
                 'from setuptools import build_meta\nbuild_meta.build_wheel(sys.argv[3])', setuptools, f'{tmp}/src', f'{tmp}/out')
+            built = next(Path(tmp, 'out').glob('vpn2-*.whl'), None)
+            if not built:
+                raise VenvError('ansible: колесо vpn2 не собралось')
             for old in wheels.glob('vpn2-*.whl'):
                 old.unlink()
-            built = next(Path(tmp, 'out').glob('vpn2-*.whl'))
             shutil.move(built, wheels / built.name)
             (wheels / '.src-sha256').write_text(f'{src}\n')
 

@@ -218,7 +218,7 @@ class Deploy:
         sys.stderr.flush()
         saved = os.dup(1), os.dup(2)
         try:
-            with open(path, 'w') as journal:
+            with open(path, 'w', buffering=1) as journal, contextlib.redirect_stdout(journal), contextlib.redirect_stderr(journal):
                 os.dup2(journal.fileno(), 1)
                 os.dup2(journal.fileno(), 2)
                 for stage, group in pairs:
@@ -240,7 +240,8 @@ class Deploy:
     def rotate_ports(self):
         """После 20-ru-router: канал hy2-direct экзитов, подбор порта и исключение мёртвых."""
         step('verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов')
-        self.stage_log += ports.check(self.expand('foreign'), self.rerun)
+        rows = ports.check(self.expand('foreign'), self.rerun)
+        self.stage_log += rows
 
     def do_all(self):
         report.banner(self)

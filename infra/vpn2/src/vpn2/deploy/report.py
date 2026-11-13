@@ -10,6 +10,9 @@ from pathlib import Path
 
 from vpn2.deploy import B, E, G, elapsed, read, warn
 
+ETC = Path('/etc/anysda')
+BACKUP, RESTORE = '/usr/local/bin/anysda-backup.sh', '/usr/local/bin/anysda-restore.sh'
+
 
 def banner(deploy):
     rows = ['anysda-vpn2 ·  deployment orchestrator', '', 'RU entry    →  sing-box router',
@@ -55,11 +58,11 @@ def summary(deploy, t0):
 
 def ikev2_notice():
     try:
-        mode, host = (Path(f'/etc/anysda/ikev2-{name}').read_text().strip() for name in ('mode', 'server-host'))
+        mode, host = ((ETC / f'ikev2-{name}').read_text().strip() for name in ('mode', 'server-host'))
     except OSError:
         warn('IKEv2: не удалось прочитать состояние сервера', tag='ru')
         return
-    domain = read('/etc/anysda/ikev2-domain')
+    domain = read(ETC / 'ikev2-domain')
     print(f'IKEv2: mode={mode} server-host={host}', flush=True)
     if domain and (mode != 'letsencrypt' or host != domain):
         print(f'IKEv2: ожидается сертификат Caddy для {domain}; автоматическая проверка каждые 30 с.', flush=True)
@@ -68,7 +71,7 @@ def ikev2_notice():
 def sso_notice(deploy):
     env = deploy.env()
     if (env.get('SSO_REQUESTED') or env.get('SSO_ENABLED') or 'false') == 'true' and not env.get('SSO_CLIENT_SECRET', '').strip() \
-            and not Path('/etc/anysda/sso-runtime.json').exists():
+            and not (ETC / 'sso-runtime.json').exists():
         print('SSO не включён, потому что не задан секрет. Входите по паролю администратора. Чтобы включить SSO, '
               'заполните sso.client_secret в config.yaml и запустите ./deploy.sh 30-frontend ru.', flush=True)
 
@@ -77,11 +80,11 @@ def announce(deploy):
     """Бот включён, если токен и чат заданы в config.yaml или в панели (telegram-runtime.json)."""
     env = deploy.env()
     if not (env.get('TELEGRAM_BOT_TOKEN') and env.get('TELEGRAM_CHAT_ID')):
-        runtime = read('/etc/anysda/telegram-runtime.json')
+        runtime = read(ETC / 'telegram-runtime.json')
         if not (re.search(r'"bot_token": *"[^"]', runtime) and re.search(r'"chat_id": *("[^"]|-?[1-9])', runtime)):
             return
-    secret = read('/etc/anysda/tgbot-secret.txt')
-    if not Path('/etc/anysda/tgbot-secret.txt').is_file():
+    secret = read(ETC / 'tgbot-secret.txt')
+    if not (ETC / 'tgbot-secret.txt').is_file():
         return
     body = json.dumps({'type': 'deploy_done', 'verify_unmeasured': bool(deploy.verify_warnings)}).encode()
     request = urllib.request.Request('http://127.0.0.1:8877/event', body, {'Content-Type': 'application/json', 'X-Tgbot-Secret': secret})
@@ -93,7 +96,7 @@ def announce(deploy):
 
 def backup():
     """./deploy.sh backup: код 4 со строкой warning - архив годный, без неё - сбой."""
-    done = subprocess.run(['/usr/local/bin/anysda-backup.sh'], stdout=subprocess.PIPE, text=True)
+    done = subprocess.run([BACKUP], stdout=subprocess.PIPE, text=True)
     print(done.stdout, end='', flush=True)
     warning = next((line for line in done.stdout.splitlines() if line.startswith('warning:')), '')
     if done.returncode != 4 or not warning:
@@ -128,7 +131,7 @@ def restore(deploy, args, capture=False):
             target.write_bytes(Path(archive).read_bytes())
             target.chmod(0o600)
         archive = base
-    done = subprocess.run(['/usr/local/bin/anysda-restore.sh', archive, *flags], **output)
+    done = subprocess.run([RESTORE, archive, *flags], **output)
     if done.returncode or '--dry-run' in flags or '--preflight' in flags:
         return done.returncode, done.stdout or ''
     # После restore стадии читают пароль панели из восстановленного файла, а не из config.yaml.

@@ -1,5 +1,7 @@
 """Шаги роли zapret: выбор шага, значения для скрипта проверки."""
 
+import io
+
 from envs import CONFIG, node_env
 import pytest
 
@@ -109,3 +111,14 @@ def test_window_scale_from_config(tmp_path, scale):
         assert env is None and 'youtube.window_scale' in prepared.stderr
     else:
         assert env['YT_ZAPRET_WINDOW_SCALE'] == scale, prepared.stderr
+
+
+@pytest.mark.parametrize('argv, stdin, code, out', [
+    (['queued', '200'], '{"nftables": [{"rule": {"expr": [{"queue": {"num": 200}}, {"counter": {"packets": 7}}]}}]}', 0, '7\n'),
+    (['queued', '200'], '{"nftables": [{"rule": {"expr": [{"queue": {"num": 201}}, {"counter": {"packets": 7}}]}}]}', 1, ''),
+    (['queued', '200'], 'not json', 1, ''),
+    (['queued', 'x'], '{"nftables": []}', 1, '')])
+def test_queued_counts_packets_of_the_queue_only(monkeypatch, capsys, argv, stdin, code, out):
+    monkeypatch.setattr('sys.stdin', io.StringIO(stdin))
+    assert stage.main(argv) == code
+    assert capsys.readouterr().out == out

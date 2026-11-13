@@ -6,12 +6,10 @@
 import json
 import os
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/src'))
-from vpn2.watchdog import failover as fo, failover_env  # noqa: E402
+from vpn2.watchdog import failover as fo, failover_env
 
 KINDS = ('direct', 'warp')
 
@@ -349,7 +347,7 @@ class Settings(unittest.TestCase):
                          ['5', 'off', '20', '2', 'тайна'])
         self.assertEqual(env['RESTART_AFTER_CHECKS'], '0', 'только из config.yaml')
         self.assertNotIn('COOLDOWN_S', env)
-        documented = Path(__file__).resolve().parents[2].joinpath('docs/failover.md').read_text()
+        documented = Path(__file__).resolve().parents[3].joinpath('docs/failover.md').read_text()
         for key in {s[0] for s in failover_env.SETTINGS} - set(failover_env.FROM_CONFIG):
             self.assertIn(key, documented)
 

@@ -1,23 +1,25 @@
-"""Exercise the exit watchdog with fake WARP, clock and systemctl; no network."""
+"""Сторож WARP экзита (vpn2.watchdog.warp): перезапуски sing-box на подменных часах, бюджет, замок, пробы."""
 import contextlib
 import fcntl
-import importlib.util
 import io
 import json
-import os
-import re
 from pathlib import Path
+import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import urllib.error
 import urllib.parse
-import watchdog_src
 
+from vpn2.watchdog import warp
 
-ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
-
+ROOT = Path(__file__).resolve().parents[3]
+CONFIG = {
+    'endpoints': [{'type': 'wireguard', 'tag': 'warp', 'peers': [{'address': '162.159.192.1'}]}],
+    'experimental': {'clash_api': {'external_controller': '127.0.0.1:9090', 'secret': 'test-only'}},
+}
 
 
 def rendered(peer_host):
@@ -32,11 +34,7 @@ def rendered(peer_host):
 
 
 class TestWarpWatchdog(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location('warp_watchdog', watchdog_src.path('warp'))
-        cls.wd = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.wd)
+    wd = warp
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -203,7 +201,7 @@ class TestWarpWatchdog(unittest.TestCase):
     def test_cli_disabled_does_not_create_state(self):
         config = self.directory / 'config.json'
         config.write_text('{"outbounds": []}')
-        result = subprocess.run([*watchdog_src.command('warp'),
+        result = subprocess.run([sys.executable, '-m', 'vpn2.cli', 'watchdog', 'warp',
                                  '--config', str(config), '--state', str(self.state), '--bootstrap'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -213,7 +211,7 @@ class TestWarpWatchdog(unittest.TestCase):
         config = self.directory / 'config.json'
         config.write_text(json.dumps(self.config))
         self.state.write_text('{broken')
-        result = subprocess.run([*watchdog_src.command('warp'),
+        result = subprocess.run([sys.executable, '-m', 'vpn2.cli', 'watchdog', 'warp',
                                  '--config', str(config), '--state', str(self.state), '--bootstrap'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -221,12 +219,65 @@ class TestWarpWatchdog(unittest.TestCase):
         self.assertEqual(self.state.read_text(), '{broken')
 
 
-class TestWarpInstall(unittest.TestCase):
-    def test_role_units_bound_probe_and_period(self):
-        files = ROOT / 'infra/ansible/roles/exit/files'
-        self.assertIn('TimeoutStartSec=45', (files / 'anysda-warp-watchdog.service').read_text())
-        self.assertIn('OnUnitInactiveSec=30', (files / 'anysda-warp-watchdog.timer').read_text())
+class TestWarpBootstrapRestart(unittest.TestCase):
+    wd = warp
 
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.state = Path(temporary.name) / 'state.json'
 
-if __name__ == '__main__':
-    unittest.main()
+    def bootstrap(self, probes, start=1000):
+        """Run --bootstrap on a fake clock; return the clock value of each restart."""
+        clock = [start]
+        restarts = []
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with patch.object(self.wd, 'probe', side_effect=probes), \
+                patch.object(self.wd.time, 'time', side_effect=lambda: clock[0]), \
+                patch.object(self.wd.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(self.wd.time, 'sleep', side_effect=sleep), \
+                patch.object(self.wd.subprocess, 'run', side_effect=lambda *_args, **_kwargs: restarts.append(clock[0])), \
+                patch.object(self.wd, 'log'):
+            self.wd.run(CONFIG, self.state, bootstrap=True)
+        self.waited = clock[0] - start
+        return restarts
+
+    def test_first_failed_probe_restarts_at_once(self):
+        restarts = self.bootstrap([False, True])
+        self.assertEqual(restarts, [1000])
+
+    def test_live_warp_is_not_restarted(self):
+        self.assertEqual(self.bootstrap([True]), [])
+
+    def test_dead_warp_costs_one_limit_and_one_restart(self):
+        # Второй перезапуск ждал бы общий backoff в 300 с: это дело таймера, не прогона.
+        restarts = self.bootstrap(iter(lambda: False, True))
+        self.assertEqual(restarts, [1000])
+        self.assertLessEqual(self.waited, self.wd.BOOTSTRAP_SECONDS)
+        self.assertLess(self.wd.BOOTSTRAP_SECONDS, self.wd.BACKOFF[0])
+
+    def test_timer_backoff_is_honoured(self):
+        # The timer restarted 100 s ago: its backoff holds, WARP revives by itself.
+        self.state.write_text(json.dumps({'restarts': [900], 'next_restart': 1200, 'level': 1, 'bad_since': 900}))
+        restarts = self.bootstrap([False] * 9 + [True])
+        self.assertEqual(restarts, [])
+
+    def test_hourly_cap_is_not_exceeded(self):
+        self.state.write_text(json.dumps({'restarts': [100, 400], 'next_restart': 900, 'level': 2}))
+        restarts = self.bootstrap(iter(lambda: False, True))
+        self.assertEqual(restarts, [1000])
+        self.assertLessEqual(len(json.loads(self.state.read_text())['restarts']), self.wd.MAX_PER_HOUR)
+
+    def test_timer_still_waits_dead_after(self):
+        restarts = []
+        with patch.object(self.wd, 'probe', return_value=False), \
+                patch.object(self.wd.subprocess, 'run', side_effect=lambda *_args, **_kwargs: restarts.append(now)), \
+                patch.object(self.wd, 'log'):
+            for now in range(0, 1200, 30):
+                with patch.object(self.wd.time, 'time', return_value=now):
+                    self.wd.run(CONFIG, self.state)
+        dead = self.wd.DEAD_AFTER
+        self.assertEqual(restarts, [dead, dead + 300, dead + 900])

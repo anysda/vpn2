@@ -87,6 +87,39 @@ def orchestrate(tree, *args, wait=True, **extra):
     return subprocess.run(command, capture_output=True, text=True, timeout=120, env=environ(tree, **extra))
 
 
+@pytest.fixture
+def inproc(tree, capfd, monkeypatch):
+    """Оркестратор в этом процессе (покрытие): пути модулей из окружения копии дерева, после - как были."""
+    import importlib
+
+    from vpn2 import config, deploy
+    from vpn2.deploy import __main__ as main, report, run
+    saved, handlers = dict(os.environ), {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+
+    def reload():
+        for module in (deploy, report, run, main):
+            importlib.reload(module)
+
+    def call(*args, **extra):
+        os.environ.clear()
+        os.environ.update(environ(tree, **extra))
+        monkeypatch.setattr(config, 'STATE_DIR', tree / 'state')
+        reload()
+        main.install_prereqs = run.prep_keys = lambda: None
+        run.svc = lambda *_args, **_options: 0
+        capfd.readouterr()
+        code = main.main(list(args))
+        out, err = capfd.readouterr()
+        return subprocess.CompletedProcess(args, code, out, err)
+    yield call
+    monkeypatch.undo()
+    os.environ.clear()
+    os.environ.update(saved)
+    for sig, handler in handlers.items():
+        signal.signal(sig, handler)
+    reload()
+
+
 def alive(pid):
     """Процесс жив через 3 с после выхода деплоя (зомби, которого ещё не собрал init, - не жив)."""
     for _ in range(30):
@@ -149,8 +182,8 @@ def test_manifest_file_must_exist(tree):
     assert done.returncode == 1 and 'файл манифеста не найден' in done.stderr
 
 
-def test_one_stage_runs_only_its_play_on_its_nodes(tree):
-    done = orchestrate(tree, '30-frontend', 'ru')
+def test_one_stage_runs_only_its_play_on_its_nodes(tree, inproc):
+    done = inproc('30-frontend', 'ru')
     assert done.returncode == 0, done.stderr
     calls = [call['args'] for call in plays(tree)]
     staged = [args for args in calls if 'site.yml' in args]
@@ -160,8 +193,8 @@ def test_one_stage_runs_only_its_play_on_its_nodes(tree):
     assert '[deploy] [30-frontend → ru] done' in done.stderr
 
 
-def test_full_deploy_follows_site_yml(tree):
-    done = orchestrate(tree)
+def test_full_deploy_follows_site_yml(tree, inproc):
+    done = inproc()
     assert done.returncode == 0, done.stderr
     calls = plays(tree)
     staged = [(call['args'].split('--tags prepare,')[1].split()[0], call['args'].split('--limit ')[1].split()[0], call['follows'])
@@ -178,26 +211,26 @@ def test_full_deploy_follows_site_yml(tree):
     assert 'деплой завершён' in done.stdout and re.search(r'│  30-frontend +ru +\d+s +│', done.stdout)
 
 
-def test_recover_skips_the_journal_check(tree):
-    done = orchestrate(tree, 'recover', FAKE_RULES=json.dumps([['--tags journal', 2, 0]]))
+def test_recover_skips_the_journal_check(tree, inproc):
+    done = inproc('recover', FAKE_RULES=json.dumps([['--tags journal', 2, 0]]))
     assert done.returncode == 0, done.stderr
     assert not [call for call in plays(tree) if '--tags journal' in call['args']]
 
 
-def test_unfinished_deploy_is_refused_without_changes(tree):
-    done = orchestrate(tree, FAKE_RULES=json.dumps([['--tags journal', 2, 0]]))
+def test_unfinished_deploy_is_refused_without_changes(tree, inproc):
+    done = inproc(FAKE_RULES=json.dumps([['--tags journal', 2, 0]]))
     assert done.returncode == 1 and 'журнал деплоя на узлах не прочитан' in done.stderr
     assert [call['args'].split('--tags ')[1].split()[0] for call in plays(tree)] == ['journal']
 
 
-def test_failed_release_checks_close_the_journal(tree):
-    done = orchestrate(tree, FAKE_RULES=json.dumps([['--tags release', 2, 0]]))
+def test_failed_release_checks_close_the_journal(tree, inproc):
+    done = inproc(FAKE_RULES=json.dumps([['--tags release', 2, 0]]))
     assert done.returncode == 1
     assert [call['args'].split('--tags ')[1].split()[0] for call in plays(tree)] == ['journal', 'release', 'abort']
 
 
-def test_failed_stage_stops_the_deploy_and_keeps_the_journal(tree):
-    done = orchestrate(tree, FAKE_RULES=json.dumps([['prepare,20-ru-router', 2, 0]]))
+def test_failed_stage_stops_the_deploy_and_keeps_the_journal(tree, inproc):
+    done = inproc(FAKE_RULES=json.dumps([['prepare,20-ru-router', 2, 0]]))
     assert done.returncode == 1
     assert 'стадия 20-ru-router: одна или несколько нод завершились с ошибкой' in done.stderr
     assert 'deploy interrupted: operation journal retained' in done.stderr

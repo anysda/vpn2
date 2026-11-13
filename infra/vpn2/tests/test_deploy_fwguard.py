@@ -1,13 +1,14 @@
 """Сторож фаервола на узле: снимок до стадии, откат при тишине новых ssh-входов, снятие."""
 import os
 import subprocess
-import sys
+import threading
 import time
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-GUARD = Path(__file__).resolve().parents[1] / 'src/vpn2/fwguard.py'
+from vpn2 import fwguard
+
 # ufw и nft - заглушки над каталогом STATE: включённый ufw - файл active, таблица - файл table-<имя>.
 FAKES = {
     'ufw': '''case "$1 $2" in
@@ -42,13 +43,20 @@ def node(tmp_path):
     return tmp_path
 
 
-def environ(node):
-    return {**os.environ, 'PATH': f'{node / "bin"}:{os.environ["PATH"]}', 'STATE': str(node / 'state'),
-            'FW_GUARD_DIR': str(node / 'run'), 'FW_GUARD_ETC': str(node / 'etc')}
+@pytest.fixture
+def guard(node, monkeypatch, capsys):
+    """fwguard.main в этом процессе: каталог сторожа и /etc - в node, ufw/nft/systemd - заглушки из PATH."""
+    monkeypatch.setenv('PATH', f'{node / "bin"}:{os.environ["PATH"]}')
+    monkeypatch.setenv('STATE', str(node / 'state'))
+    monkeypatch.setattr(fwguard, 'DIR', node / 'run')
+    monkeypatch.setattr(fwguard, 'ETC', node / 'etc')
 
-
-def guard(node, *args):
-    return subprocess.run([sys.executable, '-I', GUARD, *args], capture_output=True, text=True, env=environ(node), timeout=30)
+    def call(*args):
+        capsys.readouterr()
+        code = fwguard.main(list(args))
+        out, err = capsys.readouterr()
+        return SimpleNamespace(returncode=code, stdout=out, stderr=err)
+    return call
 
 
 def break_firewall(node):
@@ -61,8 +69,8 @@ def break_firewall(node):
     (node / 'etc/nftables-hy2hop.conf').write_text('broken\n')
 
 
-def test_arm_starts_the_watch_from_its_own_copy(node):
-    done = guard(node, 'arm', '10-foreign', '90')
+def test_arm_starts_the_watch_from_its_own_copy(node, guard):
+    done = guard('arm', '10-foreign', '90')
     assert done.returncode == 0, done.stderr
     started = (node / 'state/calls').read_text()
     assert f'--unit=vpn2-fw-guard --setenv=FW_GUARD_DIR={node}/run' in started
@@ -70,11 +78,11 @@ def test_arm_starts_the_watch_from_its_own_copy(node):
     assert (node / 'run/stage').read_text() == '10-foreign\n' and (node / 'run/snap/ufw-active').exists()
 
 
-def test_silence_longer_than_the_window_restores_the_snapshot(node):
-    assert guard(node, 'arm', '20-ru-router', '1').returncode == 0
+def test_silence_longer_than_the_window_restores_the_snapshot(node, guard):
+    assert guard('arm', '20-ru-router', '1').returncode == 0
     break_firewall(node)
     os.utime(node / 'run/alive', (time.time() - 10, time.time() - 10))
-    done = guard(node, 'watch', '1')
+    done = guard('watch', '1')
     assert done.returncode == 0, done.stdout + done.stderr
     assert 'откатываю фаервол к снимку до стадии 20-ru-router' in done.stdout
     assert (node / 'etc/ufw/user.rules').read_text() == 'allow 22\n' and not (node / 'etc/ufw/extra.rules').exists()
@@ -82,34 +90,37 @@ def test_silence_longer_than_the_window_restores_the_snapshot(node):
     assert (node / 'state/table-vpn2_hy2hop').read_text() == 'table inet vpn2_hy2hop { }\n'
     assert not (node / 'state/table-ytzapret').exists()
     assert (node / 'etc/nftables-hy2hop.conf').read_text() == 'hop\n'
-    late = guard(node, 'disarm', '20-ru-router')
+    late = guard('disarm', '20-ru-router')
     assert late.returncode == 3 and 'ufw и таблицы стадий откатаны к состоянию до неё' in late.stdout
     assert not (node / 'run').exists()
 
 
-def test_disarm_in_time_keeps_the_stage_firewall(node):
-    assert guard(node, 'arm', '27-ikev2', '90').returncode == 0
+def test_disarm_in_time_keeps_the_stage_firewall(node, guard):
+    assert guard('arm', '27-ikev2', '90').returncode == 0
     break_firewall(node)
-    done = guard(node, 'disarm', '27-ikev2')
+    done = guard('disarm', '27-ikev2')
     assert done.returncode == 0 and not (node / 'run').exists()
     assert (node / 'etc/ufw/user.rules').read_text() == 'deny 22\n'
     # Снятый сторож решения не принимает.
-    assert guard(node, 'watch', '0').returncode == 0
+    assert guard('watch', '0').returncode == 0
     assert (node / 'etc/ufw/user.rules').read_text() == 'deny 22\n'
 
 
-def test_disarm_without_guard_is_reported(node):
-    done = guard(node, 'disarm', '30-frontend')
+def test_disarm_without_guard_is_reported(guard):
+    done = guard('disarm', '30-frontend')
     assert done.returncode == 4 and 'сторож стадии 30-frontend не найден' in done.stdout
 
 
-def test_beats_keep_the_firewall(node):
-    assert guard(node, 'arm', '05-mgmt-mesh', '3').returncode == 0
+def test_beats_keep_the_firewall(node, guard):
+    assert guard('arm', '05-mgmt-mesh', '3').returncode == 0
     break_firewall(node)
-    watch = subprocess.Popen([sys.executable, '-I', GUARD, 'watch', '3'], env=environ(node))
+    watched = []
+    watch = threading.Thread(target=lambda: watched.append(fwguard.watch(3)))
+    watch.start()
     for _ in range(4):
         time.sleep(2)
         subprocess.run(['touch', '-c', node / 'run/alive'], check=True)  # пульс из deploy.yml
-    assert guard(node, 'disarm', '05-mgmt-mesh').returncode == 0
-    assert watch.wait(timeout=10) == 0
+    assert guard('disarm', '05-mgmt-mesh').returncode == 0
+    watch.join(timeout=10)
+    assert watched == [0]
     assert (node / 'etc/ufw/user.rules').read_text() == 'deny 22\n'

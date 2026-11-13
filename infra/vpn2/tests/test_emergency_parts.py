@@ -15,10 +15,9 @@ import types
 import unittest
 from urllib.parse import parse_qs, urlsplit
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
-from vpn2.emergency import hy2, notices, snapshot, snapshot_sender, spool  # noqa: E402
-from vpn2.notify import Reply  # noqa: E402
+ROOT = Path(__file__).resolve().parents[3]
+from vpn2.emergency import hy2, notices, snapshot, snapshot_sender, spool
+from vpn2.notify import Reply
 
 NOW = 1_800_000_000
 

@@ -21,8 +21,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-ROOT = Path(os.environ.get('EMERGENCY_TEST_ROOT', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class EmergencyWebTests(unittest.TestCase):

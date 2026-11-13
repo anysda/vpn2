@@ -11,10 +11,9 @@ import types
 import unittest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
-from vpn2.emergency import agent, notices, snapshot, spool, web  # noqa: E402
-from vpn2.notify import Reply  # noqa: E402
+ROOT = Path(__file__).resolve().parents[3]
+from vpn2.emergency import agent, notices, snapshot, spool, web
+from vpn2.notify import Reply
 
 KEY = '11' * 32
 ADMIN = 900

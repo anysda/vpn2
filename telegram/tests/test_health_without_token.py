@@ -16,6 +16,8 @@ import time
 import unittest
 import urllib.request
 
+import ports
+
 
 TELEGRAM = Path(__file__).resolve().parents[1]
 BOT = TELEGRAM / 'vpn2bot'
@@ -73,12 +75,6 @@ def healthcheck():
     return command.strip(), int(start.group(1))
 
 
-def free_port():
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        return probe.getsockname()[1]
-
-
 class HealthWithoutTokenTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix='tgbot-health-')
@@ -90,7 +86,7 @@ class HealthWithoutTokenTests(unittest.TestCase):
         bin_dir = self.root / 'bin'
         bin_dir.mkdir()
         (bin_dir / 'python').symlink_to(sys.executable)
-        self.port = free_port()
+        self.port = ports.event_port(self)
         self.env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ.get("PATH", "")}',
                         TGBOT_EVENT_PORT=str(self.port), TELEGRAM_ADMIN_USERNAME='',
                         TGBOT_SECRET='evt-secret', ANYSDA_URL='http://127.0.0.1:9',

@@ -8,13 +8,14 @@
 import json
 import os
 from pathlib import Path
-import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+
+import ports
 
 
 BOT = Path(__file__).resolve().parents[1] / 'vpn2bot'
@@ -67,12 +68,6 @@ runpy.run_module('vpn2bot', run_name='__main__', alter_sys=True)
 '''
 
 
-def free_port():
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        return probe.getsockname()[1]
-
-
 class RuntimeWithoutTokenTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix='tgbot-runtime-')
@@ -94,7 +89,7 @@ class RuntimeWithoutTokenTests(unittest.TestCase):
         # Окружение как у контейнера, поставленного без токена в config.yaml.
         env = dict(os.environ, TELEGRAM_BOT_TOKEN='', TELEGRAM_CHAT_ID='',
                    TELEGRAM_ADMIN_USERNAME='', TGBOT_SECRET='evt-secret',
-                   TGBOT_EVENT_PORT=str(free_port()), ANYSDA_URL='http://127.0.0.1:9',
+                   TGBOT_EVENT_PORT=str(ports.event_port(self)), ANYSDA_URL='http://127.0.0.1:9',
                    TG_PROXY='http://127.0.0.1:9', TGBOT_INVALID_TOKEN_PAUSE_SEC='0',
                    TGBOT_OUTBOX_PATH=str(self.root / 'outbox.sqlite'))
         output = self.output.open('a')

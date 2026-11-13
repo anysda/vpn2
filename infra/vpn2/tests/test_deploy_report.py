@@ -1,6 +1,7 @@
 """Что видит оператор: заметка SSO, итог, backup с предупреждением, секреты экзитов, выпуск без манифеста."""
 import json
 import os
+import signal
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -71,6 +72,20 @@ def test_backup_warning_codes(script, code, said, tmp_path, monkeypatch, capfd):
     assert said in capfd.readouterr().err
 
 
+@pytest.mark.parametrize('sig, code', [(signal.SIGTERM, 143), (signal.SIGINT, 130)])
+def test_backup_streams_and_signal_mid_copy_is_a_failure(tree, tmp_path, sig, code):  # noqa: F811
+    script = tmp_path / 'backup'
+    script.write_text("#!/bin/sh\necho 'копирую архив'\nsleep 30\n")
+    script.chmod(0o755)
+    runner = RUNNER.replace('sys.exit(', f"main.report.BACKUP = {str(script)!r}\nsys.exit(")
+    with subprocess.Popen([sys.executable, '-B', '-c', runner, 'backup'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, env=environ(tree), start_new_session=True) as proc:
+        assert proc.stdout.readline() == 'копирую архив\n'  # вывод идёт по ходу, не в конце
+        os.killpg(proc.pid, sig)
+        out, err = proc.communicate(timeout=15)
+    assert proc.returncode == code and 'архив сохранён' not in out + err
+
+
 def test_partial_secret_collection_is_private(tmp_path, monkeypatch):
     monkeypatch.setattr(run, 'INFRA', tmp_path)
     os.umask(0o022)
@@ -101,7 +116,7 @@ def test_failed_old_layout_or_complete_never_announces_success(tree):  # noqa: F
     assert 'деплой завершён' not in done.stdout
 
 
-def test_insecure_exit_is_warned(monkeypatch, capsys):
+def test_insecure_exit_is_warned(capsys):
     deploy = run.Deploy.__new__(run.Deploy)
     deploy.nodes = {'ru': {'EXIT_TAGS': 'us de-2', 'DE_2_HY2_INSECURE': '1', 'US_HY2_INSECURE': ''}}
     deploy.warn_insecure_exits()

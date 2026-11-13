@@ -96,9 +96,9 @@ def announce(deploy):
 
 def backup():
     """./deploy.sh backup: код 4 со строкой warning - архив годный, без неё - сбой."""
-    done = subprocess.run([BACKUP], stdout=subprocess.PIPE, text=True)
-    print(done.stdout, end='', flush=True)
-    warning = next((line for line in done.stdout.splitlines() if line.startswith('warning:')), '')
+    with subprocess.Popen([BACKUP], stdout=subprocess.PIPE, text=True) as done:
+        lines = [print(line, end='', flush=True) or line for line in done.stdout]
+    warning = next((line for line in lines if line.startswith('warning:')), '')
     if done.returncode != 4 or not warning:
         return done.returncode
     if 'сверка БД с конфигами VPN не выполнена' in warning:

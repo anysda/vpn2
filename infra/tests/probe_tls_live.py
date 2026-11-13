@@ -31,10 +31,10 @@ from unittest.mock import AsyncMock, patch
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / 'telegram/tests'), str(ROOT / 'telegram')]
+sys.path[:0] = [str(ROOT / 'telegram/tests'), str(ROOT / 'telegram'), str(ROOT / 'infra/vpn2/tests')]
 from support import import_bot  # noqa: E402
 from probe_io import read_to_close  # noqa: E402
-from containers_support import panel_tls  # noqa: E402
+from panel_support import panel_tls  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/vpn2/src/vpn2/tls.py')
 tls = importlib.util.module_from_spec(spec)

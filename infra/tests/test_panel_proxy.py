@@ -14,7 +14,8 @@ import threading
 import time
 import unittest
 
-from containers_support import panel
+import infra_support  # noqa: F401 - путь к пакету vpn2
+from vpn2.containers import panel  # noqa: E402
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 DOCKER = shlex.split(os.environ.get('DOCKER', 'docker'))

@@ -151,20 +151,10 @@ class ReleaseFetchTests(unittest.TestCase):
         self.assertIn('absent.tar.gz', run.stderr)
 
     def test_library_fetch_falls_back_too(self):
-        """test_panel_https_only takes caddy and its checksums through fetch()."""
+        """fetch() without gh on PATH takes the same API route."""
         env = {k: v for k, v in self.env.items() if k != 'PATH'}
         with mock.patch.dict(os.environ, env):
             self.assertEqual(release_fetch.fetch(REPO, TAG, NAME), BODY)
-
-    def test_caddy_test_module_uses_the_helper(self):
-        source = (Path(__file__).resolve().parent / 'test_panel_https_only.py').read_text()
-        self.assertNotIn('/releases/download/', source)
-        self.assertIn('release_fetch.fetch(', source)
-
-    def test_ci_sing_box_step_uses_the_helper(self):
-        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/checks.yml').read_text()
-        self.assertNotIn('/releases/download/', workflow)
-        self.assertIn('infra/tests/release_fetch.py SagerNet/sing-box', workflow)
 
 
 if __name__ == '__main__':

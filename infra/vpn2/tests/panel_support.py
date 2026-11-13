@@ -1,18 +1,16 @@
-"""Пакет vpn2.containers для тестов настроек: окружение служб без Docker."""
-
+"""TLS-шаг стадии панели во временном корне и настоящий Caddy той версии, что ставит деплой."""
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 
-ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
-from vpn2.containers import compose, panel  # noqa: E402,F401
+import pytest
 
-# Секреты и решения стадии, которых нет в файлах окружения.
-FACTS = {'session': 's', 'clash': 'c', 'tgbot': 't', 'admin_user': 'admin', 'agh_password': 'p',
-         'sso_enabled': 'false', 'sso_auto_redirect': 'false', 'sso_password_login': 'true',
-         'sso_redirect_url': ''}
+ROOT = Path(__file__).resolve().parents[3]
+SRC = ROOT / 'infra/vpn2/src'
+CADDY_VER = re.search(r"^CADDY_VER='([^']+)'", (ROOT / 'infra/lib/anysda-svc.sh').read_text(), re.M)[1]
 
 PANEL_TLS = '''
 import os, sys
@@ -50,9 +48,19 @@ except BaseException:
 '''
 
 
+def caddy():
+    """Caddy версии CADDY_VER: CADDY_BIN, PATH или кэш, куда его кладёт шаг CI."""
+    cache = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / f'vpn2-tests/caddy-{CADDY_VER}/caddy'
+    for candidate in (os.environ.get('CADDY_BIN'), shutil.which('caddy'), cache.exists() and str(cache)):
+        if candidate and subprocess.run([candidate, 'version'], capture_output=True,
+                                        text=True).stdout.startswith(f'v{CADDY_VER} '):
+            return candidate
+    pytest.skip(f'needs caddy {CADDY_VER} in CADDY_BIN, PATH or {cache}')
+
+
 def panel_tls(directory, domain, env=None, fail=False, entry='192.0.2.1'):
     """Шаг TLS стадии панели под её транзакцией; /etc и /var перенесены в каталог теста."""
     Path(directory, 'etc/caddy').mkdir(parents=True, exist_ok=True)
-    env = dict(env or os.environ, HOST_TAG='ru', ENTRY_HOST=entry, PANEL_DOMAIN=domain,
-               PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
-    return subprocess.run([sys.executable, '-c', PANEL_TLS, str(directory), 'fail' if fail else ''], env=env, capture_output=True, text=True, timeout=60)
+    env = dict(env or os.environ, HOST_TAG='ru', ENTRY_HOST=entry, PANEL_DOMAIN=domain, PYTHONPATH=str(SRC))
+    return subprocess.run([sys.executable, '-c', PANEL_TLS, str(directory), 'fail' if fail else ''],
+                          env=env, capture_output=True, text=True, timeout=60)

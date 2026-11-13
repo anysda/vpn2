@@ -1,5 +1,5 @@
-"""Контрольный клиент 99-verify: отчёт, пробы, ручные метки, отзыв IKEv2."""
-import importlib.util
+"""Контрольный клиент verify (`vpn2.verify.traffic`): отчёт, пробы, ручные метки, отзыв IKEv2, очистка."""
+from contextlib import redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -7,21 +7,11 @@ import socket
 import subprocess
 import tempfile
 import threading
+import types
 import unittest
-from contextlib import redirect_stdout
+from unittest import mock
 
-ROOT = Path(__file__).resolve().parents[2]
-MODULE = ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py'
-
-
-def load():
-    spec = importlib.util.spec_from_file_location('verify_traffic', MODULE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-vt = load()
+from vpn2.verify import traffic as vt
 
 
 class ReportTests(unittest.TestCase):
@@ -68,7 +58,6 @@ class ProbeTests(unittest.TestCase):
             self.assertIsNone(vt.probe_dns('127.0.0.1', 'dns.google', port))
             thread.join(5)
             self.assertEqual(replies, ['good', 'wrong-id', 'nxdomain'])
-
 
 
 class ManualMarkerTests(unittest.TestCase):
@@ -180,6 +169,63 @@ class IKEv2RevokeTests(unittest.TestCase):
             vt.run = saved
         self.assertEqual(sorted(sas), ['12'], calls)
 
+
+class CleanupLinkDownTests(unittest.TestCase):
+    def cleanup_calls(self):
+        calls = []
+
+        def run(*args, **_):
+            calls.append(('run',) + args)
+            return subprocess.CompletedProcess(args, 0, '', '')
+
+        def sleep(seconds):
+            calls.append(('sleep', seconds))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            with mock.patch.multiple(vt, run=run, manual_markers=mock.Mock(),
+                                     CCD=tmp / 'ccd', SWAN_FILE=tmp / 'swan.conf', WORK=tmp / 'work',
+                                     MANUAL_DIR=tmp / 'manual'), \
+                    mock.patch.object(vt.time, 'sleep', sleep):
+                vt.cleanup()
+        return calls
+
+    def test_host_link_down_and_wait_before_removal(self):
+        calls = self.cleanup_calls()
+        removals = [i for i, call in enumerate(calls)
+                    if call[:4] == ('run', 'ip', 'netns', 'del') or call == ('run', 'ip', 'link', 'del', vt.HOST_IF)]
+        self.assertTrue(removals, calls)
+        first = min(removals)
+        downs = [i for i, call in enumerate(calls[:first])
+                 if call == ('run', 'ip', 'link', 'set', vt.HOST_IF, 'down')
+                 or call == ('run', 'ip', 'link', 'set', 'dev', vt.HOST_IF, 'down')]
+        self.assertTrue(downs, f'{vt.HOST_IF} не опущен до удаления: {calls[:first + 1]}')
+        waited = sum(call[1] for call in calls[downs[0]:first] if call[0] == 'sleep')
+        self.assertGreaterEqual(waited, 0.5, f'нет паузы между down и удалением: {calls[downs[0]:first + 1]}')
+
+    def test_removal_still_happens(self):
+        calls = self.cleanup_calls()
+        self.assertIn(('run', 'ip', 'netns', 'del', vt.NS), calls)
+        self.assertIn(('run', 'ip', 'link', 'del', vt.HOST_IF), calls)
+
+
+class FreeAddressesTests(unittest.TestCase):
+    def test_latin1_comment_is_read_as_wg_reads_it(self):
+        """Байт latin-1 после `#` в wg0.conf (wg его берёт) не роняет подбор адреса, LANG=C."""
+        with tempfile.TemporaryDirectory() as directory:
+            conf = Path(directory) / 'wg0.conf'
+            conf.write_bytes(b'[Interface]\nPrivateKey = KLKQERtKGmYrCPaUJZYYoFjRRNizdBvaUWfrjPG5I1Q= # caf\xe9\n\n'
+                             b'[Peer]\nPublicKey = 0ivjKi39oR/BxsZp17GSMczPpE4CKHCaC1RbI3zedFg=\nAllowedIPs = 10.66.66.6/32\n')
+
+            def run(*args, **_options):
+                if args[0] == 'ip':
+                    return types.SimpleNamespace(stdout=json.dumps([{'addr_info': [{'local': '10.66.66.1', 'prefixlen': 29}]}]))
+                return types.SimpleNamespace(stdout='51820' if 'listen-port' in args else '')
+
+            with mock.patch.multiple(vt, WG_CONF=conf, run=run):
+                free = vt.WireGuard().free
+        # /29: хосты .1-.6, .1 - сам wg0, .6 - пир wg0.conf (живой wg не показывает ни одного).
+        self.assertEqual(free, ['10.66.66.5', '10.66.66.4'])
 
 
 if __name__ == '__main__':

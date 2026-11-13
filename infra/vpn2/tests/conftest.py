@@ -21,7 +21,8 @@ def pytest_collection_modifyitems(items):
         path = Path(str(item.fspath))
         if path not in host:
             host[path] = bool(HOST.search(path.read_text(errors='replace')))
-        item.add_marker(pytest.mark.xdist_group('host' if host[path] else path.name))
+        if host[path]:
+            item.add_marker(pytest.mark.xdist_group('host'))
 
 
 @pytest.fixture(autouse=True)

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import yaml
-
+# Состояние деплоя на entry; тот же путь, что в корневом deploy.sh.
 # Состояние деплоя на entry; тот же путь, что в infra/lib/state-dir.sh.
 STATE_DIR = Path(os.environ.get('VPN2_STATE_DIR') or '/var/lib/anysda-vpn2/state')
 

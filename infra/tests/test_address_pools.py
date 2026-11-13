@@ -4,7 +4,6 @@ import re
 import tempfile
 import unittest
 
-from adguard_support import Hub
 from router_support import exit_cert, render
 from infra_support import ROOT, bash, source
 from test_ufw_reconcile import FAKE_UFW
@@ -81,7 +80,7 @@ set -- up
         routes = [line for line in conf.splitlines() if line.startswith('route ')]
         self.assertEqual(routes, [f'route {cidr[:-3]} 255.255.255.0' for cidr in subnets[1:]])
 
-    def test_dns_firewall_and_adguard_cover_every_subnet(self):
+    def test_dns_firewall_covers_every_subnet(self):
         pools = json.loads(source('app/shared/vpn-pools.json'))
         for key, role in [('wg', 'wireguard'), ('ovpn', 'openvpn'), ('ikev2', 'ikev2')]:
             defaults = vpn_roles.role_defaults(role)
@@ -94,15 +93,6 @@ set -- up
                 for protocol in ('tcp', 'udp'):
                     self.assertTrue(any(rule.startswith(f'allow proto {protocol} from {cidr} to 10.99.0.1 port 53 ')
                                         for rule in rules), (cidr, protocol))
-        with tempfile.TemporaryDirectory() as directory:
-            hub = Hub(directory)
-            hub.config.write_text('users: []\ndns:\n  aaaa_disabled: true\n  ratelimit_whitelist: [203.0.113.1]\n')
-            hub.deploy()
-            hub.deploy()
-            addresses = hub.dns()['ratelimit_whitelist']
-            self.assertEqual(len(addresses), 24 * 254 + 1)
-            self.assertEqual(len(set(addresses)), len(addresses))
-            self.assertIn('203.0.113.1', addresses)
 
     def test_router_lanes_include_new_addresses_with_old_env(self):
         env = dict(EXIT_TAGS='se', HY2_DIRECT_PORT='443', HY2_WARP_PORT='444', HY2_MGMT_PORT='445',

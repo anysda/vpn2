@@ -1,11 +1,9 @@
-"""Роль zapret в тестах: модуль шагов, файлы роли и шаблоны без jinja2."""
+"""Роль zapret в тестах: модуль шагов и шаблоны без jinja2."""
 
 import os
 import re
 from pathlib import Path
 import sys
-
-import yaml
 
 ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2]))
 ROLE = ROOT / 'infra/ansible/roles/zapret'
@@ -19,10 +17,6 @@ VALUES = {'mark': '256', 'queue': '200', 'base': '/opt/zapret2', 'bin': '/opt/za
 VPN2_MOCK = f'vpn2() {{ PYTHONPATH={ROOT}/infra/vpn2/src {sys.executable} -m vpn2.cli "$@"; }}\n'
 
 
-def role_file(name):
-    return (ROLE / 'files' / name).read_text()
-
-
 def render(name, **values):
     """Шаблон роли с подставленными значениями; в шаблонах только {{ zapret_v.ИМЯ }}."""
     known = {**VALUES, **values}
@@ -31,17 +25,3 @@ def render(name, **values):
     text = re.sub(r'\{\{ zapret_v\.(\w+) \}\}', lambda match: str(known[match[1]]), text)
     assert '{{' not in text and '{%' not in text, name
     return text
-
-
-def tasks():
-    """Задачи роли подряд: общий файл, затем включение десинка, блоки раскрыты."""
-    found = []
-
-    def walk(items):
-        for task in items:
-            found.append(task)
-            walk(task.get('block', []))
-
-    for name in ('main.yml', 'desync.yml'):
-        walk(yaml.safe_load((ROLE / 'tasks' / name).read_text()))
-    return found

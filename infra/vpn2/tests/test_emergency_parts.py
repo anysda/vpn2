@@ -8,7 +8,6 @@ import shutil
 import socket
 import sqlite3
 import subprocess
-import sys
 import tempfile
 import threading
 import types

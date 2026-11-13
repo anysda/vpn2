@@ -5,7 +5,6 @@ Hysteria2, HTTPS-сервер панели и Bot API."""
 import json
 import logging
 from pathlib import Path
-import sys
 import tempfile
 import types
 import unittest

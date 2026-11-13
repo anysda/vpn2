@@ -389,14 +389,14 @@ class LimitTests(unittest.TestCase):
             with self.subTest(stderr=stderr):
                 self.assert_not_counted(lambda args, stderr=stderr: subprocess.CompletedProcess(args, 1, '', stderr),
                                         marker='memory')
-        self.assert_not_counted(lambda args: done(0, {'url': URL}), lambda args: done(-9), marker='memory')
+        self.assert_not_counted(lambda _args: done(0, {'url': URL}), lambda _args: done(-9), marker='memory')
 
     def test_timeout_of_first_attempt_skips_bgutil(self):
         def hang(args):
             raise subprocess.TimeoutExpired(args, 60)
 
         self.assert_not_counted(hang, marker='TimeoutExpired')
-        self.assert_not_counted(lambda args: done(0, {'url': URL}), hang, marker='TimeoutExpired')
+        self.assert_not_counted(lambda _args: done(0, {'url': URL}), hang, marker='TimeoutExpired')
 
     def test_network_failure_of_first_attempt_skips_bgutil(self):
         for stderr in ('Unable to download API page: <urlopen error [Errno 111] Connection refused>',
@@ -410,8 +410,8 @@ class LimitTests(unittest.TestCase):
                     lambda args, stderr=stderr: subprocess.CompletedProcess(args, 1, '', 'ERROR: ' + stderr), calls=calls))
                 self.assertEqual((len([a for a in calls if YTDLP in a]), state['unmeasured'], changes), (1, True, []))
         calls = []
-        state, _, _ = tick(load(), fake_run(lambda args: done(0, {'url': URL}),
-                                            lambda args: done(6, {'http_code': 0}), calls))
+        state, _, _ = tick(load(), fake_run(lambda _args: done(0, {'url': URL}),
+                                            lambda _args: done(6, {'http_code': 0}), calls))
         self.assertEqual((len([a for a in calls if YTDLP in a]), state['unmeasured']), (1, True))
 
     def test_token_or_403_failure_still_retries_with_bgutil(self):

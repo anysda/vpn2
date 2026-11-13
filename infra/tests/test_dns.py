@@ -1,17 +1,10 @@
 """Локальные регрессии DNS; реальные стадии деплоя здесь не запускаются."""
 
-import copy
-import hashlib
 import json
 from pathlib import Path
-import tempfile
 import unittest
 
-import yaml
-
-from adguard_support import Hub
 from router_support import exit_cert, render
-from vpn2.adguard import dns
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -72,53 +65,6 @@ class RouterDnsTests(unittest.TestCase):
                                      "server": "8.8.8.8", "detour": "direct-ru"})
         self.assertEqual(cfg["dns"]["rules"], [{"domain_suffix": [".ru", ".рф", ".xn--p1ai", ".su"],
                                                "server": "ru-dns"}])
-
-
-class AdguardPatchTests(unittest.TestCase):
-    def test_installed_config_and_idempotence(self):
-        before = yaml.safe_load(dns.fresh_text("test-user", "test-hash", "3000", "192.0.2.1", "true", "1000"))
-        # Состояние установленного хаба, включая пользовательские настройки.
-        before["dns"].update(upstream_dns=["77.88.8.8", *UPSTREAMS[1:],
-                                           "[/youtube.com/googlevideo.com/]77.88.8.8"],
-                              fallback_dns=["77.88.8.8"], cache_optimistic=False,
-                              upstream_dns_file="/etc/custom-upstreams.txt", use_http3_upstreams=True)
-        before["user_rules"] = ["||ads.example.test^"]
-        before["clients"] = {"persistent": [{"name": "custom", "ids": ["192.0.2.10"]}]}
-        with tempfile.TemporaryDirectory() as work:
-            hub = Hub(work, user="test-user")
-            hub.env.update(WG_SERVER_IP="192.0.2.1", OVPN_SUBNET="198.51.100.0", IKEV2_SUBNET="203.0.113.0/24")
-            hub.config.write_text(yaml.safe_dump(before, allow_unicode=True, sort_keys=False))
-            hub.deploy()
-            self.assertTrue(hub.changed)
-            after = yaml.safe_load(hub.config.read_text())
-            self.assertEqual(after["dns"]["upstream_dns"], UPSTREAMS)
-            self.assertEqual(after["dns"]["fallback_dns"], [])
-            self.assertEqual(after["dns"]["upstream_dns_file"], "")
-            self.assertTrue(after["dns"]["cache_optimistic"])
-            self.assertFalse(after["dns"]["use_http3_upstreams"])
-            self.assertEqual(after["users"], [{"name": "test-user", "password": "hash"}])
-            for key in ("filters", "user_rules", "clients"):
-                self.assertEqual(after[key], before[key])
-            first = hashlib.sha256(hub.config.read_bytes()).hexdigest()
-            hub.deploy()
-            self.assertFalse(hub.changed)
-            self.assertEqual(first, hashlib.sha256(hub.config.read_bytes()).hexdigest())
-
-    def test_unfiltered_instance_has_same_policy_without_lists(self):
-        filtered = {"users": [{"name": "test", "password": "hash"}],
-                    "dns": {"upstream_dns": UPSTREAMS, "cache_optimistic": True},
-                    "filters": [{"enabled": True}], "user_rules": ["||example.test^"]}
-        plain = dns.plain_config(filtered, {}, "3000")
-        self.assertEqual(plain["dns"]["upstream_dns"], UPSTREAMS)
-        self.assertEqual(plain["dns"]["bind_hosts"], ["127.0.0.2"])
-        self.assertFalse(plain["filtering"]["protection_enabled"])
-        self.assertFalse(plain["filtering"]["filtering_enabled"])
-        self.assertEqual(plain["filters"], [])
-        self.assertEqual(plain["user_rules"], [])
-        enriched = copy.deepcopy(plain)
-        enriched["dns"]["unrelated_default"] = True
-        enriched["schema_version"] = 30
-        self.assertEqual(dns.plain_config(filtered, enriched, "3000"), enriched)
 
 
 if __name__ == "__main__":

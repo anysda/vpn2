@@ -20,9 +20,8 @@ import unittest
 
 import yaml
 
-from adguard_support import stage
 from infra_support import ROOT, source
-from vpn2.adguard import dns
+from vpn2.adguard import dns, stage
 
 
 def patch_config(path):

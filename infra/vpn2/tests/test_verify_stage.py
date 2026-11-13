@@ -12,6 +12,8 @@ import tempfile
 import time
 import unittest
 
+import pytest
+
 from vpn2.emergency import snapshot
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -320,6 +322,36 @@ def failed(result, label):
     return any('✗ ' in line and label in line for line in result.stdout.splitlines())
 
 
+# Каждый сбой входа - отдельный прогон: verify падает, называет свою проверку и не пишет «verify done».
+ENTRY_FAULTS = {
+    'empty-exits': 'ssh экзитов', 'lost-ufw': 'ufw', 'lost-tproxy': 'tproxy:', 'lost-mark-accept': 'tproxy:',
+    'forwarding': 'ip_forward', 'firewall': 'ufw', 'fail2ban': 'fail2ban', 'node_exporter': 'node_exporter',
+    'sing-box': 'sing-box', 'wg-quick@wg0': 'wg-quick@wg0', 'openvpn-server@server': 'openvpn-server@server',
+    'strongswan-starter': 'strongswan-starter', 'anysda-ikev2-routing': 'anysda-ikev2-routing',
+    'anysda-tproxy-watchdog.timer': 'tproxy wd', 'anysda-ikev2-sync.timer': 'ikev2 sync',
+    'tproxy-rule': 'tproxy:', 'tproxy-route': 'tproxy:', 'port-7898': 'tproxy udp', 'networkd': 'networkd',
+    'ikev2-conn': 'ikev2:', 'swanctl-error': 'swanctl', 'port-500': 'udp/500', 'port-4500': 'udp/4500',
+    'xfrm': 'xfrm0', 'missing-status': 'ikev2 sync', 'bad-status': 'ikev2 sync',
+    'stale-status': 'ikev2 sync', 'future-status': 'ikev2 sync',
+    **{name: 'mgmt scrape' for name in ('empty-targets', 'missing-target', 'down-target', 'bad-json',
+                                         'stale-scrape', 'future-scrape', 'missing-scrape', 'invalid-scrape',
+                                         'naive-scrape', 'http://127.0.0.1:8428/api/v1/targets',
+                                         'curl-partial')},
+    'http://127.0.0.1:80/': 'frontend', 'http://127.0.0.1:8428/-/healthy': 'vmsingle',
+    'ssh-error': 'ssh exit', 'ss-error': 'tproxy udp', 'ip-error': 'tproxy:', 'sysctl-error': 'ip_forward',
+    'ufw-error': 'ufw', 'sysctl-partial': 'ip_forward', 'ufw-partial': 'ufw', 'ss-partial': 'tproxy udp',
+    'ip-partial': 'tproxy:', 'swanctl-partial': 'swanctl',
+}
+
+
+@pytest.mark.parametrize('fault, label', ENTRY_FAULTS.items())
+def test_individual_entry_failure(fault, label):
+    result = run_verify(fault)
+    assert result.returncode != 0, result.stdout
+    assert failed(result, label), result.stdout
+    assert 'verify FAILED:' in result.stdout and 'verify done' not in result.stdout
+
+
 class VerifyTests(unittest.TestCase):
     def test_loaded_eap_mschapv2_is_required(self):
         for fault in ('', 'ikev2-plugin-missing', 'ikev2-plugin-substring', 'ikev2-plugin-error', 'ikev2-plugin-stderr'):
@@ -355,34 +387,6 @@ class VerifyTests(unittest.TestCase):
                 result = run_verify(fault, role, youtube)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertIn('verify done', result.stdout)
-
-    def test_individual_entry_failures(self):
-        faults = {
-            'empty-exits': 'ssh экзитов', 'lost-ufw': 'ufw', 'lost-tproxy': 'tproxy:', 'lost-mark-accept': 'tproxy:',
-            'forwarding': 'ip_forward', 'firewall': 'ufw', 'fail2ban': 'fail2ban', 'node_exporter': 'node_exporter',
-            'sing-box': 'sing-box', 'wg-quick@wg0': 'wg-quick@wg0', 'openvpn-server@server': 'openvpn-server@server',
-            'strongswan-starter': 'strongswan-starter', 'anysda-ikev2-routing': 'anysda-ikev2-routing',
-            'anysda-tproxy-watchdog.timer': 'tproxy wd', 'anysda-ikev2-sync.timer': 'ikev2 sync',
-            'tproxy-rule': 'tproxy:', 'tproxy-route': 'tproxy:', 'port-7898': 'tproxy udp', 'networkd': 'networkd',
-            'ikev2-conn': 'ikev2:', 'swanctl-error': 'swanctl', 'port-500': 'udp/500', 'port-4500': 'udp/4500',
-            'xfrm': 'xfrm0', 'missing-status': 'ikev2 sync', 'bad-status': 'ikev2 sync',
-            'stale-status': 'ikev2 sync', 'future-status': 'ikev2 sync',
-            **{name: 'mgmt scrape' for name in ('empty-targets', 'missing-target', 'down-target', 'bad-json',
-                                                 'stale-scrape', 'future-scrape', 'missing-scrape', 'invalid-scrape',
-                                                 'naive-scrape', 'http://127.0.0.1:8428/api/v1/targets',
-                                                 'curl-partial')},
-            'http://127.0.0.1:80/': 'frontend', 'http://127.0.0.1:8428/-/healthy': 'vmsingle',
-            'ssh-error': 'ssh exit', 'ss-error': 'tproxy udp', 'ip-error': 'tproxy:', 'sysctl-error': 'ip_forward',
-            'ufw-error': 'ufw', 'sysctl-partial': 'ip_forward', 'ufw-partial': 'ufw', 'ss-partial': 'tproxy udp',
-            'ip-partial': 'tproxy:', 'swanctl-partial': 'swanctl',
-        }
-        for fault, label in faults.items():
-            with self.subTest(fault=fault):
-                result = run_verify(fault)
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertTrue(failed(result, label), result.stdout)
-                self.assertIn('verify FAILED:', result.stdout)
-                self.assertNotIn('verify done', result.stdout)
 
     def test_enabled_youtube_failures(self):
         for fault, check in (('missing-yt', 'yt-zapret'), ('yt-failed', 'yt-zapret'),

@@ -9,7 +9,7 @@
 действует сразу, без передеплоя. Блок `sso:` в `config.yaml` только засевает
 настройки при первой установке: после первого сохранения в «Настройках» главнее
 панель, повторный деплой их не затирает (они лежат в
-`/etc/anysda/sso-runtime.json` на entry-ноде).
+`/var/lib/anysda-vpn2/runtime/sso-runtime.json` на entry-ноде).
 
 ---
 
@@ -145,7 +145,7 @@ OpenVPN, IKEv2 и sing-box не запускаются; при старте па
 | Authentik лежит / SSO сломан | `https://<домен>/login?direct=1` → логин и пароль |
 | забыт первоначальный пароль | `cat /etc/anysda/admin-password.txt` на entry-ноде; смена пароля в профиле этот файл не обновляет |
 | надо выключить SSO совсем | «Настройки» → включить «Оставить вход по паролю» → выключить «Вход через Authentik» → «Сохранить» |
-| надо сбросить настройки SSO из панели | на entry-ноде `rm -f /etc/anysda/sso-runtime.json && docker restart anysda-vpn2` — вернутся настройки из env контейнера, заданные последним деплоем; без client_secret SSO и авторедирект выключены, парольный вход доступен независимо от `NUXT_SSO_PASSWORD_LOGIN`. При полном включённом SSO для парольного входа нужен `NUXT_SSO_PASSWORD_LOGIN=true` |
+| надо сбросить настройки SSO из панели | на entry-ноде `rm -f /var/lib/anysda-vpn2/runtime/sso-runtime.json && docker restart anysda-vpn2` — вернутся настройки из env контейнера, заданные последним деплоем; без client_secret SSO и авторедирект выключены, парольный вход доступен независимо от `NUXT_SSO_PASSWORD_LOGIN`. При полном включённом SSO для парольного входа нужен `NUXT_SSO_PASSWORD_LOGIN=true` |
 
 ⚠️ Выключенный «вход по паролю» рубит его наглухо — **вместе с break-glass**.
 Профиль даёт выключить его только сессии, вошедшей через Authentik, отдельным
@@ -170,14 +170,13 @@ OpenVPN, IKEv2 и sing-box не запускаются; при старте па
 | файл | что делает |
 |---|---|
 | `app/server/routes/auth/authentik.get.ts` | точка входа и callback `/auth/authentik` |
-| `app/server/utils/auth.ts` | better-auth: провайдер `authentik` (genericOAuth), сессии |
-| `app/server/utils/sso.ts` | настройки (`/etc/anysda/sso-runtime.json`, засев из env), allow-список, привязка по `sub`, отказы |
+| `app/server/utils/auth.ts` | better-auth: провайдер `authentik` (genericOAuth), сессии; настройки SSO (`/var/lib/anysda-vpn2/runtime/sso-runtime.json`, засев из env), allow-список, привязка по `sub`, отказы |
 | `app/server/resources/settings.ts` | настройки из панели: чтение, сохранение с проверками, «Проверить» |
 | `app/app/components/Settings/Sso.vue` | карточка «Вход через Authentik» в «Настройках» |
 | `app/app/middleware/auth.global.ts` | авторедирект неавторизованного в IdP |
 | `app/app/pages/login.vue` | форма break-glass, кнопка входа, коды ошибок |
 | `infra/vpn2/src/vpn2/containers/panel.py`, `compose.py` | env контейнера (засев) + защёлка «SSO без HTTPS» |
-| `infra/lib/config2env.py` | блок `sso:` из `config.yaml` → `ru.env` (засев) |
+| `infra/vpn2/src/vpn2/nodevars.py` | блок `sso:` из `config.yaml` → переменные entry `SSO_*` (засев) |
 
 Протокол ведёт [better-auth](https://www.better-auth.com/) (плагин
 `genericOAuth` с discovery): `state`, PKCE и обмен кода — его, свой код только

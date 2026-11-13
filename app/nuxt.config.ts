@@ -80,7 +80,7 @@ export default defineNuxtConfig({
     // Заполняется стадией 30-frontend из блока `sso:` в config.yaml:
     //   NUXT_OAUTH_OIDC_CLIENT_ID / _CLIENT_SECRET / _OPENID_CONFIG / _REDIRECT_URL
     // Это и блоки sso ниже — только засев: после сохранения в профиле панели
-    // действует /etc/anysda/sso-runtime.json (server/utils/sso.ts).
+    // действует /var/lib/anysda-vpn2/runtime/sso-runtime.json (server/utils/auth.ts).
     // Протокол ведёт better-auth, вход и возврат — server/routes/auth/authentik.get.ts.
     oauth: {
       oidc: {

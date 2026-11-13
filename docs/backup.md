@@ -10,7 +10,7 @@
   telegram-runtime, manual-routes, session-secret;
 - серверный приватный ключ WireGuard (`/etc/wireguard/wg0.conf`) - без него
   клиентские `.conf` ломаются;
-- OpenVPN CA + PKI (`/etc/openvpn/pki/`, `server.conf`, `ccd/`, `crl.pem`) -
+- OpenVPN CA + PKI (`/etc/openvpn/server/`: `pki/`, `server.conf`, `ccd/`, `crl.pem`) -
   без них ломаются существующие `.ovpn`;
 - IKEv2 CA, серверный сертификат и ключ, конфиги swanctl (`/etc/strongswan`,
   `/etc/swanctl`);
@@ -96,9 +96,10 @@ Passphrase генерирует `setup.sh` и пишет в `config.yaml`. Ст�
 `26-backup` ставит `age`, `sqlite3` (и `rclone` при `backend: s3`),
 кладёт скрипты `/usr/local/bin/anysda-{backup,restore,backup-list}.sh`,
 рендерит `/etc/anysda/backup.env` и включает таймер. Сами скрипты - короткий
-запуск команд `vpn2 backup`, `vpn2 restore` и `vpn2 backup-list` из клона, с
-которого шёл деплой (путь к нему стадия пишет в `/etc/anysda/source-root`);
-архивы прежних версий читаются как раньше.
+запуск команд `vpn2 backup`, `vpn2 restore` и `vpn2 backup-list` из окружения
+деплоя `/opt/vpn2`; без него - из клона, с которого шёл деплой (путь к нему
+стадия пишет в `/etc/anysda/source-root`). Архивы прежних версий читаются
+как раньше.
 
 ## config.yaml - мастер-секрет
 

@@ -651,7 +651,7 @@ class LateExitClock:
     def monotonic(self):
         return self.now
 
-    time = perf_counter = monotonic
+    time = monotonic
 
     def sleep(self, seconds):
         self.now += seconds

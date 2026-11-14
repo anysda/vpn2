@@ -168,7 +168,7 @@ class Deploy:
                          '-e', f'manifest={self.manifest}', '-e', f'guard={guard}', env=env)
         if guard:
             code = self.guard_finish(stage, nodes) and 1 or code
-        elif self.service('--tags', 'cleanup', '--limit', nodes, **QUIET):
+        elif nodes != 'ru' and self.service('--tags', 'cleanup', '--limit', nodes, **QUIET):
             warn(f'[{stage} → {nodes}] не удалось убрать /tmp/anysda')
         return code
 

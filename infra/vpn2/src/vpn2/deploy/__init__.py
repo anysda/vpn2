@@ -282,7 +282,15 @@ def install_prereqs():
             raise SystemExit(code)
     for name in commands:
         print(f'  {name:<10} {G}✓{E}', flush=True)
+    # Docker свежего entry (им проверяются образы выпуска) ставится, пока собирается venv.
+    docker = None
+    if not shutil.which('docker') and not Path('/var/lib/anysda-vpn2/db.sqlite').exists() and not Path('/etc/anysda').is_dir():
+        docker = subprocess.Popen(['bash', '-c', 'set -euo pipefail; HOST_TAG=ru; source "$0"; docker_apt_source; apt_update_if_stale\n'
+                                   'DEBIAN_FRONTEND=noninteractive apt_get install -y -qq "${DOCKER_PKGS[@]}" "${DOCKER_SKIP[@]}" >/dev/null\n'
+                                   'systemctl enable --now docker', INFRA / 'lib/anysda-svc.sh'], stdin=subprocess.DEVNULL)
     ensure_venv()
+    if docker and docker.wait():
+        die('Docker на entry не установился, причина выше')
     os.environ['VPN2_WHEEL'] = str(wheel_path())
 
 

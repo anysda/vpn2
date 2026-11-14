@@ -79,20 +79,6 @@
       changed_when: false
       tags: [release]
       when: manifest | default('') != ''
-    - name: Docker на свежем entry - им проверяются образы
-      ansible.builtin.shell: |
-        set -euo pipefail
-        command -v docker >/dev/null && exit 0
-        test ! -e /var/lib/anysda-vpn2/db.sqlite && test ! -d /etc/anysda || exit 1
-        HOST_TAG=ru; source /tmp/anysda/anysda-svc.sh
-        apt_update_if_stale; apt_get install -y -qq ca-certificates curl gnupg
-        docker_apt_source; apt_get update -qq
-        apt_get install -y -qq "${DOCKER_PKGS[@]}" "${DOCKER_SKIP[@]}"
-        systemctl enable --now docker
-      args: {executable: /bin/bash}
-      changed_when: false
-      tags: [release]
-      when: manifest | default('') != '' and inventory_hostname == 'ru'
     - name: Образы и бинарники выпуска
       ansible.builtin.command: python3 -m vpn2.cli state prepare --role {{ vpn2_node.role }} {{ images }}
       changed_when: false

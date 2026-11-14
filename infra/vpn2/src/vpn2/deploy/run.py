@@ -13,7 +13,7 @@ from pathlib import Path
 
 from vpn2 import ports, release, stages
 from vpn2.config import STATE_DIR
-from vpn2.deploy import CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, log, ok, prep_keys, report, step, svc, warn
+from vpn2.deploy import CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, log, ok, prep_keys, report, step, warn
 
 PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
 # Стадии, что трогают фаервол: на время каждой узел держит сторожа (vpn2/fwguard.py).
@@ -249,12 +249,6 @@ class Deploy:
     def do_all(self):
         report.banner(self)
         t0, verify = time.time(), 0
-        if Path('/run/systemd/system').is_dir():
-            if code := svc('nftables_preserve_rules'):
-                raise SystemExit(code)
-            step('автообновления entry на паузу до конца деплоя')
-            if code := svc('apt_auto_pause', tag='ru'):
-                raise SystemExit(code)
         self.preflight()
         for stage in self.stages:
             group = {'entry': 'ru', 'exits': 'foreign'}.get(stage.hosts, 'all')

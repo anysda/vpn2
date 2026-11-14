@@ -38,7 +38,7 @@ for match, code, pause in json.loads(os.environ.get('FAKE_RULES', '[]')):
 RUNNER = '''import sys
 from vpn2.deploy import __main__ as main, run
 main.install_prereqs = run.prep_keys = lambda: None
-run.svc = lambda *_args, **_options: 0
+main.svc = lambda *_args, **_options: 0
 sys.exit(main.main(sys.argv[1:]))
 '''
 
@@ -106,7 +106,7 @@ def inproc(tree, capfd, monkeypatch):
         monkeypatch.setattr(config, 'STATE_DIR', tree / 'state')
         reload()
         main.install_prereqs = run.prep_keys = lambda: None
-        run.svc = lambda *_args, **_options: 0
+        main.svc = lambda *_args, **_options: 0
         capfd.readouterr()
         code = main.main(list(args))
         out, err = capfd.readouterr()

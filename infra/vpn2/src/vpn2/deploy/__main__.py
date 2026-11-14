@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from vpn2.config import STATE_DIR
-from vpn2.deploy import CONFIG, INFRA, REPO, ROOT, die, install_prereqs, migrate_state, report
+from vpn2.deploy import CONFIG, INFRA, REPO, ROOT, die, install_prereqs, migrate_state, report, step, svc
 from vpn2.deploy.run import Deploy, Interrupted
 
 
@@ -38,6 +38,13 @@ def dispatch(deploy, argv):
         deploy.stage_nodes(action, [])
         # Стадия entry на экзите (и наоборот) - отказ, а не пустой проход с кодом 0.
         deploy.stage_nodes(action, deploy.expand(argv[1]), refuse_empty=True)
+    # Автообновления свежей ОС стартуют в первые минуты после загрузки: пауза - до любого apt деплоя.
+    if action in ('', 'recover') and os.path.isdir('/run/systemd/system'):
+        if code := svc('nftables_preserve_rules'):
+            return code
+        step('автообновления entry на паузу до конца деплоя')
+        if code := svc('apt_auto_pause', tag='ru'):
+            return code
     install_prereqs()
     if action != '99-verify':
         deploy.release_start(action)

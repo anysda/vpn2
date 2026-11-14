@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from vpn2 import fsutil, notify, probe
 
@@ -704,10 +705,11 @@ class Watchdog:
         self.tg_miss = 0
         if t < self.tg_search:
             return
-        found, _ = self.api.delay_many([m for m in group.get('all') or [] if m in alive and m != now],
-                                       TG_PROBE_URL, timeout_ms=TIMEOUT_MS, http_timeout=HTTP_TIMEOUT,
-                                       deadline=HTTP_TIMEOUT + 0.5)
-        found = {m: d for m, d in found.items() if d is not None}
+        others = [m for m in group.get('all') or [] if m in alive and m != now]
+        with ThreadPoolExecutor(max(1, len(others))) as pool:
+            delays = pool.map(lambda m: self.api.delay(m, TG_PROBE_URL, timeout_ms=TIMEOUT_MS,
+                                                       http_timeout=HTTP_TIMEOUT)[0], others)
+            found = {m: d for m, d in zip(others, delays) if d is not None}
         main = (self.proxies.get(GROUP) or {}).get('now')
         self.say('tg', '' if found else f'{TG_GROUP}: Bot API не отвечает ни через один экзит, '
                                         f'повторю через {TG_INTERVAL:.0f}с')

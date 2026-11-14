@@ -1,14 +1,18 @@
 """Сторож экзитов: то, что обещает docs/failover.md, на виртуальных часах.
 
-Стенд подменяет clash-api и часы; пробы приходят в Health.record так же, как от
+Стенд подменяет HTTP под настоящим ClashApi и часы; пробы приходят в Health.record так же, как от
 потоков проб: выход отвечает, пока жив он сам и выбранная нога его канала.
 """
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
+import urllib.parse
 
+from vpn2 import probe
 from vpn2.watchdog import failover as fo, failover_env
 
 KINDS = ('direct', 'warp')
@@ -44,28 +48,31 @@ class Stand:
         fo._store = lambda _name, _data: None
         fo._stored = lambda _name: {}
         fo.DISABLED_FILE = os.path.join(self.tmp.name, 'exits-disabled.json')
-        self.dog = fo.Watchdog(api=self)
+        self.dog = fo.Watchdog(api=probe.ClashApi('http://clash', 's', opener=self))
         self.dog.health.watch = lambda tags: setattr(self.dog.health, 'want', set(tags))
 
-    # clash-api
-    def proxies(self, **_):
-        return self.p
-
-    def connections(self, **_):
-        return self.conns
-
-    def select(self, group, name, **_):
-        assert name in self.p[group]['all'], (group, name)
-        self.p[group]['now'] = name
-
-    def close(self, conn_id, **_):
-        self.closed.append(conn_id)
-
-    def delay(self, tag, _url, **_):
-        return (40, '') if self.tg_ok is None or tag in self.tg_ok else (None, 'таймаут')
-
-    def delay_many(self, tags, url, **_):
-        return {t: self.delay(t, url)[0] for t in tags}, {}
+    # HTTP clash-api под настоящим probe.ClashApi
+    def open(self, req, **_):
+        url = urllib.parse.urlsplit(req.full_url)
+        path = [urllib.parse.unquote(x) for x in url.path.split('/')[1:]]
+        body = json.loads(req.data) if req.data else None
+        answer = {}
+        if path == ['proxies']:
+            answer = {'proxies': self.p}
+        elif path == ['connections']:
+            answer = {'connections': self.conns}
+        elif path[0] == 'proxies' and req.get_method() == 'PUT':
+            assert body['name'] in self.p[path[1]]['all'], (path[1], body)
+            self.p[path[1]]['now'] = body['name']
+        elif path[0] == 'connections' and req.get_method() == 'DELETE':
+            self.closed.append(path[1])
+        elif path[2:] == ['delay']:
+            if self.tg_ok is not None and path[1] not in self.tg_ok:
+                raise urllib.error.HTTPError(req.full_url, 504, 'Timeout', {}, None)
+            answer = {'delay': 40}
+        else:
+            raise AssertionError(req.full_url)
+        return io.BytesIO(json.dumps(answer).encode())
 
     # стенд
     def answers(self, tag):

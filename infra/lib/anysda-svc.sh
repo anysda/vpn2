@@ -297,8 +297,8 @@ apt_prepare() {
   fi
 }
 
-# apt_sshd_first: до первой 00-bootstrap и до сторожа фаервола обновляет openssh
-# отдельным заходом и ждёт баннер sshd; не дождался - отказ до правок фаервола.
+# apt_sshd_first: до первой 00-bootstrap и до сторожа фаервола обновляет openssh (и тем же
+# заходом корневые сертификаты для base) и ждёт баннер sshd; не дождался - отказ до правок фаервола.
 APT_SSHD_STAMP=/var/anysda/.stamps/00-bootstrap
 APT_SSHD_WAIT=60
 apt_sshd_versions() {
@@ -325,7 +325,7 @@ apt_sshd_first() {
   svc_say "openssh-server $installed -> $candidate: обновляю до включения сторожа фаервола"
   DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt_get install -y -qq --only-upgrade \
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-    openssh-server openssh-client openssh-sftp-server >/dev/null
+    openssh-server openssh-client openssh-sftp-server ca-certificates >/dev/null
   t0=$SECONDS
   until sshd_answers; do
     if (( SECONDS - t0 >= APT_SSHD_WAIT )); then

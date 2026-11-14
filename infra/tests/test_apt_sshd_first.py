@@ -36,12 +36,12 @@ echo "rc=$rc"
             calls = root / 'calls'
             return result, calls.read_text().splitlines() if calls.exists() else []
 
-    def test_newer_candidate_upgrades_only_openssh_and_waits_for_sshd(self):
+    def test_newer_candidate_upgrades_openssh_with_certificates_and_waits_for_sshd(self):
         result, calls = self.run_first()
         self.assertEqual(result.stdout.splitlines()[-1], 'rc=0', result.stderr)
         self.assertEqual(calls[0], 'update')
         self.assertTrue(calls[1].startswith('apt_get install -y -qq --only-upgrade '), calls)
-        self.assertTrue(calls[1].endswith(' openssh-server openssh-client openssh-sftp-server'), calls)
+        self.assertTrue(calls[1].endswith(' openssh-server openssh-client openssh-sftp-server ca-certificates'), calls)
         self.assertEqual(calls[2:], ['answers'])
         self.assertIn('1:9.6p1-3 -> 1:9.6p1-3ubuntu13.5', result.stdout)
 

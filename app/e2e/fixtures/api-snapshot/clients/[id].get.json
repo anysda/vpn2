@@ -15,7 +15,42 @@
       "tgUsername": null,
       "preferredExit": null,
       "createdAt": "<time>",
-      "operation": null,
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "unfreeze",
+        "version": 0,
+        "status": "confirmed",
+        "protocols": {
+          "wg": {
+            "state": "confirmed",
+            "confirmedVersion": 0,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "confirmed",
+            "confirmedVersion": 0,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "confirmed",
+            "confirmedVersion": 0,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      },
       "status": "active",
       "tgLinked": false,
       "rxTotal": 0,
@@ -52,7 +87,42 @@
       "tgUsername": null,
       "preferredExit": null,
       "createdAt": "<time>",
-      "operation": null,
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "unfreeze",
+        "version": 0,
+        "status": "confirmed",
+        "protocols": {
+          "wg": {
+            "state": "confirmed",
+            "confirmedVersion": 0,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "confirmed",
+            "confirmedVersion": 0,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "confirmed",
+            "confirmedVersion": 0,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      },
       "status": "active",
       "tgLinked": false,
       "rxTotal": 0,

@@ -20,6 +20,7 @@ const MISSING_OPERATION = '00000000-0000-4000-8000-000000000000'
  *   admin: (method: string, path: string, data?: unknown) => Promise<Reply>,
  *   bot: (method: string, path: string, data?: unknown, auth?: boolean) => Promise<Reply>,
  *   settled: (operationId: string) => Promise<void>,
+ *   initialized: (clientIds: (string | number)[]) => Promise<void>,
  *   gone: (path: string) => Promise<void>,
  *   delivered: (deliveryIds: string[]) => Promise<void>,
  * }} Io
@@ -214,6 +215,12 @@ export async function walk(io) {
   const second = await adminCall('clients/index.post', 'POST', '/api/clients', { name: `${CLIENT_PREFIX}second` })
   vars.second = second.json?.id ?? 0
   await adminCall('clients/index.post', 'POST', '/api/clients', { name: '' })
+  // Клиент из админского чата бота.
+  const bot = await botCall('bot/admin/clients/index.post', 'POST', '/api/bot/admin/clients', { name: `${CLIENT_PREFIX}bot`, filterTraffic: true })
+  vars.bot = bot.json?.id ?? 0
+  // Первичную сверку нового клиента заводит cron панели раз в 60 с (server/plugins/cron.ts):
+  // чтения - после неё, иначе ответ зависит от того, успел ли тик.
+  await io.initialized([vars.main, vars.second, vars.bot])
   await adminCall('clients/index.get', 'GET', '/api/clients')
   await adminCall('clients/[id].get', 'GET', '/api/clients/{second}')
   vars.missing = MISSING_ID
@@ -246,9 +253,7 @@ export async function walk(io) {
   await adminCall('clients/top.get', 'GET', '/api/clients/top?period=year')
   await adminCall('clients/traffic.get', 'GET', '/api/clients/traffic')
 
-  // Бот: клиент, созданный из админского чата.
-  const bot = await botCall('bot/admin/clients/index.post', 'POST', '/api/bot/admin/clients', { name: `${CLIENT_PREFIX}bot`, filterTraffic: true })
-  vars.bot = bot.json?.id ?? 0
+  // Бот: клиенты из админского чата.
   await botCall('bot/admin/clients/index.post', 'POST', '/api/bot/admin/clients', { name: '' })
   await botCall('bot/admin/clients/index.get', 'GET', '/api/bot/admin/clients')
   const card = await botCall('bot/admin/clients/[id].get', 'GET', '/api/bot/admin/clients/{bot}')

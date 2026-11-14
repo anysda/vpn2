@@ -96,6 +96,11 @@ test.describe('снимок ответов API панели', () => {
         await expect.poll(async () => (await (await api.get(`/api/access-operations/${id}`)).json()).status,
           { timeout: 45_000 }).toBe('confirmed')
       },
+      initialized: async (ids: (string | number)[]) => {
+        await expect.poll(async () => Promise.all(ids.map(async id =>
+          (await (await api.get(`/api/clients/${id}`)).json()).operation?.status)),
+        { timeout: 100_000, intervals: [1_000] }).toEqual(ids.map(() => 'confirmed'))
+      },
       gone: async (path: string) => {
         await expect.poll(async () => (await api.get(path)).status(), { timeout: 45_000 }).toBe(404)
       },

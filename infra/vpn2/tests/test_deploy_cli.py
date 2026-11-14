@@ -279,7 +279,14 @@ def test_killed_in_firewall_stage(tree, sig, code):
         if any('prepare,05-mgmt-mesh' in call['args'] for call in plays(tree)):
             break
         time.sleep(0.1)
-    time.sleep(6)  # пульс сторожа успел начаться
+    # Пульс сторожа этой стадии пошёл повторно: круг по всем трём узлам после arm.
+    def touches():
+        return len([call for call in plays(tree, 'ssh') if call['command'].startswith('touch')])
+
+    armed, deadline = touches(), time.monotonic() + 30
+    while touches() < armed + 3:
+        assert time.monotonic() < deadline, 'пульс сторожа не пошёл повторно'
+        time.sleep(0.1)
     proc.send_signal(sig)
     _out, err = proc.communicate(timeout=30)
     assert proc.returncode == code, err

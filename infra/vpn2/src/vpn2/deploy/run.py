@@ -110,18 +110,21 @@ class Deploy:
     def service(self, *args, **options):
         return self.play(PLAYBOOK, '-e', f'manifest={self.manifest}', *args, **options)
 
-    def fresh(self, node, command, stdout=subprocess.DEVNULL):
+    def fresh(self, node, command, show=False):
         """Новый ssh-вход на узел с теми же ключом и паролем, что у ansible, без общего соединения:
-        открытое соединение живёт и при сломанном правиле. Код команды; 255 - вход не прошёл."""
+        открытое соединение живёт и при сломанном правиле. Код команды; 255 - вход не прошёл.
+        Вывод show печатает деплой: ssh без tty ставит O_NONBLOCK на свой stdout, а общий нужен ansible-playbook."""
         host, password, options = self.logins[node]
         ssh = ['ssh', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', *shlex.split(options),
                '-i', str(Path.home() / '.ssh/id_ed25519'), f'root@{host}', command]
         try:
-            return subprocess.run(['sshpass', '-e', *ssh] if password else [*ssh[:1], '-o', 'BatchMode=yes', *ssh[1:]],
-                                  env={**os.environ, 'SSHPASS': password}, stdin=subprocess.DEVNULL, stdout=stdout,
-                                  stderr=subprocess.DEVNULL, timeout=30).returncode
+            done = subprocess.run(['sshpass', '-e', *ssh] if password else [*ssh[:1], '-o', 'BatchMode=yes', *ssh[1:]],
+                                  env={**os.environ, 'SSHPASS': password}, stdin=subprocess.DEVNULL, text=True,
+                                  stdout=subprocess.PIPE if show else subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
         except subprocess.TimeoutExpired:
             return 255
+        print(done.stdout or '', end='', flush=True)
+        return done.returncode
 
     def each(self, nodes, command, **options):
         if not nodes:
@@ -179,7 +182,7 @@ class Deploy:
         deadline, left, code = time.time() + GUARD_WINDOW + 30, nodes.split(','), 0
         while True:
             done = self.each(left, lambda node: f'python3 -I {GUARD}/fwguard.py disarm {stage}'
-                             + ('' if node == 'ru' else '; code=$?; rm -rf /tmp/anysda; exit $code'), stdout=None)
+                             + ('' if node == 'ru' else '; code=$?; rm -rf /tmp/anysda; exit $code'), show=True)
             code = code or any(found not in (0, 255) for found in done.values())
             left = [node for node, found in done.items() if found == 255]
             if not left or time.time() >= deadline:

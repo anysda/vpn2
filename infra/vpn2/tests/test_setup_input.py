@@ -286,9 +286,12 @@ def test_bot_token_is_not_echoed_on_terminal(tmp_path):
                     for stream in select.select([process.stdout, master], [], [], 0.1)[0]:
                         chunk = os.read(stream if isinstance(stream, int) else stream.fileno(), 65536)
                         transcript, pending = transcript + chunk, pending + chunk
-                time.sleep(0.05)  # read -s после печати вопроса, до ввода
                 if prompt == 'Токен бота':
-                    token_echo = bool(termios.tcgetattr(slave)[3] & termios.ECHO)
+                    # Вопрос печатается до того, как ввод гасит ECHO: ждём само гашение.
+                    deadline = time.monotonic() + 5
+                    while (token_echo := bool(termios.tcgetattr(slave)[3] & termios.ECHO)) and \
+                            time.monotonic() < deadline:
+                        time.sleep(0.01)
                 os.write(master, (answer + '\n').encode())
             transcript += process.communicate(timeout=5)[0]
             assert process.returncode == 0, transcript.decode()

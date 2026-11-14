@@ -210,7 +210,7 @@ def observe(config, state, cert, error, now):
         if not state.get('failed'):
             state['failed_fingerprint'] = fingerprint
         state['failed'] = True
-        state['error'] = error
+        state['error'], state['failed_host'] = error, config['host']
         if now - state.get('last_alert', -1e12) >= config.get('notify_hours', 6) * 3600:
             expiry = utc(state['expires']) if state.get('expires') else 'сертификата нет'
             queue.append({'type': 'system_alert', 'subject': 'TLS: ошибка выпуска/обновления',
@@ -321,7 +321,8 @@ def tick(config, state_path, initial=False):
     cert = current_certificate(config, now)
     error = safe_error(journal(state), config['host'])
     if initial and not cert:
-        error = error or f"ACME: initial issuance did not complete within {config.get('wait', 60)}s"
+        error = (error or (state.get('error') if state.get('failed') else None)
+                 or f"ACME: initial issuance did not complete within {config.get('wait', 60)}s")
     closed = None
     if cert:
         export_certificate(config, cert)
@@ -409,7 +410,13 @@ def main(argv=None):
     with lock(state_path.with_suffix('.lock')):
         if args.initial:
             config['wait'] = args.wait
-            deadline = time.monotonic() + args.wait
-            while not current_certificate(config, time.time()) and time.monotonic() < deadline:
+            # Caddy повторяет отказанный выпуск не раньше чем через минуту: ждать есть смысл,
+            # только пока выпуск на этот хост не отказал - ни в прошлый раз, ни сейчас.
+            state = read_json(state_path, {})
+            seen = dict(state)
+            failed = state.get('failed') and state.get('failed_host') == config['host']
+            deadline = time.monotonic() + (0 if failed else args.wait)
+            while (not current_certificate(config, time.time()) and time.monotonic() < deadline
+                   and not safe_error(journal(seen), config['host'])):
                 time.sleep(2)
         tick(config, state_path, args.initial)

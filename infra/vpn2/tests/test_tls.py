@@ -247,3 +247,29 @@ def test_exit_activation_only_updates_window(tmp_path):
     assert [call.args[0][0] for call in run.call_args_list] == ['caddy', 'systemctl']
     assert sorted(os.listdir(tmp_path)) == ['vpn2-tls.conf']
     assert 'renewal_window_ratio 0.285714286' in (tmp_path / 'vpn2-tls.conf').read_text()
+
+
+def test_initial_wait_ends_on_refusal_and_is_skipped_while_refusal_is_latched(tmp_path, capsys):
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'role': 'exit', 'host': '192.0.2.1', 'storage': str(tmp_path / 'storage')}))
+    log = []
+
+    def journal(state):
+        # Как journalctl --after-cursor; Caddy отказывает после первого взгляда в журнал.
+        new, state['cursor'] = log[state.get('cursor', 0):], len(log)
+        log[:] = log or [REFUSED]
+        return new
+
+    with patch.object(tls, 'journal', side_effect=journal), \
+            patch.object(tls.time, 'sleep') as sleep:
+        tls.main(['--initial', '--config', str(config), '--wait', '60'])
+        assert sleep.call_count == 1, 'отказ в журнале Caddy обрывает ожидание'
+        state = json.loads((tmp_path / 'state.json').read_text())
+        assert state['failed'] and state['failed_host'] == '192.0.2.1'
+        sleep.reset_mock()
+        tls.main(['--initial', '--config', str(config), '--wait', '60'])
+        sleep.assert_not_called()
+        assert capsys.readouterr().out.count('ACME: connection refused') == 2
+        config.write_text(json.dumps({'role': 'exit', 'host': '192.0.2.9', 'storage': str(tmp_path / 'storage')}))
+        tls.main(['--initial', '--config', str(config), '--wait', '1'])
+        assert sleep.called, 'новый хост ждёт первый выпуск'

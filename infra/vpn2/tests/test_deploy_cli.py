@@ -20,7 +20,7 @@ PLAYBOOK = r'''#!PYTHON
 import json, os, sys, time
 args, argv = ' '.join(sys.argv[1:]), sys.argv[1:]
 with open(os.environ['FAKE_PLAYS'], 'a') as out:
-    out.write(json.dumps({'args': args, 'follows': os.environ.get('VPN2_PANEL_FOLLOWS'), 'pid': os.getpid()}) + '\n')
+    out.write(json.dumps({'args': args, 'follows': os.environ.get('VPN2_PANEL_FOLLOWS'), 'pid': os.getpid(), 't': time.time()}) + '\n')
 extra = dict(argv[i + 1].split('=', 1) for i, a in enumerate(argv) if a == '-e')
 hosts = argv[argv.index('--limit') + 1].split(',') if '--limit' in argv else []
 for host in hosts if 'prepare,99-verify' in args else ():
@@ -209,7 +209,7 @@ def test_one_stage_runs_only_its_play_on_its_nodes(tree, inproc):
 
 
 def test_full_deploy_follows_site_yml(tree, inproc):
-    done = inproc()
+    done = inproc(FAKE_RULES=json.dumps([['prepare,19-yt-zapret', 0, 2]]))
     assert done.returncode == 0, done.stderr
     calls = plays(tree)
     staged = [(call['args'].split('--tags prepare,')[1].split()[0], call['args'].split('--limit ')[1].split()[0], call['follows'])
@@ -227,6 +227,10 @@ def test_full_deploy_follows_site_yml(tree, inproc):
     at = [item[0] for item in staged].index
     assert at('05-mgmt-mesh') < at('10-foreign') and staged.index(('99-verify', 'gb', None)) < at('20-ru-router')
     assert at('22-adguard') < staged.index(('23-emergency', 'us,gb', None)) < at('30-frontend')
+    # Секреты экзитов тянет цепочка экзитов за 10-foreign, один раз, пока entry ещё в 19-yt-zapret.
+    pulled = [call['t'] for call in calls if '--tags secrets' in call['args']]
+    zapret = next(call['t'] for call in calls if 'prepare,19-yt-zapret' in call['args'])
+    assert len(pulled) == 1 and pulled[0] < zapret + 2
     assert [call['args'].split('--tags ')[1].split()[0] for call in calls][:3] == ['journal', 'release', 'preflight']
     assert '--tags old-layout' in calls[-2]['args'] and '--tags complete' in calls[-1]['args']
     assert 'деплой завершён' in done.stdout and re.search(r'│  30-frontend +ru +\d+s +│', done.stdout)

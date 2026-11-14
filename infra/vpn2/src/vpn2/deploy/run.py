@@ -45,7 +45,7 @@ class Deploy:
         self.stage_log, self.verify_warnings, self.deploy_warnings, self.skipped = [], [], [], []
         self.mutating = self.opened = self.guard_warned = self.closing = False
         self.children, self.beat, self.beats, self.nodes, self.logins = set(), None, 0, {}, {}
-        self.outside = False
+        self.outside = self.pulled = False
         self.lock = threading.Lock()
         self.load_nodes()
 
@@ -232,7 +232,8 @@ class Deploy:
         if stage == '00-bootstrap':
             prep_keys()
         elif stage == '20-ru-router':
-            self.pull_secrets()
+            if not self.pulled:
+                self.pull_secrets()
             self.warn_insecure_exits()
         elif stage == '23-emergency' and subprocess.run([sys.executable, '-B', '-m', 'vpn2.emergency', 'provision', REPO]).returncode:
             raise SystemExit(1)
@@ -295,12 +296,15 @@ class Deploy:
         self.stage_log += rows
 
     def beside(self, stage):
-        """Экзитная часть стадии своим потоком; join() дожидается её и валит деплой, если она упала."""
+        """Экзитная часть стадии своим потоком; join() дожидается её и валит деплой, если она упала.
+        Секреты экзитов для 20-ru-router тянет та же цепочка, пока entry ещё в своих стадиях."""
         failed = []
 
         def track():
             try:
                 self.run_stage(stage, 'foreign')
+                if stage == '10-foreign':
+                    self.pull_secrets()
             except BaseException as error:
                 failed.append(error)
 
@@ -417,6 +421,7 @@ class Deploy:
     def pull_secrets(self):
         """Перед 20-ru-router: пароли каналов, сертификат Hysteria2, host-key и ключ Reality каждого экзита."""
         log('prep: тяну секреты Hysteria2 + clash-api с экзит-нод')
+        self.pulled = True
         folder = INFRA / 'secrets'
         secrets = folder / 'foreign-secrets.env'
         cached = secrets.read_text() if secrets.is_file() else ''

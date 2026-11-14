@@ -19,6 +19,6 @@ def _accept_new(spec):
 ansible_mitogen.connection.CONNECTION_METHOD['ssh'] = _accept_new
 
 
-class StrategyModule(ansible_mitogen.strategy.StrategyMixin,
+class StrategyModule(ansible_mitogen.strategy.StrategyMixin,  # noqa: V102 - класс находит ansible по имени
                      ansible_mitogen.loaders.strategy_loader.get('linear', class_only=True)):
     pass

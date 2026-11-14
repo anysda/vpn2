@@ -84,7 +84,7 @@ def rollback_plan(root, journal):
     migrations = 'app/server/database/migrations/'
     git = ['git', '-C', str(root)]
     try:
-        tag = command(git + ['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*', 'HEAD^']).strip()
+        tag = command(git + ['describe', '--tags', '--abbrev=0', '--match', '[0-9]*', 'HEAD^']).strip()
         entries = json.loads(command(git + ['show', f'{tag}:{migrations}meta/_journal.json']))['entries']
         previous = [{'when': e['when'], 'sha256': hashlib.sha256(subprocess.run(
             git + ['show', f"{tag}:{migrations}{e['tag']}.sql"], capture_output=True, check=True, timeout=60).stdout

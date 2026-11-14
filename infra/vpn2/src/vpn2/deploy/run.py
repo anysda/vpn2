@@ -20,6 +20,8 @@ PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
 GUARDED = {'00-bootstrap', '05-mgmt-mesh', '10-foreign', '19-yt-zapret', '20-ru-router', '22-adguard',
            '23-emergency', '27-ikev2', '28-wireguard', '29-openvpn', '30-frontend'}
 GUARD_WINDOW = int(os.environ.get('VPN2_FW_GUARD_WINDOW') or 90)
+# Пульс - запуск ansible (~1,3 с ЦП одного ядра entry): шесть попыток на окно сторожа хватает и на пути с потерями.
+BEAT_EVERY = max(5, GUARD_WINDOW // 6)
 # Плеи идут на Mitogen (ansible.cfg); pre-flight - ssh-плагином: он разбирает текст отказа ssh.
 SSH_PLUGIN = {'ANSIBLE_STRATEGY': 'linear', 'ANSIBLE_TIMEOUT': '10'}
 # Пульс сторожу - только новым ssh-входом: открытое соединение живёт и при сломанном правиле.
@@ -106,7 +108,7 @@ class Deploy:
         return self.play(PLAYBOOK, '-e', f'manifest={self.manifest}', *args, **options)
 
     def guard_beat(self):
-        """Пульс сторожу каждые 5 с новым входом, пока идёт хоть одна стадия со сторожем;
+        """Пульс сторожу новым входом раз в BEAT_EVERY с, пока идёт хоть одна стадия со сторожем;
         вход на entry снаружи видят только экзиты."""
         with self.lock:
             self.beats += 1
@@ -122,7 +124,7 @@ class Deploy:
             stop, current = threading.Event(), []
 
             def beat():
-                while not stop.wait(5):
+                while not stop.wait(BEAT_EVERY):
                     outside = (self.tmp / 'entry-outside').exists()
                     try:
                         current[:] = [self.spawn(PLAYBOOK, '--tags', 'beat', '--limit', nodes, '-e', f'entry_outside={outside}',

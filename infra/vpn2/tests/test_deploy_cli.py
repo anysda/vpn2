@@ -255,7 +255,7 @@ def test_failed_exit_track_stops_the_deploy_before_the_stage_that_needs_exits(tr
 @pytest.mark.parametrize('sig, code', [(signal.SIGTERM, 143), (signal.SIGINT, 130)])
 def test_killed_in_firewall_stage(tree, sig, code):
     """Сигнал посреди стадии с фаерволом: плей стадии и пульс гаснут, журнал узлов остаётся для recover."""
-    proc = orchestrate(tree, wait=False, FAKE_RULES=json.dumps([['prepare,05-mgmt-mesh', 0, 60]]))
+    proc = orchestrate(tree, wait=False, FAKE_RULES=json.dumps([['prepare,05-mgmt-mesh', 0, 60]]), VPN2_FW_GUARD_WINDOW='30')
     for _ in range(300):
         if any('prepare,05-mgmt-mesh' in call['args'] for call in plays(tree)):
             break

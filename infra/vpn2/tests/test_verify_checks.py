@@ -230,14 +230,15 @@ def yt_state(good, bad):
             'last_probe': 'TCP video: HTTP 206' if good else 'TCP video: HTTP 0, curl=28'}
 
 
-@pytest.mark.parametrize('before, fresh, rc, probes', [
-    (yt_state(3, 0), None, 0, 0),
-    (yt_state(0, 1), yt_state(1, 0), 0, 1),
-    (yt_state(0, 1), yt_state(0, 2), 1, 1),
-    (None, yt_state(1, 0), 0, 1),
-], ids=['green', 'one-off-timeout', 'youtube-broken', 'no-probe-yet'])
-def test_youtube_failover_reprobes_once(tmp_path, monkeypatch, before, fresh, rc, probes):
-    # Одна плохая проба сторожа (разовый таймаут CDN) - не поломка: verify снимает свежую и судит по ней.
+@pytest.mark.parametrize('before, fresh, rc', [
+    (yt_state(3, 0), [yt_state(3, 0)], 0),
+    (yt_state(0, 1), [yt_state(1, 0)], 0),
+    (yt_state(3, 0), [yt_state(0, 1), yt_state(1, 0)], 0),
+    (yt_state(3, 0), [yt_state(0, 1), yt_state(0, 2)], 1),
+    (None, [yt_state(1, 0)], 0),
+], ids=['green', 'stale-timeout', 'one-off-timeout', 'youtube-broken', 'no-probe-yet'])
+def test_youtube_failover_fresh_probe(tmp_path, monkeypatch, before, fresh, rc):
+    # Судит свежая проба: старый успех не скрывает поломку, разовый таймаут CDN перепроверяется.
     state, config = tmp_path / 'state.json', tmp_path / 'config.json'
     config.write_text(json.dumps({'outbounds': [{'tag': 'youtube-auto'}]}))
     if before:
@@ -245,12 +246,11 @@ def test_youtube_failover_reprobes_once(tmp_path, monkeypatch, before, fresh, rc
     monkeypatch.setattr(yt, 'STATE', state)
     monkeypatch.setattr(yt, 'CONFIG', config)
     monkeypatch.setattr(yt, 'api', lambda _method: {'now': 'youtube-ru'})
-    started = []
+    probes = iter(fresh)
 
     def command(*argv):
         if argv[:2] == ('systemctl', 'start'):
-            started.append(argv[2])
-            state.write_text(json.dumps(fresh))
+            state.write_text(json.dumps(next(probes)))
         return 0, ''
     monkeypatch.setattr(stage, 'command', command)
     results = {}
@@ -265,4 +265,4 @@ def test_youtube_failover_reprobes_once(tmp_path, monkeypatch, before, fresh, rc
 
     stage.youtube(Fake)
     assert results['yt-failover: selector и последняя видеопроба'] == rc
-    assert started == ['anysda-yt-failover.service'] * probes
+    assert next(probes, None) is None

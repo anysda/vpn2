@@ -216,10 +216,10 @@ def install_venv(out):
         if read(store / '.vpn2-pins') != pins:
             shutil.rmtree(store, ignore_errors=True)
             store.mkdir(parents=True)
-            retried(out, *pip, 'download', '--only-binary', ':all:', '-d', store, '-c', constraints, 'ansible-core')
+            retried(out, *pip, 'download', '--only-binary', ':all:', '-d', store, '-c', constraints, 'ansible-core', 'mitogen')
             (store / '.vpn2-pins').write_text(f'{pins}\n')
         call(out, PYTHON, '-m', 'venv', '--without-pip', new)
-        call(out, *pip, '--python', new / 'bin/python', 'install', '--no-index', '--find-links', store, '-c', constraints, 'ansible-core')
+        call(out, *pip, '--python', new / 'bin/python', 'install', '--no-index', '--find-links', store, '-c', constraints, 'ansible-core', 'mitogen')
         call(out, *pip, '--python', new / 'bin/python', 'install', '--no-index', '--no-deps', wheel)
     if had != pins:
         retried(out, new / 'bin/ansible-galaxy', 'collection', 'install', '-r', INFRA / 'ansible/requirements.yml',

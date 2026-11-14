@@ -44,7 +44,7 @@ def ansible_playbook():
         if not (venv / 'bin/ansible-playbook').exists():
             shutil.rmtree(venv, ignore_errors=True)
             subprocess.run([sys.executable, '-m', 'venv', str(venv)], check=True)
-            subprocess.run([f'{venv}/bin/pip', 'install', '-q', '-c', str(pins), 'ansible-core'], check=True)
+            subprocess.run([f'{venv}/bin/pip', 'install', '-q', '-c', str(pins), 'ansible-core', 'mitogen'], check=True)
     return str(venv / 'bin/ansible-playbook')
 
 

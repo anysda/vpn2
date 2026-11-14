@@ -484,7 +484,7 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
-      - run: pip install -c infra/ansible/constraints.txt ansible-core PyYAML Jinja2
+      - run: pip install -c infra/ansible/constraints.txt ansible-core mitogen PyYAML Jinja2
         timeout-minutes: 5
       - name: syntax-check и ansible-lint
         if: matrix.part == 1

@@ -20,8 +20,11 @@ PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
 GUARDED = {'00-bootstrap', '05-mgmt-mesh', '10-foreign', '19-yt-zapret', '20-ru-router', '22-adguard',
            '23-emergency', '27-ikev2', '28-wireguard', '29-openvpn', '30-frontend'}
 GUARD_WINDOW = int(os.environ.get('VPN2_FW_GUARD_WINDOW') or 90)
+# Плеи идут на Mitogen (ansible.cfg); pre-flight - ssh-плагином: он разбирает текст отказа ssh.
+SSH_PLUGIN = {'ANSIBLE_STRATEGY': 'linear', 'ANSIBLE_TIMEOUT': '10'}
 # Пульс сторожу - только новым ssh-входом: открытое соединение живёт и при сломанном правиле.
-FRESH_LOGIN = '-o ControlMaster=no -o ControlPath=none'
+# Вход без повторов: пульс к пропавшему узлу не задерживает пульс остальным.
+FRESH_LOGIN = {**SSH_PLUGIN, 'ANSIBLE_SSH_ARGS': '-o ControlMaster=no -o ControlPath=none'}
 QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 
 
@@ -76,10 +79,8 @@ class Deploy:
         except stages.StageError as error:
             die(str(error))
 
-    def spawn(self, *args, stdout=None, stderr=None, ssh=None):
-        env = {**os.environ, 'ANSIBLE_CONFIG': str(INFRA / 'ansible/ansible.cfg'), 'VPN2_CONFIG': str(CONFIG)}
-        if ssh:
-            env['ANSIBLE_SSH_ARGS'] = ssh
+    def spawn(self, *args, stdout=None, stderr=None, env=None):
+        env = {**os.environ, 'ANSIBLE_CONFIG': str(INFRA / 'ansible/ansible.cfg'), 'VPN2_CONFIG': str(CONFIG), **(env or {})}
         proc = subprocess.Popen([ROOT / 'venv/bin/ansible-playbook', *map(str, args)], stdin=subprocess.DEVNULL,
                                 stdout=stdout, stderr=stderr, env=env)
         self.children.add(proc)
@@ -100,7 +101,7 @@ class Deploy:
     def guard_beat(self):
         """Пульс сторожу каждые 5 с новым входом; вход на entry снаружи видят только экзиты."""
         nodes = ','.join(self.expand('all'))
-        self.service('--tags', 'beat', '--limit', nodes, '-e', f'out={self.tmp}', ssh=FRESH_LOGIN, **QUIET)
+        self.service('--tags', 'beat', '--limit', nodes, '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)
         outside = (self.tmp / 'entry-outside').exists()
         if not outside and not self.guard_warned:
             self.guard_warned = True
@@ -110,7 +111,7 @@ class Deploy:
         def beat():
             while not stop.wait(5):
                 current[:] = [self.spawn(PLAYBOOK, '--tags', 'beat', '--limit', nodes, '-e', f'entry_outside={outside}',
-                                         ssh=FRESH_LOGIN, **QUIET)]
+                                         env=FRESH_LOGIN, **QUIET)]
                 current[0].wait()
                 self.children.discard(current[0])
 
@@ -130,7 +131,7 @@ class Deploy:
         self.stop_beat()
         deadline = time.time() + GUARD_WINDOW + 30
         # Код 4 - узел не пустил: ждём окно сторожа, он вернёт фаервол, и вход появится.
-        while (code := self.service('--tags', 'finish', '--limit', nodes, '-e', f'stage={stage}', ssh=FRESH_LOGIN)) == 4 \
+        while (code := self.service('--tags', 'finish', '--limit', nodes, '-e', f'stage={stage}')) == 4 \
                 and time.time() < deadline:
             time.sleep(5)
         if code == 4:
@@ -393,7 +394,7 @@ class Deploy:
         step('pre-flight: доступность SSH')
         out = Path(tempfile.mkdtemp(dir=self.tmp))
         with open(out / 'log', 'w') as journal:
-            code = self.service('--tags', 'preflight', '-e', f'out={out}', stdout=journal, stderr=journal)
+            code = self.service('--tags', 'preflight', '-e', f'out={out}', stdout=journal, stderr=journal, env=SSH_PLUGIN)
         reasons, fixes, auth, net = [], [], False, False
         for host in self.expand('all'):
             if not (out / f'{host}.fail').is_file():

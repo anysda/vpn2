@@ -1,10 +1,12 @@
 """Список проверок verify: имена и порядок закреплены, как их печатала стадия 99."""
 import json
 import os
+import time
 
 import pytest
 
 from vpn2.verify import stage
+from vpn2.watchdog import yt
 
 BASIC = [
     'sysctl net.ipv4.ip_forward = 1',
@@ -221,3 +223,46 @@ def test_exit_transport_red_when_watchdog_keeps_tcp(clash):
     assert 50 <= spent < 55
 
 
+
+
+def yt_state(good, bad):
+    return {'good': good, 'bad': bad, 'unmeasured': False, 'checked_at': time.time(),
+            'last_probe': 'TCP video: HTTP 206' if good else 'TCP video: HTTP 0, curl=28'}
+
+
+@pytest.mark.parametrize('before, fresh, rc, probes', [
+    (yt_state(3, 0), None, 0, 0),
+    (yt_state(0, 1), yt_state(1, 0), 0, 1),
+    (yt_state(0, 1), yt_state(0, 2), 1, 1),
+    (None, yt_state(1, 0), 0, 1),
+], ids=['green', 'one-off-timeout', 'youtube-broken', 'no-probe-yet'])
+def test_youtube_failover_reprobes_once(tmp_path, monkeypatch, before, fresh, rc, probes):
+    # Одна плохая проба сторожа (разовый таймаут CDN) - не поломка: verify снимает свежую и судит по ней.
+    state, config = tmp_path / 'state.json', tmp_path / 'config.json'
+    config.write_text(json.dumps({'outbounds': [{'tag': 'youtube-auto'}]}))
+    if before:
+        state.write_text(json.dumps(before))
+    monkeypatch.setattr(yt, 'STATE', state)
+    monkeypatch.setattr(yt, 'CONFIG', config)
+    monkeypatch.setattr(yt, 'api', lambda _method: {'now': 'youtube-ru'})
+    started = []
+
+    def command(*argv):
+        if argv[:2] == ('systemctl', 'start'):
+            started.append(argv[2])
+            state.write_text(json.dumps(fresh))
+        return 0, ''
+    monkeypatch.setattr(stage, 'command', command)
+    results = {}
+
+    class Fake:
+        get = staticmethod(lambda _key, _default=None: 'zapret')
+        line = staticmethod(lambda _text: None)
+
+        @staticmethod
+        def check(label, probe, *args, **_options):
+            results[label] = probe(*args)[0]
+
+    stage.youtube(Fake)
+    assert results['yt-failover: selector и последняя видеопроба'] == rc
+    assert started == ['anysda-yt-failover.service'] * probes

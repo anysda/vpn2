@@ -556,8 +556,9 @@ def youtube(stage):
         stage.line(f'yt-zapret: пропущен (youtube.route={route})')
         return
     stage.check('yt-zapret: A/B-проверка обхода', command, YT_CHECK, allow_unmeasured=True)
-    # Нет свежей видеопробы (код 2) - одна проба здесь: таймер мог её ещё не запускать.
-    if yt_status()[0] == 2:
+    # Нет свежей пробы или последняя плохая - одна свежая проба здесь: таймер мог её ещё не
+    # запускать, а разовый таймаут CDN сторож маршрутом не считает (HITS подряд).
+    if yt_status()[0]:
         command('systemctl', 'start', 'anysda-yt-failover.service')
     stage.check('yt-failover: selector и последняя видеопроба', yt_status, allow_unmeasured=True)
     stage.check('yt-failover: таймер active', service, 'anysda-yt-failover.timer')

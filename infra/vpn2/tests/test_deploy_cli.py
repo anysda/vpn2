@@ -199,13 +199,19 @@ def test_full_deploy_follows_site_yml(tree, inproc):
     calls = plays(tree)
     staged = [(call['args'].split('--tags prepare,')[1].split()[0], call['args'].split('--limit ')[1].split()[0], call['follows'])
               for call in calls if '--tags prepare,' in call['args']]
-    assert staged == [
+    # Экзиты идут своей цепочкой рядом со стадиями entry; общие стадии - на всех узлах сразу.
+    exits = [item for item in staged if 'ru' not in item[1].split(',')]
+    assert exits == [('10-foreign', 'us', None), ('99-verify', 'us', None), ('10-foreign', 'gb', None),
+                     ('99-verify', 'gb', None), ('23-emergency', 'us,gb', None)]
+    assert [item for item in staged if item not in exits] == [
         ('00-bootstrap', 'ru,us,gb', None), ('05-mgmt-mesh', 'ru,us,gb', None),
-        ('10-foreign', 'us', None), ('99-verify', 'us', None), ('10-foreign', 'gb', None), ('99-verify', 'gb', None),
         ('28-wireguard', 'ru', None), ('29-openvpn', 'ru', None), ('19-yt-zapret', 'ru', None), ('20-ru-router', 'ru', None),
-        ('21-failover-watchdog', 'ru', None), ('22-adguard', 'ru', None), ('23-emergency', 'ru,us,gb', None),
+        ('21-failover-watchdog', 'ru', None), ('22-adguard', 'ru', None), ('23-emergency', 'ru', None),
         ('25-monitoring', 'ru', None), ('26-backup', 'ru', None), ('27-ikev2', 'ru', None), ('29-control', 'ru', None),
         ('35-telegram', 'ru', 'true'), ('30-frontend', 'ru', None), ('99-verify', 'ru,us,gb', None)]
+    at = [item[0] for item in staged].index
+    assert at('05-mgmt-mesh') < at('10-foreign') and staged.index(('99-verify', 'gb', None)) < at('20-ru-router')
+    assert at('22-adguard') < staged.index(('23-emergency', 'us,gb', None)) < at('29-control')
     assert [call['args'].split('--tags ')[1].split()[0] for call in calls][:3] == ['journal', 'release', 'preflight']
     assert '--tags old-layout' in calls[-2]['args'] and '--tags complete' in calls[-1]['args']
     assert 'деплой завершён' in done.stdout and re.search(r'│  30-frontend +ru +\d+s +│', done.stdout)
@@ -235,6 +241,15 @@ def test_failed_stage_stops_the_deploy_and_keeps_the_journal(tree, inproc):
     assert 'стадия 20-ru-router: одна или несколько нод завершились с ошибкой' in done.stderr
     assert 'deploy interrupted: operation journal retained' in done.stderr
     assert not [call for call in plays(tree) if 'prepare,21-' in call['args'] or '--tags abort' in call['args']]
+
+
+def test_failed_exit_track_stops_the_deploy_before_the_stage_that_needs_exits(tree, inproc):
+    done = inproc(FAKE_RULES=json.dumps([['prepare,10-foreign', 2, 1]]))
+    assert done.returncode == 1
+    assert 'стадия 10-foreign: одна или несколько нод завершились с ошибкой' in done.stderr
+    args = [call['args'] for call in plays(tree)]
+    assert any('prepare,19-yt-zapret' in line for line in args), 'стадии entry шли рядом с экзитами'
+    assert not [line for line in args if 'prepare,20-' in line or '--tags abort' in line]
 
 
 @pytest.mark.parametrize('sig, code', [(signal.SIGTERM, 143), (signal.SIGINT, 130)])

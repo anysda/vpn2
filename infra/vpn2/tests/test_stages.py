@@ -26,7 +26,7 @@ ROLES = {
     '29-openvpn': ['openvpn'], '30-frontend': [{'role': 'containers', 'containers_service': 'panel'}],
     '35-telegram': [{'role': 'containers', 'containers_service': 'telegram'}], '99-verify': ['verify'],
 }
-SERIAL = {'10-foreign': 1, '23-emergency': 1}
+SERIAL = {'10-foreign': 1}
 
 
 def test_site_lists_stages_in_pipeline_order():

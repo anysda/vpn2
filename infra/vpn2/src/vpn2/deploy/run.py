@@ -26,6 +26,9 @@ SSH_PLUGIN = {'ANSIBLE_STRATEGY': 'linear', 'ANSIBLE_TIMEOUT': '10'}
 # Вход без повторов: пульс к пропавшему узлу не задерживает пульс остальным.
 FRESH_LOGIN = {**SSH_PLUGIN, 'ANSIBLE_SSH_ARGS': '-o ControlMaster=no -o ControlPath=none'}
 QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
+# Экзитная часть стадии идёт рядом со следующими стадиями entry, которым экзиты не нужны, до названной:
+# секреты экзитов забирает 20-ru-router, аварийка экзитов не нужна 25-27.
+BESIDE = {'10-foreign': '20-ru-router', '23-emergency': '29-control'}
 
 
 class Interrupted(SystemExit):
@@ -38,8 +41,9 @@ class Deploy:
         self.tmp = Path(tempfile.mkdtemp())
         self.stages = stages.load(SITE)
         self.stage_log, self.verify_warnings, self.deploy_warnings, self.skipped = [], [], [], []
-        self.mutating = self.opened = self.guard_warned = False
-        self.children, self.beat, self.nodes = set(), None, {}
+        self.mutating = self.opened = self.guard_warned = self.closing = False
+        self.children, self.beat, self.beats, self.nodes = set(), None, 0, {}
+        self.lock = threading.Lock()
         self.load_nodes()
 
     def load_nodes(self):
@@ -80,6 +84,9 @@ class Deploy:
             die(str(error))
 
     def spawn(self, *args, stdout=None, stderr=None, env=None):
+        # Деплой закрывается: потоки цепочек и пульса новых плеев не начинают.
+        if self.closing and threading.current_thread() is not threading.main_thread():
+            raise SystemExit(1)
         env = {**os.environ, 'ANSIBLE_CONFIG': str(INFRA / 'ansible/ansible.cfg'), 'VPN2_CONFIG': str(CONFIG), **(env or {})}
         proc = subprocess.Popen([ROOT / 'venv/bin/ansible-playbook', *map(str, args)], stdin=subprocess.DEVNULL,
                                 stdout=stdout, stderr=stderr, env=env)
@@ -99,35 +106,46 @@ class Deploy:
         return self.play(PLAYBOOK, '-e', f'manifest={self.manifest}', *args, **options)
 
     def guard_beat(self):
-        """Пульс сторожу каждые 5 с новым входом; вход на entry снаружи видят только экзиты."""
-        nodes = ','.join(self.expand('all'))
-        # Видят ли экзиты вход на entry, узнаётся до первой стадии, где увидели; первый пульс даёт arm.
-        if not (self.tmp / 'entry-outside').exists():
-            self.service('--tags', 'beat', '--limit', nodes, '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)
-        outside = (self.tmp / 'entry-outside').exists()
-        if not outside and not self.guard_warned:
-            self.guard_warned = True
-            warn('[fw-guard] вход на entry снаружи не проверяется: до стадии его не видит ни один экзит')
-        stop, current = threading.Event(), []
+        """Пульс сторожу каждые 5 с новым входом, пока идёт хоть одна стадия со сторожем;
+        вход на entry снаружи видят только экзиты."""
+        with self.lock:
+            self.beats += 1
+            if self.beat:
+                return
+            nodes = ','.join(self.expand('all'))
+            # Видят ли экзиты вход на entry, проверяет каждый пульс, пока не увидели; первый пульс даёт arm.
+            if not (self.tmp / 'entry-outside').exists():
+                self.service('--tags', 'beat', '--limit', nodes, '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)
+            if not (self.tmp / 'entry-outside').exists() and not self.guard_warned:
+                self.guard_warned = True
+                warn('[fw-guard] вход на entry снаружи не проверяется: до стадии его не видит ни один экзит')
+            stop, current = threading.Event(), []
 
-        def beat():
-            while not stop.wait(5):
-                current[:] = [self.spawn(PLAYBOOK, '--tags', 'beat', '--limit', nodes, '-e', f'entry_outside={outside}',
-                                         env=FRESH_LOGIN, **QUIET)]
-                current[0].wait()
-                self.children.discard(current[0])
+            def beat():
+                while not stop.wait(5):
+                    outside = (self.tmp / 'entry-outside').exists()
+                    try:
+                        current[:] = [self.spawn(PLAYBOOK, '--tags', 'beat', '--limit', nodes, '-e', f'entry_outside={outside}',
+                                                 '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)]
+                    except SystemExit:
+                        return
+                    current[0].wait()
+                    self.children.discard(current[0])
 
-        self.beat = (stop, current, threading.Thread(target=beat, daemon=True))
-        self.beat[2].start()
+            self.beat = (stop, current, threading.Thread(target=beat, daemon=True))
+            self.beat[2].start()
 
-    def stop_beat(self):
-        if self.beat:
+    def stop_beat(self, every=False):
+        with self.lock:
+            self.beats = 0 if every else self.beats - 1
+            if self.beats > 0 or not self.beat:
+                return
             stop, current, thread = self.beat
             self.beat = None
-            stop.set()
-            for proc in current:
-                proc.terminate()
-            thread.join()
+        stop.set()
+        for proc in current:
+            proc.terminate()
+        thread.join()
 
     def guard_finish(self, stage, nodes):
         self.stop_beat()
@@ -140,14 +158,14 @@ class Deploy:
             warn(f'после стадии {stage} нода не пускает новые ssh-входы дольше окна сторожа - проверь вход руками')
         return code
 
-    def stage_once(self, stage, nodes):
+    def stage_once(self, stage, nodes, env=None):
         """Одна стадия на узлах: подготовка, сторож, плей стадии, снятие сторожа."""
         log(f'[{stage} → {nodes}] starting')
         guard = stage in GUARDED
         if guard:
             self.guard_beat()
         code = self.play(PLAYBOOK, SITE, '--tags', f'prepare,{stage}', '--limit', nodes, '-e', f'stage={stage}',
-                         '-e', f'manifest={self.manifest}', '-e', f'guard={guard}')
+                         '-e', f'manifest={self.manifest}', '-e', f'guard={guard}', env=env)
         if guard:
             code = self.guard_finish(stage, nodes) and 1 or code
         elif self.service('--tags', 'cleanup', '--limit', nodes, **QUIET):
@@ -157,8 +175,7 @@ class Deploy:
     def verify(self, nodes):
         """99-verify: 0 - всё измерено, 2 - не всё (установка годна), 1 - отказ."""
         out = Path(tempfile.mkdtemp(dir=self.tmp))
-        os.environ['VPN2_VERIFY_OUT'] = str(out)
-        code, result = self.stage_once('99-verify', nodes), 0
+        code, result = self.stage_once('99-verify', nodes, env={'VPN2_VERIFY_OUT': str(out)}), 0
         for host in nodes.split(','):
             found = (out / host).read_text().split('\n', 1) if (out / host).is_file() else ['']
             text = found[1].rstrip('\n') if len(found) > 1 else ''
@@ -246,21 +263,55 @@ class Deploy:
         rows = ports.check(self.expand('foreign'), self.rerun)
         self.stage_log += rows
 
+    def beside(self, stage):
+        """Экзитная часть стадии своим потоком; join() дожидается её и валит деплой, если она упала."""
+        failed = []
+
+        def track():
+            try:
+                self.run_stage(stage, 'foreign')
+            except BaseException as error:
+                failed.append(error)
+
+        thread = threading.Thread(target=track, daemon=True)
+        thread.start()
+        return thread, failed, BESIDE[stage]
+
+    @staticmethod
+    def join(side):
+        side[0].join()
+        if side[1]:
+            raise side[1][0]
+
     def do_all(self):
         report.banner(self)
-        t0, verify = time.time(), 0
+        t0, verify, side = time.time(), 0, None
         self.preflight()
-        for stage in self.stages:
-            group = {'entry': 'ru', 'exits': 'foreign'}.get(stage.hosts, 'all')
-            if stage.name == '35-telegram':
-                os.environ['VPN2_PANEL_FOLLOWS'] = 'true'
-            if stage.name == '99-verify':
-                verify = self.run_stage(stage.name, group)
-            else:
-                self.run_stage(stage.name, group)
-            os.environ.pop('VPN2_PANEL_FOLLOWS', None)
-            if stage.name == '20-ru-router':
-                self.rotate_ports()
+        try:
+            for stage in self.stages:
+                if side and stage.name == side[2]:
+                    self.join(side)
+                    side = None
+                group = {'entry': 'ru', 'exits': 'foreign'}.get(stage.hosts, 'all')
+                if stage.name in BESIDE:
+                    side = self.beside(stage.name)
+                    if group == 'foreign':
+                        continue
+                    group = 'ru'
+                if stage.name == '35-telegram':
+                    os.environ['VPN2_PANEL_FOLLOWS'] = 'true'
+                if stage.name == '99-verify':
+                    verify = self.run_stage(stage.name, group)
+                else:
+                    self.run_stage(stage.name, group)
+                os.environ.pop('VPN2_PANEL_FOLLOWS', None)
+                if stage.name == '20-ru-router':
+                    self.rotate_ports()
+        except BaseException as error:
+            # Брошенная на полпути цепочка экзитов хуже ожидания; сигнал оператора не ждёт.
+            if side and not isinstance(error, Interrupted):
+                side[0].join()
+            raise
         if self.play(SITE, '--tags', 'old-layout', '-e', 'verify_old_layout=true', '--limit', ','.join(self.expand('all')),
                      stdout=subprocess.DEVNULL):
             warn('остатки раскладки v1.1.5 не убраны: повтори ./deploy.sh')
@@ -314,7 +365,8 @@ class Deploy:
 
     def close(self, code):
         """Выход деплоя: кто бы ни прервал, дочерние плеи гаснут, журнал узлов честен."""
-        self.stop_beat()
+        self.closing = True
+        self.stop_beat(every=True)
         for proc in list(self.children):
             with contextlib.suppress(OSError):
                 proc.terminate()

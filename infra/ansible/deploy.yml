@@ -8,7 +8,7 @@
 #   secrets    пароли каналов, сертификаты и ключи экзитов для 20-ru-router
 #   prepare    /tmp/anysda, apt, сторож фаервола (guard=true); идёт одним запуском со стадией
 #   artifacts  пакет vpn2 и журнал выпуска в /tmp/anysda (откат панели)
-#   beat       пульс сторожу новым ssh-входом; finish - снять сторожа
+# Пульс сторожу и его снятие - новыми ssh-входами из vpn2.deploy.run, мимо ansible.
 # Переменные запуска (-e): stage, guard, out, manifest, partial, bundle.
 
 - name: Вход по ssh
@@ -184,49 +184,3 @@
       ansible.builtin.command: python3 -I /tmp/anysda/fwguard.py arm {{ stage }} {{ vpn2_env.VPN2_FW_GUARD_WINDOW | default(90, true) }}
       changed_when: false
       when: guard | default(false) | bool
-
-# Вход на entry снаружи видят только экзиты: сам entry до себя дойдёт и при сломанном правиле.
-- name: Вход на entry с экзитов
-  hosts: exits
-  tags: [beat]
-  tasks:
-    - name: Порт ssh entry открыт
-      ansible.builtin.raw: timeout 3 bash -c '</dev/tcp/{{ hostvars.ru.ansible_host }}/22'
-      register: entry_port
-      changed_when: false
-      failed_when: false
-      ignore_unreachable: true
-
-- name: Пульс сторожу
-  hosts: all
-  tags: [beat]
-  tasks:
-    - name: Новый ssh-вход прошёл
-      ansible.builtin.raw: touch -c /run/vpn2-fw-guard/alive 2>/dev/null || true
-      changed_when: false
-      when: >-
-        inventory_hostname != 'ru' or not (entry_outside | default(false) | bool)
-        or groups.exits | map('extract', hostvars, 'entry_port') | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | length > 0
-    - name: Экзиты видят entry
-      ansible.builtin.file: {path: "{{ out }}/entry-outside", state: touch, mode: "0600"}
-      delegate_to: localhost
-      changed_when: false
-      when: >-
-        inventory_hostname == 'ru' and out | default('') != ''
-        and groups.exits | map('extract', hostvars, 'entry_port') | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | length > 0
-
-- name: Стадия прошла - сторож снят
-  hosts: all
-  tags: [finish]
-  tasks:
-    - name: Сторож не откатывал фаервол
-      ansible.builtin.command: python3 -I /run/vpn2-fw-guard/fwguard.py disarm {{ stage }}
-      changed_when: false
-
-- name: Выкладка стадии с экзита убрана
-  hosts: exits
-  tags: [finish, cleanup]
-  tasks:
-    - name: /tmp/anysda
-      ansible.builtin.file: {path: /tmp/anysda, state: absent}
-      changed_when: false

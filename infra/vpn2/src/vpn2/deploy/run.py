@@ -3,12 +3,14 @@ import contextlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from vpn2 import ports, release, stages
@@ -20,13 +22,11 @@ PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
 GUARDED = {'00-bootstrap', '05-mgmt-mesh', '10-foreign', '19-yt-zapret', '20-ru-router', '22-adguard',
            '23-emergency', '27-ikev2', '28-wireguard', '29-openvpn', '30-frontend'}
 GUARD_WINDOW = int(os.environ.get('VPN2_FW_GUARD_WINDOW') or 90)
-# Пульс - запуск ansible (~1,3 с ЦП одного ядра entry): шесть попыток на окно сторожа хватает и на пути с потерями.
+# Шесть пульсов на окно сторожа хватает и на пути с потерями.
 BEAT_EVERY = max(5, GUARD_WINDOW // 6)
 # Плеи идут на Mitogen (ansible.cfg); pre-flight - ssh-плагином: он разбирает текст отказа ssh.
 SSH_PLUGIN = {'ANSIBLE_STRATEGY': 'linear', 'ANSIBLE_TIMEOUT': '10'}
-# Пульс сторожу - только новым ssh-входом: открытое соединение живёт и при сломанном правиле.
-# Вход без повторов: пульс к пропавшему узлу не задерживает пульс остальным.
-FRESH_LOGIN = {**SSH_PLUGIN, 'ANSIBLE_SSH_ARGS': '-o ControlMaster=no -o ControlPath=none'}
+GUARD = '/run/vpn2-fw-guard'
 QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 # Экзитная часть стадии идёт рядом со следующими стадиями entry, которым экзиты не нужны, до названной:
 # секреты экзитов забирает 20-ru-router, аварийка экзитов до панели не нужна никому.
@@ -44,7 +44,8 @@ class Deploy:
         self.stages = stages.load(SITE)
         self.stage_log, self.verify_warnings, self.deploy_warnings, self.skipped = [], [], [], []
         self.mutating = self.opened = self.guard_warned = self.closing = False
-        self.children, self.beat, self.beats, self.nodes = set(), None, 0, {}
+        self.children, self.beat, self.beats, self.nodes, self.logins = set(), None, 0, {}, {}
+        self.outside = False
         self.lock = threading.Lock()
         self.load_nodes()
 
@@ -56,8 +57,10 @@ class Deploy:
             sys.stderr.write(listed.stderr)
             raise SystemExit(1)
         hosts = json.loads(listed.stdout)['_meta']['hostvars']
-        self.nodes = {name: {key: value['__ansible_unsafe'] if isinstance(value, dict) else value
-                             for key, value in found.get('vpn2_env', {}).items()} for name, found in hosts.items()}
+        plain = lambda value: value['__ansible_unsafe'] if isinstance(value, dict) else value  # noqa: E731
+        self.nodes = {name: {key: plain(value) for key, value in found.get('vpn2_env', {}).items()} for name, found in hosts.items()}
+        self.logins = {name: [plain(found[key]) for key in ('ansible_host', 'ansible_password', 'ansible_ssh_common_args')]
+                       for name, found in hosts.items()}
 
     def env(self, node='ru'):
         return self.nodes.get(node, {})
@@ -107,58 +110,84 @@ class Deploy:
     def service(self, *args, **options):
         return self.play(PLAYBOOK, '-e', f'manifest={self.manifest}', *args, **options)
 
+    def fresh(self, node, command, stdout=subprocess.DEVNULL):
+        """Новый ssh-вход на узел с теми же ключом и паролем, что у ansible, без общего соединения:
+        открытое соединение живёт и при сломанном правиле. Код команды; 255 - вход не прошёл."""
+        host, password, options = self.logins[node]
+        ssh = ['ssh', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', *shlex.split(options),
+               '-i', str(Path.home() / '.ssh/id_ed25519'), f'root@{host}', command]
+        try:
+            return subprocess.run(['sshpass', '-e', *ssh] if password else [*ssh[:1], '-o', 'BatchMode=yes', *ssh[1:]],
+                                  env={**os.environ, 'SSHPASS': password}, stdin=subprocess.DEVNULL, stdout=stdout,
+                                  stderr=subprocess.DEVNULL, timeout=30).returncode
+        except subprocess.TimeoutExpired:
+            return 255
+
+    def each(self, nodes, command, **options):
+        if not nodes:
+            return {}
+        with ThreadPoolExecutor(len(nodes)) as pool:
+            return dict(zip(nodes, pool.map(lambda node: self.fresh(node, command(node), **options), nodes)))
+
+    def pulse(self, nodes):
+        """Пульс: экзиты заодно проверяют порт ssh entry. Когда его видит хоть один экзит, пульс на
+        entry идёт, только пока видит: сам entry до себя дойдёт и при сломанном правиле."""
+        entry = self.logins['ru'][0]
+        seen = self.each([node for node in nodes if node != 'ru'],
+                         lambda _node: f"touch -c {GUARD}/alive 2>/dev/null; timeout 3 bash -c '</dev/tcp/{entry}/22'")
+        self.outside |= 0 in seen.values()
+        if 'ru' in nodes and (not self.outside or 0 in seen.values()):
+            self.fresh('ru', f'touch -c {GUARD}/alive')
+
     def guard_beat(self):
-        """Пульс сторожу новым входом раз в BEAT_EVERY с, пока идёт хоть одна стадия со сторожем;
-        вход на entry снаружи видят только экзиты."""
+        """Пульс сторожу раз в BEAT_EVERY с, пока идёт хоть одна стадия со сторожем; первый даёт arm."""
         with self.lock:
             self.beats += 1
             if self.beat:
                 return
-            nodes = ','.join(self.expand('all'))
-            # Видят ли экзиты вход на entry, проверяет каждый пульс, пока не увидели; первый пульс даёт arm.
-            if not (self.tmp / 'entry-outside').exists():
-                self.service('--tags', 'beat', '--limit', nodes, '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)
-            if not (self.tmp / 'entry-outside').exists() and not self.guard_warned:
+            nodes = self.expand('all')
+            self.pulse(nodes)
+            if not self.outside and not self.guard_warned:
                 self.guard_warned = True
                 warn('[fw-guard] вход на entry снаружи не проверяется: до стадии его не видит ни один экзит')
-            stop, current = threading.Event(), []
+            stop = threading.Event()
 
             def beat():
-                while not stop.wait(BEAT_EVERY):
-                    outside = (self.tmp / 'entry-outside').exists()
-                    try:
-                        current[:] = [self.spawn(PLAYBOOK, '--tags', 'beat', '--limit', nodes, '-e', f'entry_outside={outside}',
-                                                 '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)]
-                    except SystemExit:
-                        return
-                    current[0].wait()
-                    self.children.discard(current[0])
+                while not stop.wait(BEAT_EVERY) and not self.closing:
+                    self.pulse(nodes)
 
-            self.beat = (stop, current, threading.Thread(target=beat, daemon=True))
-            self.beat[2].start()
+            self.beat = (stop, threading.Thread(target=beat, daemon=True))
+            self.beat[1].start()
 
     def stop_beat(self, every=False):
         with self.lock:
             self.beats = 0 if every else self.beats - 1
             if self.beats > 0 or not self.beat:
                 return
-            stop, current, thread = self.beat
+            stop, thread = self.beat
             self.beat = None
         stop.set()
-        for proc in current:
-            proc.terminate()
         thread.join()
 
+    def cleanup(self, nodes):
+        """Выкладка стадии с экзитов: ни пакета, ни манифеста между стадиями."""
+        return self.each([node for node in nodes if node != 'ru'], lambda _node: 'rm -rf /tmp/anysda')
+
     def guard_finish(self, stage, nodes):
+        """Сторож снят новым входом; узел, что не пускает, ждёт окно сторожа: он вернёт фаервол, и вход появится."""
         self.stop_beat()
-        deadline = time.time() + GUARD_WINDOW + 30
-        # Код 4 - узел не пустил: ждём окно сторожа, он вернёт фаервол, и вход появится.
-        while (code := self.service('--tags', 'finish', '--limit', nodes, '-e', f'stage={stage}')) == 4 \
-                and time.time() < deadline:
+        deadline, left, code = time.time() + GUARD_WINDOW + 30, nodes.split(','), 0
+        while True:
+            done = self.each(left, lambda node: f'python3 -I {GUARD}/fwguard.py disarm {stage}'
+                             + ('' if node == 'ru' else '; code=$?; rm -rf /tmp/anysda; exit $code'), stdout=None)
+            code = code or any(found not in (0, 255) for found in done.values())
+            left = [node for node, found in done.items() if found == 255]
+            if not left or time.time() >= deadline:
+                break
             time.sleep(5)
-        if code == 4:
+        if left:
             warn(f'после стадии {stage} нода не пускает новые ssh-входы дольше окна сторожа - проверь вход руками')
-        return code
+        return 1 if code or left else 0
 
     def stage_once(self, stage, nodes, env=None):
         """Одна стадия на узлах: подготовка, сторож, плей стадии, снятие сторожа."""
@@ -170,7 +199,7 @@ class Deploy:
                          '-e', f'manifest={self.manifest}', '-e', f'guard={guard}', env=env)
         if guard:
             code = self.guard_finish(stage, nodes) and 1 or code
-        elif nodes != 'ru' and self.service('--tags', 'cleanup', '--limit', nodes, **QUIET):
+        elif any(self.cleanup(nodes.split(',')).values()):
             warn(f'[{stage} → {nodes}] не удалось убрать /tmp/anysda')
         return code
 

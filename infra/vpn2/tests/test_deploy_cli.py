@@ -35,6 +35,14 @@ for match, code, pause in json.loads(os.environ.get('FAKE_RULES', '[]')):
         time.sleep(pause)
         sys.exit(code)
 '''
+# Заглушка ssh (sshpass её зовёт): строка JSON на вход; FAKE_SSH_RULES - [подстрока команды, код].
+SSH = r'''#!PYTHON
+import json, os, sys
+host, command = sys.argv[-2].split('@')[1], sys.argv[-1]
+with open(os.environ['FAKE_SSH'], 'a') as out:
+    out.write(json.dumps({'host': host, 'command': command}) + '\n')
+sys.exit(next((code for match, code in json.loads(os.environ.get('FAKE_SSH_RULES', '[]')) if match in command), 0))
+'''
 RUNNER = '''import sys
 from vpn2.deploy import __main__ as main, run
 main.install_prereqs = run.prep_keys = lambda: None
@@ -59,14 +67,18 @@ def make_tree(tmp_path):
     venv.mkdir(parents=True)
     (venv / 'ansible-playbook').write_text(PLAYBOOK.replace('PYTHON', sys.executable))
     (venv / 'ansible').write_text('#!/bin/sh\nexit 4\n')
-    for fake in venv.iterdir():
+    (tmp_path / 'bin').mkdir()
+    (tmp_path / 'bin/ssh').write_text(SSH.replace('PYTHON', sys.executable))
+    (tmp_path / 'bin/sshpass').write_text('#!/bin/sh\nshift\nexec "$@"\n')
+    for fake in (*venv.iterdir(), *(tmp_path / 'bin').iterdir()):
         fake.chmod(0o755)
     return tmp_path
 
 
 def environ(tree, **extra):
     env = {**os.environ, 'HOME': str(tree / 'home'), 'VPN2_STATE_DIR': str(tree / 'state'), 'VPN2_DEPLOY_LOCK': str(tree / 'lock'),
-           'VPN2_ROOT': str(tree / 'root'), 'FAKE_PLAYS': str(tree / 'plays'), 'PYTHONPATH': str(tree / 'infra/vpn2/src'),
+           'VPN2_ROOT': str(tree / 'root'), 'FAKE_PLAYS': str(tree / 'plays'), 'FAKE_SSH': str(tree / 'ssh'),
+           'PATH': f"{tree / 'bin'}:{os.environ['PATH']}", 'PYTHONPATH': str(tree / 'infra/vpn2/src'),
            'DEPLOY_ROOT': str(tree / 'infra'), 'VPN2_DEVELOPMENT': 'true', **extra}
     for name in ('VPN2_RELEASE_MANIFEST', 'VPN2_PANEL_FOLLOWS', 'VPN2_VERIFY_OUT'):
         env.pop(name, None)
@@ -101,8 +113,9 @@ def inproc(tree, capfd, monkeypatch):
             importlib.reload(module)
 
     def call(*args, **extra):
+        env = environ(tree, **extra)
         os.environ.clear()
-        os.environ.update(environ(tree, **extra))
+        os.environ.update(env)
         monkeypatch.setattr(config, 'STATE_DIR', tree / 'state')
         reload()
         main.install_prereqs = run.prep_keys = lambda: None
@@ -132,8 +145,8 @@ def alive(pid):
     return True
 
 
-def plays(tree):
-    path = tree / 'plays'
+def plays(tree, name='plays'):
+    path = tree / name
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
@@ -189,7 +202,9 @@ def test_one_stage_runs_only_its_play_on_its_nodes(tree, inproc):
     staged = [args for args in calls if 'site.yml' in args]
     assert len(staged) == 1 and '--tags prepare,30-frontend --limit ru ' in staged[0] and 'guard=True' in staged[0]
     tags = [args.split('--tags ')[1].split()[0] for args in calls if 'site.yml' not in args]
-    assert tags == ['journal', 'release', 'beat', 'finish', 'complete']
+    assert tags == ['journal', 'release', 'complete']
+    logins = [(call['host'], call['command'].split()[0]) for call in plays(tree, 'ssh')]
+    assert ('1.2.3.4', 'touch') in logins and logins[-1] == ('1.2.3.4', 'python3')
     assert '[deploy] [30-frontend → ru] done' in done.stderr
 
 
@@ -267,6 +282,23 @@ def test_killed_in_firewall_stage(tree, sig, code):
     assert 'deploy interrupted: operation journal retained' in err
     staged = next(call for call in plays(tree) if 'prepare,05-mgmt-mesh' in call['args'])
     assert not alive(staged['pid'])
-    assert [call for call in plays(tree) if '--tags beat' in call['args'] and 'entry_outside' in call['args']]
-    assert not [call for call in plays(tree) if 'stage=05-mgmt-mesh' in call['args'] and '--tags finish' in call['args']
-                or '--tags abort' in call['args']]
+    beats = [call['host'] for call in plays(tree, 'ssh') if call['command'].startswith('touch')]
+    assert {'1.2.3.4', '5.6.7.8', '9.10.11.12'} <= set(beats) and len(beats) > 3, 'пульс шёл повторно на все узлы'
+    assert not [call for call in plays(tree, 'ssh') if 'disarm 05-mgmt-mesh' in call['command']]
+    assert not [call for call in plays(tree) if '--tags abort' in call['args']]
+
+
+@pytest.mark.parametrize('ports, touched', [([0, 0], 1), ([0, 1], 1), ([1, 1], 0)])
+def test_entry_pulse_waits_for_exits_once_they_have_seen_entry(ports, touched):
+    """Сторож entry слышит пульс, только пока порт entry виден снаружи; без экзитов, видевших его, - всегда."""
+    from vpn2.deploy import run
+    deploy = run.Deploy.__new__(run.Deploy)
+    deploy.logins, deploy.outside, calls = {'ru': ['1.2.3.4']}, True, []
+    seen = iter(ports)
+    deploy.fresh = lambda node, _command, **_options: calls.append(node) or (next(seen) if node != 'ru' else 0)
+    deploy.pulse(['ru', 'us', 'gb'])
+    assert calls.count('ru') == touched
+    deploy.outside, calls[:] = False, []
+    deploy.fresh = lambda node, _command, **_options: calls.append(node) or (1 if node != 'ru' else 0)
+    deploy.pulse(['ru', 'us', 'gb'])
+    assert calls.count('ru') == 1 and not deploy.outside

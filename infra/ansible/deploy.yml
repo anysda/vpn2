@@ -220,14 +220,14 @@
       changed_when: false
       when: >-
         inventory_hostname != 'ru' or not (entry_outside | default(false) | bool)
-        or groups.exits | map('extract', hostvars, 'entry_port') | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | list
+        or groups.exits | map('extract', hostvars, 'entry_port') | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | length > 0
     - name: Экзиты видят entry
       ansible.builtin.file: {path: "{{ out }}/entry-outside", state: touch, mode: "0600"}
       delegate_to: localhost
       changed_when: false
       when: >-
         inventory_hostname == 'ru' and out | default('') != ''
-        and groups.exits | map('extract', hostvars, 'entry_port') | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | list
+        and groups.exits | map('extract', hostvars, 'entry_port') | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | length > 0
 
 - name: Стадия прошла - сторож снят
   hosts: all

@@ -107,7 +107,7 @@ class EmergencyImageTests(unittest.TestCase):
         self.assertEqual(meta, 'ghcr.io/${{ github.repository }}/${{ matrix.name }}')
         for name in ('build', 'push'):
             self.assertEqual(steps[name]['with']['file'], '${{ matrix.file }}')
-            self.assertIn('VPN2_VERSION=${{ steps.meta.outputs.version }}', steps[name]['with']['build-args'])
+            self.assertIn('VPN2_VERSION=${{ steps.version.outputs.version }}', steps[name]['with']['build-args'])
         self.assertIn('smoke emergency', steps)
         self.assertIn('/instructions', steps['smoke emergency']['run'])
 

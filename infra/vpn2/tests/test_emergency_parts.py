@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 ROOT = Path(__file__).resolve().parents[3]
 from vpn2.emergency import hy2, notices, snapshot, snapshot_sender, spool
 from vpn2.notify import Reply
+from ports_support import start_on_free_ports
 
 NOW = 1_800_000_000
 
@@ -334,22 +335,26 @@ class Hy2Tests(Temp):
         threading.Thread(target=target.serve_forever, daemon=True).start()
         self.addCleanup(target.server_close)
         self.addCleanup(target.shutdown)
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-            udp.bind(('127.0.0.1', 0))
-            port = udp.getsockname()[1]
         home = self.directory / 'hy2'
         home.mkdir()
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
                         '-nodes', '-days', '30', '-subj', '/CN=t', '-addext', 'subjectAltName=IP:127.0.0.1',
                         '-keyout', str(home / 'privkey.pem'), '-out', str(home / 'fullchain.pem')],
                        check=True, capture_output=True)
-        server = {'log': {'level': 'error'}, 'outbounds': [{'type': 'direct'}],
-                  'inbounds': [{'type': 'hysteria2', 'listen': '127.0.0.1', 'listen_port': port,
-                                'users': [{'name': 'g1-readiness', 'password': 'probe'}],
-                                'tls': {'enabled': True, 'certificate_path': str(home / 'fullchain.pem'),
-                                        'key_path': str(home / 'privkey.pem')}}]}
-        (self.directory / 'server.json').write_text(json.dumps(server))
-        instance = subprocess.Popen([shutil.which('sing-box'), 'run', '-c', str(self.directory / 'server.json')])
+        log = self.directory / 'sing-box.log'
+
+        def start(port):
+            server = {'log': {'level': 'error'}, 'outbounds': [{'type': 'direct'}],
+                      'inbounds': [{'type': 'hysteria2', 'listen': '127.0.0.1', 'listen_port': port,
+                                    'users': [{'name': 'g1-readiness', 'password': 'probe'}],
+                                    'tls': {'enabled': True, 'certificate_path': str(home / 'fullchain.pem'),
+                                            'key_path': str(home / 'privkey.pem')}}]}
+            (self.directory / 'server.json').write_text(json.dumps(server))
+            with log.open('w') as out:
+                return subprocess.Popen([shutil.which('sing-box'), 'run', '-c', str(self.directory / 'server.json')],
+                                        stdout=out, stderr=subprocess.STDOUT)
+
+        instance, (port,) = start_on_free_ports(start, 1, socket.SOCK_DGRAM, log.read_text)
         self.addCleanup(instance.wait)
         self.addCleanup(instance.terminate)
         for path, expected in (('/generate_204', True), ('/missing', False)):

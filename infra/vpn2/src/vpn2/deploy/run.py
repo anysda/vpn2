@@ -101,7 +101,9 @@ class Deploy:
     def guard_beat(self):
         """Пульс сторожу каждые 5 с новым входом; вход на entry снаружи видят только экзиты."""
         nodes = ','.join(self.expand('all'))
-        self.service('--tags', 'beat', '--limit', nodes, '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)
+        # Видят ли экзиты вход на entry, узнаётся до первой стадии, где увидели; первый пульс даёт arm.
+        if not (self.tmp / 'entry-outside').exists():
+            self.service('--tags', 'beat', '--limit', nodes, '-e', f'out={self.tmp}', env=FRESH_LOGIN, **QUIET)
         outside = (self.tmp / 'entry-outside').exists()
         if not outside and not self.guard_warned:
             self.guard_warned = True

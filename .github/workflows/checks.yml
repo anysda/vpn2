@@ -470,7 +470,6 @@ jobs:
         part: [1, 2]
     env:
       ANSIBLE_CONFIG: infra/ansible/ansible.cfg
-      ANSIBLE_COLLECTIONS_PATH: /tmp/collections
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -491,7 +490,6 @@ jobs:
         timeout-minutes: 5
         run: |
           pip install -c infra/ansible/constraints.txt ansible-lint==26.10.1
-          ansible-galaxy collection install -r infra/ansible/requirements.yml -p /tmp/collections
           ansible-playbook -i localhost, --syntax-check infra/ansible/site.yml
           ansible-lint --profile production --offline --project-dir infra/ansible infra/ansible/site.yml infra/ansible/roles
       # Пробы в своём сетевом пространстве идут от root без сети: venv ansible тестов

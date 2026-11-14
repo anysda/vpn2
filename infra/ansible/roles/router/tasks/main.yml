@@ -59,10 +59,16 @@
 
 # route_localnet нужен TPROXY клиентов (--on-ip 127.0.0.1).
 - name: Sysctl роутера
-  ansible.posix.sysctl:
-    name: net.ipv4.conf.all.route_localnet
-    value: '1'
-    sysctl_file: /etc/sysctl.d/99-anysda-vpn.conf
+  ansible.builtin.copy:
+    content: "net.ipv4.conf.all.route_localnet=1\n"
+    dest: /etc/sysctl.d/99-anysda-vpn.conf
+    mode: '0644'
+  register: router_sysctl
+
+- name: Sysctl роутера применён  # noqa: no-handler
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/99-anysda-vpn.conf
+  when: router_sysctl is changed
+  changed_when: true
 
 # Пустые файлы, чтобы наблюдателю было за чем следить до первой правки в панели.
 - name: Файлы ручных маршрутов панели

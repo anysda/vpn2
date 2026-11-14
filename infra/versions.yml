@@ -1,5 +1,4 @@
 ansible_core: "2.21.6"
-ansible_posix: "2.2.2"
 mitogen: "0.3.54"
 sing_box: "1.12.25"
 sing_box_sha256_amd64: "a1ec76e2b6b139eb747a1b1ebee7d14b8d4be5a833596cad8070a31ef960301f"

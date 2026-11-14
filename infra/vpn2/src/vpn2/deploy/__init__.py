@@ -118,9 +118,9 @@ def sha256(path):
 
 
 def venv_pins():
-    """Отпечаток пинов venv: python, constraints.txt и requirements.yml (как у sha256sum)."""
+    """Отпечаток пинов venv: python и constraints.txt (как у sha256sum)."""
     version = subprocess.run([PYTHON, '-V'], capture_output=True, text=True)
-    files = [f'{INFRA}/ansible/constraints.txt', f'{INFRA}/ansible/requirements.yml']
+    files = [f'{INFRA}/ansible/constraints.txt']
     text = version.stdout + version.stderr + ''.join(f'{sha256(path)}  {path}\n' for path in files)
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -182,7 +182,9 @@ def build_wheel(out):
 
 
 def prune_venvs():
-    """Сносит сборки, кроме действующей и тех, чей путь в командной строке живого процесса."""
+    """Сносит сборки, кроме действующей и тех, чей путь в командной строке живого процесса,
+    и коллекции ansible прежних выпусков."""
+    shutil.rmtree(ROOT / 'collections', ignore_errors=True)
     keep = os.readlink(ROOT / 'venv') if (ROOT / 'venv').is_symlink() else ''
     running = b''
     for cmdline in Path('/proc').glob('[0-9]*/cmdline'):
@@ -221,9 +223,6 @@ def install_venv(out):
         call(out, PYTHON, '-m', 'venv', '--without-pip', new)
         call(out, *pip, '--python', new / 'bin/python', 'install', '--no-index', '--find-links', store, '-c', constraints, 'ansible-core', 'mitogen')
         call(out, *pip, '--python', new / 'bin/python', 'install', '--no-index', '--no-deps', wheel)
-    if had != pins:
-        retried(out, new / 'bin/ansible-galaxy', 'collection', 'install', '-r', INFRA / 'ansible/requirements.yml',
-                '-p', ROOT / 'collections')
     (new / '.vpn2-wheel').write_text(f'{stamp}\n')
     (new / '.vpn2-pins').write_text(f'{pins}\n')
     with contextlib.suppress(FileNotFoundError):

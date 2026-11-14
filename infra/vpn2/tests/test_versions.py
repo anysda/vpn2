@@ -52,7 +52,7 @@ def check_lines(pins):
 
 
 def test_keys():
-    assert set(release.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'mitogen', 'victoriametrics', *STAGE_PINS,
+    assert set(release.versions(VERSIONS)) == {'ansible_core', 'mitogen', 'victoriametrics', *STAGE_PINS,
                                              *STAGE_LINES}
 
 
@@ -86,9 +86,3 @@ def test_matches_constraints():
     assert first == f"ansible-core=={release.versions(VERSIONS)['ansible_core']}"
     lines = (INFRA / 'ansible/constraints.txt').read_text(encoding='utf-8').splitlines()
     assert f"mitogen=={release.versions(VERSIONS)['mitogen']}" in lines
-
-
-def test_matches_requirements():
-    reqs = yaml.safe_load((INFRA / 'ansible/requirements.yml').read_text(encoding='utf-8'))
-    posix = [c for c in reqs['collections'] if c['name'] == 'ansible.posix']
-    assert [c['version'] for c in posix] == [f"=={release.versions(VERSIONS)['ansible_posix']}"]

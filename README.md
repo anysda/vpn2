@@ -432,9 +432,6 @@ python3 infra/tests/run_parallel.py --dir telegram/tests
 # роли и плеи Ansible
 pip install -c infra/ansible/constraints.txt ansible-core ansible-lint
 export ANSIBLE_CONFIG=infra/ansible/ansible.cfg
-export ANSIBLE_COLLECTIONS_PATH=/tmp/collections
-ansible-galaxy collection install -r infra/ansible/requirements.yml \
-  -p /tmp/collections
 ansible-lint --profile production --offline --project-dir infra/ansible \
   infra/ansible/site.yml infra/ansible/roles
 

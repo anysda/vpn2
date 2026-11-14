@@ -13,8 +13,7 @@ log() { echo "$*" >> "$FAKE_LOG"; }
 case "$1" in
   -V) echo 'Python 3.99.0' ;;
   -I) log build; touch "$6/vpn2-0.1.0-py3-none-any.whl" ;;
-  -m) log venv; mkdir -p "$4/bin"; printf '#!/bin/sh\\necho galaxy >> "$FAKE_LOG"\\n' > "$4/bin/ansible-galaxy"
-      chmod +x "$4/bin/ansible-galaxy" ;;
+  -m) log venv; mkdir -p "$4/bin" ;;
   */pip) case " $* " in
       *' download '*) log download ;;
       *' --no-deps '*) log install-wheel ;;
@@ -27,8 +26,8 @@ esac
 @pytest.fixture
 def box(tmp_path, monkeypatch):
     infra, wheels = tmp_path / 'infra', tmp_path / 'wheels'
-    for path, text in (('ansible/constraints.txt', 'ansible-core==2.0\n'), ('ansible/requirements.yml', 'collections: []\n'),
-                       ('vpn2/pyproject.toml', '[project]\n'), ('vpn2/src/vpn2/__init__.py', '')):
+    for path, text in (('ansible/constraints.txt', 'ansible-core==2.0\n'), ('vpn2/pyproject.toml', '[project]\n'),
+                       ('vpn2/src/vpn2/__init__.py', '')):
         (infra / path).parent.mkdir(parents=True, exist_ok=True)
         (infra / path).write_text(text)
     wheels.mkdir()
@@ -50,10 +49,10 @@ def steps(box):
     return found
 
 
-def test_pins_follow_python_constraints_and_requirements(box):
+def test_pins_follow_python_and_constraints(box):
     first = deploy.venv_pins()
     assert deploy.venv_pins() == first
-    (box / 'infra/ansible/requirements.yml').write_text('collections: [ansible.posix]\n')
+    (box / 'infra/ansible/constraints.txt').write_text('ansible-core==2.1\n')
     second = deploy.venv_pins()
     assert second != first
     (box / 'python').write_text(PYTHON.replace('3.99.0', '3.99.1'))
@@ -71,21 +70,21 @@ def test_source_hash_ignores_pycache(box):
 
 def test_install_branches(box):
     deploy.ensure_venv()
-    assert steps(box) == ['build', 'download', 'venv', 'install-ansible', 'install-wheel', 'galaxy']
+    assert steps(box) == ['build', 'download', 'venv', 'install-ansible', 'install-wheel']
     current = (box / 'opt/venv').resolve()
     deploy.ensure_venv()
     assert steps(box) == []
     assert 'ansible: пины те же, без загрузки' in (box / 'opt/ansible-venv.log').read_text()
-    # Правка исходников: новое колесо и сборка, без загрузки и коллекций; старая сборка убрана.
+    # Правка исходников: новое колесо и сборка, без загрузки; старая сборка убрана.
     (box / 'infra/vpn2/src/vpn2/__init__.py').write_text('# edit\n')
     deploy.ensure_venv()
     assert steps(box) == ['build', 'venv', 'install-ansible', 'install-wheel']
     assert 'колесо vpn2 обновлено' in (box / 'opt/ansible-venv.log').read_text()
     assert (box / 'opt/venv').resolve() != current and not current.exists()
-    # Смена пинов: загрузка и коллекции заново.
+    # Смена пинов: загрузка заново.
     (box / 'infra/ansible/constraints.txt').write_text('ansible-core==2.1\n')
     deploy.ensure_venv()
-    assert steps(box) == ['download', 'venv', 'install-ansible', 'install-wheel', 'galaxy']
+    assert steps(box) == ['download', 'venv', 'install-ansible', 'install-wheel']
 
 
 def test_aborted_build_leaves_current_venv_working(box, monkeypatch):
@@ -101,7 +100,7 @@ def test_aborted_build_leaves_current_venv_working(box, monkeypatch):
     steps(box)
     deploy.ensure_venv()
     # Оборванная сборка без .vpn2-pins собирается заново, склад колёс уже под новые пины.
-    assert steps(box) == ['venv', 'install-ansible', 'install-wheel', 'galaxy']
+    assert steps(box) == ['venv', 'install-ansible', 'install-wheel']
 
 
 def test_build_of_running_process_is_kept(box):

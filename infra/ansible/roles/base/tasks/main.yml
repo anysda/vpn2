@@ -172,10 +172,12 @@
   changed_when: "'->' in base_step.stdout"
 
 - name: Ключи оркестратора и админа
-  ansible.posix.authorized_key:
-    user: root
-    key: "{{ base_keys | join('\n') }}"
-  when: base_keys | length > 0
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/authorized_keys
+    line: "{{ item }}"
+    create: true
+    mode: '0600'
+  loop: "{{ base_keys }}"
 
 # Ключ entry для ssh через служебный hy2-туннель. Опознаётся по комментарию:
 # пересозданная entry вытесняет прежний ключ. Туннель отдаёт соединение sshd

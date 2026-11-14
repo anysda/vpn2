@@ -145,26 +145,79 @@ def test_check_result_and_code(tmp_path, rc, output, unmeasured, result, reason,
     assert json.loads((tmp_path / 'rows.jsonl').read_text().splitlines()[0])['time']
 
 
-class Proxies:
-    def __init__(self, answer):
-        self.answer = answer
+HY2 = {'transport-nl-direct': {'now': 'transport-hy2-nl-direct'}, 'hy2-nl-mgmt': {'now': 'transport-hy2-nl-mgmt'}}
+TCP = {'transport-nl-direct': {'now': 'transport-tcp-nl-direct'}, 'transport-nl-warp': {'now': 'transport-hy2-nl-warp'},
+       'hy2-nl-mgmt': {'now': 'transport-tcp-nl-mgmt'}}
+ON_TCP = 'hy2 до экзита nl не работает, трафик на запасном TCP (VLESS Reality): transport-nl-direct, hy2-nl-mgmt'
+
+
+class Clash:
+    """clash-api по сценарию: снимки селекторов по очереди (последний повторяется), пробы ноги hy2 по кругу."""
+
+    def __init__(self, snapshots, delays=(None,)):
+        self.snapshots, self.delays, self.probes = list(snapshots), list(delays), []
 
     def proxies(self, *, timeout):
         assert timeout
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return self.answer
+        answer = self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def delay(self, tag, _url, *, timeout_ms, http_timeout):
+        assert timeout_ms and http_timeout
+        self.probes.append(tag)
+        ms = self.delays[(len(self.probes) - 1) % len(self.delays)]
+        return ms, '' if ms else 'таймаут'
 
 
-@pytest.mark.parametrize('answer, rc, reason', [
-    ({'transport-nl-direct': {'now': 'transport-hy2-nl-direct'}, 'hy2-nl-mgmt': {'now': 'transport-hy2-nl-mgmt'}}, 0, ''),
-    ({'transport-nl-direct': {'now': 'transport-tcp-nl-direct'}, 'transport-nl-warp': {'now': 'transport-hy2-nl-warp'},
-      'hy2-nl-mgmt': {'now': 'transport-tcp-nl-mgmt'}}, 1,
-     'hy2 до экзита nl не работает, трафик на запасном TCP (VLESS Reality): transport-nl-direct, hy2-nl-mgmt'),
-    ({'hy2-nl-mgmt': {'type': 'Hysteria2'}}, 0, ''),
-    (ConnectionRefusedError('refused'), 2, 'clash-api sing-box не ответил: refused'),
-], ids=['hy2', 'tcp-fallback', 'without-fallback', 'api-down'])
-def test_exit_transport_reports_tcp_fallback(monkeypatch, answer, rc, reason):
-    # Маршруты на VLESS-TCP проходят: закрытый hy2 видно только по селекторам.
-    monkeypatch.setattr(stage.ClashApi, 'from_config', classmethod(lambda _cls, _path: Proxies(answer)))
-    assert stage.exit_transport('nl') == (rc, reason)
+@pytest.fixture
+def clash(tmp_path, monkeypatch):
+    """Подставляет clash-api и часы: sleep двигает monotonic; сторож с TCP_RETURN_S=20."""
+    now = [0.0]
+    monkeypatch.setattr(stage.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(stage.time, 'sleep', lambda s: now.__setitem__(0, now[0] + s))
+    (tmp_path / 'failover.env').write_text('CLASH_SECRET=x\nTCP_RETURN_S=20\n')
+    monkeypatch.setattr(stage, 'FAILOVER_ENV', tmp_path / 'failover.env')
+
+    def run(snapshots, delays=(None,)):
+        api = Clash(snapshots, delays)
+        monkeypatch.setattr(stage.ClashApi, 'from_config', classmethod(lambda _cls, _path: api))
+        return stage.exit_transport('nl'), now[0], api.probes
+    return run
+
+
+@pytest.mark.parametrize('snapshots, rc, reason', [
+    ([HY2], 0, ''),
+    ([{'hy2-nl-mgmt': {'type': 'Hysteria2'}}], 0, ''),
+    ([ConnectionRefusedError('refused')], 2, 'clash-api sing-box не ответил: refused'),
+], ids=['hy2', 'without-fallback', 'api-down'])
+def test_exit_transport_without_tcp(clash, snapshots, rc, reason):
+    assert clash(snapshots)[0] == (rc, reason)
+
+
+def test_exit_transport_red_when_hy2_leg_silent(clash):
+    # UDP до экзита перекрыт: нога hy2 не ответила ни разу - красная, возврата сторожа не ждём.
+    (rc, reason), spent, probes = clash([TCP])
+    assert rc == 1
+    assert reason == f'{ON_TCP}; hy2 не ответил за 3 круга проб'
+    assert spent < 20
+    assert set(probes) == {'transport-hy2-nl-direct', 'transport-hy2-nl-mgmt'}
+
+
+def test_exit_transport_waits_for_return_under_loss(clash):
+    # Потери 10 %: сторож увёл канал на TCP, нога hy2 отвечает через раз - ждём возврата.
+    loss = [TCP] * 6 + [HY2]
+    (rc, reason), spent, _ = clash(loss, delays=(None, None, 41, None, 38))
+    assert (rc, reason) == (0, '')
+    assert spent < 20
+
+
+def test_exit_transport_red_when_watchdog_keeps_tcp(clash):
+    # hy2 отвечает, а канал на TCP дольше TCP_RETURN_S с запасом: возврат не пришёл.
+    (rc, reason), spent, _ = clash([TCP], delays=(40,))
+    assert rc == 1
+    assert reason.startswith('канал на запасном TCP дольше 50 с при живом hy2 до экзита nl')
+    assert 50 <= spent < 55
+
+

@@ -829,7 +829,14 @@ cmd_udp_cut() {
   trap 'cut_rules -D 2>/dev/null || true' EXIT
   cut_rules -I
   log "обрыв UDP с entry на экзите: $(date -u +%T), держу ${UDP_CUT_HOLD_S} с"
-  sleep "$UDP_CUT_HOLD_S"
+  local rc=0 cut_at=$SECONDS verdict
+  if [[ -z "$UDP_CUT_TCP_PORTS" ]]; then
+    # Канал на запасном TCP при закрытом hy2: проверка verify обязана краснеть.
+    until grep -q ' tcp$' <<<"$(transports)" || (( SECONDS - cut_at >= UDP_CUT_HOLD_S )); do sleep 2; done
+    verdict=$(ssh_node "$ENTRY" "/opt/vpn2/venv/bin/python3 -c 'from vpn2.verify import stage; print(*stage.exit_transport(\"$EXIT_TAG\"))'") || true
+    check "verify «$EXIT_TAG: транспорт hy2, не запасной TCP» при обрыве красная: $verdict" test "${verdict%% *}" = 1
+  fi
+  sleep $(( SECONDS - cut_at < UDP_CUT_HOLD_S ? UDP_CUT_HOLD_S - SECONDS + cut_at : 0 ))
   cut_rules -D
   trap - EXIT
   t1=$(ssh_node "$ENTRY" 'date +%s.%N')
@@ -860,7 +867,7 @@ cmd_udp_cut() {
   log 'журнал сторожа с начала обрыва:'
   grep -E ' -> |UDP до экзита|штрафной|foreign-best|мертвы|перезапуск' <<<"$journal" | sed 's/^/    /' || true
 
-  local rc=0 n back_s
+  local n back_s
   check "окно без ответа через экзит ${gap} с (предел ${UDP_CUT_MAX_GAP} с), ошибок curl с начала обрыва: $fails" \
     awk -v g="$gap" -v m="$UDP_CUT_MAX_GAP" 'BEGIN { exit !(g <= m) }'
   check "sing-box не перезапускался: до «$before», после «$after»" test "$after" = "$before"

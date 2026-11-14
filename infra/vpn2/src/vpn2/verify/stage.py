@@ -34,6 +34,9 @@ TLS_CERT = '/etc/vpn2/tls/ip/fullchain.pem'
 NETWORKD_DROPIN = Path('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf')
 IKEV2_STATUS = Path('/etc/anysda/ikev2-status.json')
 SINGBOX_CONFIG = Path('/etc/sing-box/config.json')
+FAILOVER_ENV = Path('/etc/anysda/failover-watchdog.env')
+HY2_PROBE_URL = 'http://www.gstatic.com/generate_204'
+HY2_SILENT = 3
 WARP_STATE = Path('/var/lib/anysda-warp-watchdog/state.json')
 TARGETS_URL = 'http://127.0.0.1:8428/api/v1/targets'
 YT_CHECK = '/usr/local/bin/anysda-yt-check'
@@ -243,20 +246,46 @@ def mgmt_scrape(tag, expected, timeout, interval):
     return 1, '\n'.join(lines + [f'[{tag}] mgmt scrape: таймаут — {detail}'])
 
 
+def tcp_return():
+    """TCP_RETURN_S сторожа: столько секунд hy2 жив подряд, прежде чем канал вернётся с TCP."""
+    try:
+        found = re.findall(r'^TCP_RETURN_S=([0-9]+(?:\.[0-9]+)?)$', FAILOVER_ENV.read_text(), re.MULTILINE)
+    except OSError:
+        found = []
+    return float(found[-1]) if found else 60.0
+
+
 def exit_transport(tag):
     """Транспорт до экзита по селекторам sing-box: 0 - hy2, 1 - канал на запасном TCP, 2 - API не ответил.
 
     На VLESS-TCP трафик идёт, маршруты проходят: без этой проверки verify зелёный при закрытом hy2.
+    На пути с потерями сторож уводит канал на TCP и при живом hy2: тогда ждём его возврата
+    (TCP_RETURN_S с запасом). Красная сразу - если ни одна нога hy2 не ответила за HY2_SILENT кругов.
     """
+    selectors = (f'transport-{tag}-direct', f'transport-{tag}-warp', f'hy2-{tag}-mgmt')
+    wait = tcp_return() + 30
+    deadline, heard, rounds = time.monotonic() + wait, False, 0
     try:
-        proxies = ClashApi.from_config(SINGBOX_CONFIG).proxies(timeout=5)
+        api = ClashApi.from_config(SINGBOX_CONFIG)
+        while True:
+            proxies = api.proxies(timeout=5)
+            now = {name: str(proxies.get(name, {}).get('now', '')) for name in selectors}
+            on_tcp = [name for name in selectors if now[name].startswith('transport-tcp-')]
+            if not on_tcp:
+                return 0, ''
+            if not heard:
+                legs = ['transport-hy2-' + now[name][len('transport-tcp-'):] for name in on_tcp]
+                heard = any(api.delay(leg, HY2_PROBE_URL, timeout_ms=3000, http_timeout=3.5)[0] for leg in legs)
+                rounds += 1
+            if not heard and rounds >= HY2_SILENT:
+                return 1, (f'hy2 до экзита {tag} не работает, трафик на запасном TCP (VLESS Reality): '
+                           f'{", ".join(on_tcp)}; hy2 не ответил за {rounds} круга проб')
+            if time.monotonic() >= deadline:
+                return 1, (f'канал на запасном TCP дольше {wait:.0f} с при живом hy2 до экзита {tag}: '
+                           f'сторож не вернул {", ".join(on_tcp)}')
+            time.sleep(2)
     except (OSError, ValueError, KeyError) as error:
         return 2, f'clash-api sing-box не ответил: {error}'
-    selectors = (f'transport-{tag}-direct', f'transport-{tag}-warp', f'hy2-{tag}-mgmt')
-    on_tcp = [name for name in selectors if str(proxies.get(name, {}).get('now', '')).startswith('transport-tcp-')]
-    if on_tcp:
-        return 1, f'hy2 до экзита {tag} не работает, трафик на запасном TCP (VLESS Reality): {", ".join(on_tcp)}'
-    return 0, ''
 
 
 def exit_ssh(tag, limit):

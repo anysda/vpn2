@@ -7,6 +7,7 @@
   "access-operations.spec.ts › access-routes": 3,
   "traffic.spec.ts › activity-scale": 1,
   "address-pools.spec.ts": 57.3,
+  "api-snapshot.spec.ts": 66.2,
   "auth.spec.ts › auth": 64,
   "bots.spec.ts › bot-delivery-ui": 74.2,
   "bot-delivery.spec.ts › bot-delivery": 1.1,

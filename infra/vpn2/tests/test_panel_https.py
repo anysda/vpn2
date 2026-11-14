@@ -22,6 +22,7 @@ import time
 import pytest
 
 from panel_support import SRC, caddy, panel_tls
+from ports_support import start_on_free_ports
 
 LE = 'https://acme-v02.api.letsencrypt.org/directory'
 ISSUER = 'acme-v02.api.letsencrypt.org-directory'
@@ -83,12 +84,6 @@ def request(port, host, path, tls=False, sni=None):
         return None, '', str(error)
     finally:
         sock.close()
-
-
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
 
 
 class Entry:
@@ -165,33 +160,26 @@ class Proxy:
     def __enter__(self):
         self.backend = ThreadingHTTPServer(('127.0.0.1', 0), Backend)
         threading.Thread(target=self.backend.serve_forever, daemon=True).start()
-        self.http, self.https = free_port(), free_port()
         run, source = Path(tempfile.mkdtemp(dir=self.entry.dir)), self.entry.dir / 'etc/caddy'
         for path in source.iterdir():
             if path.is_file():
                 (run / path.name).write_text(path.read_text().replace(str(source), str(run)))
         (run / 'vpn2-tls.conf').write_text(f'tls {self.cert[0]} {self.cert[1]}\n')
         caddyfile = (run / 'Caddyfile').read_text().replace('127.0.0.1:51821', f'127.0.0.1:{self.backend.server_port}')
-        caddyfile = re.sub(r'^:80 \{', f':{self.http} {{', caddyfile, flags=re.M)
         assert caddyfile.startswith('{\n'), caddyfile[:200]
-        (run / 'Caddyfile').write_text(f'{{\n    admin off\n    http_port {self.http}\n    https_port {self.https}\n'
-                                       + caddyfile[2:])
         self.log = run / 'caddy.log'
         # Хранилище входа: из него Caddy читает токены HTTP-01.
         env = dict(self.entry.env, XDG_DATA_HOME=str(self.entry.storage.parent), XDG_CONFIG_HOME=str(run))
-        with self.log.open('w') as log:
-            self.process = subprocess.Popen([caddy(), 'run', '--config', str(run / 'Caddyfile'), '--adapter', 'caddyfile'],
-                                            env=env, stdout=log, stderr=subprocess.STDOUT)
-        deadline = time.monotonic() + 20
-        for port in (self.http, self.https):
-            while True:
-                assert self.process.poll() is None, 'caddy exited:\n' + self.log.read_text()[-3000:]
-                try:
-                    socket.create_connection(('127.0.0.1', port), timeout=1).close()
-                    break
-                except OSError:
-                    assert time.monotonic() < deadline, 'caddy did not listen:\n' + self.log.read_text()[-3000:]
-                    time.sleep(.05)
+
+        def start(http, https):
+            site = re.sub(r'^:80 \{', f':{http} {{', caddyfile, flags=re.M)
+            (run / 'Caddyfile').write_text(f'{{\n    admin off\n    http_port {http}\n    https_port {https}\n' + site[2:])
+            with self.log.open('w') as log:
+                return subprocess.Popen([caddy(), 'run', '--config', str(run / 'Caddyfile'), '--adapter', 'caddyfile'],
+                                        env=env, stdout=log, stderr=subprocess.STDOUT)
+
+        self.process, (self.http, self.https) = start_on_free_ports(start, 2, socket.SOCK_STREAM,
+                                                                    lambda: self.log.read_text()[-3000:])
         return self
 
     def __exit__(self, *_exc):

@@ -39,6 +39,9 @@ PULL_TIMEOUT = 1200
 DOWNLOAD_PAUSES = (3, 10, 30)
 GITHUB_DOWNLOAD = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
+# A connection to ghcr.io or its CDN now and then hangs unanswered: the manifest is
+# kilobytes, so a quick retry beats a minute-long wait.
+REGISTRY_TRIES, REGISTRY_TIMEOUT = 3, 10
 
 
 class ReleaseError(Exception):
@@ -299,6 +302,18 @@ def git(root, *args):
                           capture_output=True, text=True, timeout=30)
 
 
+def registry_get(request):
+    for left in range(REGISTRY_TRIES - 1, -1, -1):
+        try:
+            with urllib.request.urlopen(request, timeout=REGISTRY_TIMEOUT) as response:
+                return response.read(1 << 20)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError):
+            if not left:
+                raise
+
+
 def registry_read(source, path, accept):
     """GET from an OCI registry; an anonymous pull token is fetched when asked for."""
     url = urllib.parse.urlsplit(source)
@@ -306,8 +321,7 @@ def registry_read(source, path, accept):
     request = urllib.request.Request(f'{url.scheme}://{url.netloc}/v2/{repository}/{path}',
                                      headers={'Accept': accept})
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return response.read(1 << 20)
+        return registry_get(request)
     except urllib.error.HTTPError as error:
         challenge = error.headers.get('WWW-Authenticate', '')
         if error.code != 401 or not challenge.lower().startswith('bearer '):
@@ -315,11 +329,9 @@ def registry_read(source, path, accept):
         params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
     query = urllib.parse.urlencode({'service': params.get('service', ''),
                                     'scope': params.get('scope', f'repository:{repository}:pull')})
-    with urllib.request.urlopen(params['realm'] + '?' + query, timeout=60) as response:
-        token = json.load(response)
+    token = json.loads(registry_get(params['realm'] + '?' + query))
     request.add_header('Authorization', 'Bearer ' + (token.get('token') or token['access_token']))
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read(1 << 20)
+    return registry_get(request)
 
 
 def fetch(root, output, source):

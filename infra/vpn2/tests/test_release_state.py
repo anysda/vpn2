@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import warnings
@@ -464,8 +465,8 @@ class SwapAfterCleanInstallTests(Work):
 class Registry:
     """Часть OCI distribution, которую GHCR отдаёт анонимно."""
 
-    def __init__(self, blob=None, layer_digest=None):
-        self.objects, self.requests = {}, []
+    def __init__(self, blob=None, layer_digest=None, stalls=0):
+        self.objects, self.requests, self.stalls = {}, [], stalls
         if blob is not None:
             digest = layer_digest or 'sha256:' + hashlib.sha256(blob).hexdigest()
             self.objects[f'/v2/{REPOSITORY}/blobs/{digest}'] = blob
@@ -488,6 +489,9 @@ class Registry:
                                      f'service="test",scope="repository:{REPOSITORY}:pull"')
                     self.end_headers()
                     return None
+                if '/blobs/' in self.path and registry.stalls:
+                    registry.stalls -= 1
+                    time.sleep(1)
                 body = registry.objects.get(self.path)
                 return self.reply(200, body) if body is not None else self.reply(404, b'{}')
 
@@ -549,6 +553,17 @@ class PublishedManifestTests(Work):
         check = self.cli('verify-tree', source=registry.source)
         self.assertEqual(check.returncode, 0, check.stderr)
         self.assertIn(f'манифест commit {HEAD} (версия 0.0.0-test) проверен', check.stdout)
+
+    def test_hanging_registry_connection_is_retried_quickly(self):
+        for stalls, fetched in ((2, True), (3, False)):
+            registry, out = self.registry(json.dumps(contract()).encode(), stalls=stalls), self.work / f'{stalls}.json'
+            with patch.object(release, 'REGISTRY_TIMEOUT', 0.3):
+                if fetched:
+                    release.fetch(ROOT, out, registry.source)
+                    self.assertEqual(json.loads(out.read_text())['commit'], HEAD)
+                else:
+                    with self.assertRaisesRegex(release.ReleaseError, 'не удалось скачать манифест'):
+                        release.fetch(ROOT, out, registry.source)
 
     def test_cached_manifest_of_same_commit_survives_network_loss(self):
         (self.work / 'release-manifest.json').write_text(json.dumps(contract()))

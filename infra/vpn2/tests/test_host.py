@@ -1,6 +1,7 @@
 """Шаги узла из ролей: числа и строки сверены со стадией 00-bootstrap.sh и anysda-svc.sh."""
 import hashlib
 from pathlib import Path
+import re
 import subprocess
 import types
 
@@ -408,6 +409,13 @@ def test_swap_step_passes_the_install_size(monkeypatch):
     assert host.main(['swap', '--manifest', 'm.json', '--install-bytes', str(ENTRY_INSTALL)]) == 0
     assert seen == {'manifest': 'm.json', 'install_bytes': ENTRY_INSTALL}
     assert host.main(['swap']) == 0 and seen['install_bytes'] == 0
+
+
+def test_fail2ban_restarts_only_on_files_it_reads_at_start():
+    tasks = yaml.safe_load((Path(__file__).parents[2] / 'ansible/roles/base/tasks/services.yml').read_text())
+    step = next(task for task in tasks if task['name'] == 'Служба fail2ban перезапущена при смене входов')
+    assert re.findall(r"'(/[^']+)'", step['ansible.builtin.command']['argv']) == [
+        '/usr/bin/fail2ban-server', '/usr/lib/systemd/system/fail2ban.service', '/etc/fail2ban/jail.d/anysda.local']
 
 
 def test_f2b_ignore_skips_garbage():

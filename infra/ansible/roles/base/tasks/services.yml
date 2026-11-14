@@ -18,11 +18,14 @@
     name: fail2ban
     enabled: true
 
+# nft fail2ban зовёт на каждый бан и при старте не читает, а nftables позже
+# обновляет apt-get install роли emergency: во входах он перезапускал бы службу
+# на следующем деплое.
 - name: Служба fail2ban перезапущена при смене входов
   ansible.builtin.command:
     argv: >-
       {{ base_host + ['restart-if-changed', 'fail2ban', '/usr/bin/fail2ban-server',
-         '/usr/lib/systemd/system/fail2ban.service', '/etc/fail2ban/jail.d/anysda.local', '/usr/sbin/nft'] }}
+         '/usr/lib/systemd/system/fail2ban.service', '/etc/fail2ban/jail.d/anysda.local'] }}
   register: base_step
   changed_when: "'vpn2: changed' in base_step.stdout"
 

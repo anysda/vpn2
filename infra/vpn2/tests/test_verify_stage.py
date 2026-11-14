@@ -2,6 +2,8 @@
 
 Подставной ssh (FAKE_SSH) - sshd с login shell: сначала .bashrc экзита в режиме FAKE_BASHRC, потом команда.
 """
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
@@ -11,10 +13,12 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import pytest
 
 from vpn2.emergency import snapshot
+from vpn2.verify import stage as verify_stage
 
 ROOT = Path(__file__).resolve().parents[3]
 # Предел на весь сценарий - защита от зависания, а не мерило скорости.
@@ -605,12 +609,14 @@ class ExitSshTests(unittest.TestCase):
                 self.assertLess(elapsed - baseline, LIMIT - 1, 'verify ждал предел при мгновенном отказе экзита')
 
     def test_remote_code_just_before_limit_is_not_the_limit(self):
-        # Время в целых секундах набегает до предела раньше, чем он истёк: повторы ловят смену секунды.
-        for where, rc, sleep, _ in ((w, rc, s, n) for w in ('before', 'after') for rc in (124, 137)
-                                    for s in (LIMIT - 0.5, LIMIT - 0.1) for n in range(2)):
-            with self.subTest(where=where, rc=rc, sleep=sleep):
-                self.assert_failure(f'code-{where}', NO_MARK if where == 'before' else rf'(?<!\d){rc}(?!\d)',
-                                    FAKE_RC=rc, FAKE_SLEEP=sleep)
+        # Часы stage на дробной секунде: прошедшее в целых секундах набегает до предела раньше, чем он истёк.
+        for where, rc, delay in ((w, rc, d) for w in ('before', 'after') for rc in (124, 137)
+                                 for d in (LIMIT - 0.5, LIMIT - 0.1)):
+            with self.subTest(where=where, rc=rc, delay=delay):
+                row = late_exit_row(delay, FAKE_BASHRC=f'code-{where}', FAKE_RC=str(rc))
+                self.assertEqual(row['result'], 'Ошибка')
+                self.assertRegex(row['reason'], NO_MARK if where == 'before' else rf'(?<!\d){rc}(?!\d)')
+                self.assertNotRegex(row['reason'], LIMIT_REASON, 'код экзита до истечения предела принят за предел')
 
     def test_hang_fails_by_limit_and_leaves_nothing(self):
         baseline = self.verify('')[3]
@@ -634,6 +640,49 @@ class ExitSshTests(unittest.TestCase):
 
     def test_bashrc_just_under_limit_passes(self):
         self.assert_pass('hang-before', FAKE_SLEEP=LIMIT - 1.5)
+
+
+class LateExitClock:
+    """Часы stage: заглушка ssh отвечает сразу, а по часам stage - через delay с от дробной секунды."""
+
+    def __init__(self, delay):
+        self.now, self.delay = 1_800_000_000.95, delay
+
+    def monotonic(self):
+        return self.now
+
+    time = perf_counter = monotonic
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def popen(self):
+        clock = self
+
+        class Late(subprocess.Popen):
+            def wait(self, timeout=None):
+                rc = super().wait()
+                clock.now += clock.delay
+                if timeout is not None and clock.delay >= timeout:
+                    raise subprocess.TimeoutExpired(self.args, timeout)
+                return rc
+
+        return Late
+
+
+def late_exit_row(delay, **env):
+    """Строка отчёта «ssh exit через hy2-mgmt»: экзит ответил через delay с по часам stage, предел LIMIT."""
+    clock = LateExitClock(delay)
+    with tempfile.TemporaryDirectory() as directory:
+        (Path(directory) / 'ssh').write_text(FAKE_SSH)
+        (Path(directory) / 'ssh').chmod(0o755)
+        node = verify_stage.Stage({'HOST_TAG': 'ru'}, Path(directory) / 'rows.jsonl')
+        with mock.patch.dict(os.environ, {'PATH': f"{directory}:{os.environ['PATH']}", **env}), \
+                mock.patch.object(verify_stage, 'time', clock), \
+                mock.patch.object(verify_stage.subprocess, 'Popen', clock.popen()), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            node.check(LABEL, verify_stage.exit_ssh, 'exit', str(LIMIT))
+        return node.read_rows()[0]
 
 
 def alive(pids):

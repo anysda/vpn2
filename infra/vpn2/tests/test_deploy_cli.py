@@ -211,7 +211,7 @@ def test_full_deploy_follows_site_yml(tree, inproc):
         ('35-telegram', 'ru', 'true'), ('30-frontend', 'ru', None), ('99-verify', 'ru,us,gb', None)]
     at = [item[0] for item in staged].index
     assert at('05-mgmt-mesh') < at('10-foreign') and staged.index(('99-verify', 'gb', None)) < at('20-ru-router')
-    assert at('22-adguard') < staged.index(('23-emergency', 'us,gb', None)) < at('29-control')
+    assert at('22-adguard') < staged.index(('23-emergency', 'us,gb', None)) < at('30-frontend')
     assert [call['args'].split('--tags ')[1].split()[0] for call in calls][:3] == ['journal', 'release', 'preflight']
     assert '--tags old-layout' in calls[-2]['args'] and '--tags complete' in calls[-1]['args']
     assert 'деплой завершён' in done.stdout and re.search(r'│  30-frontend +ru +\d+s +│', done.stdout)

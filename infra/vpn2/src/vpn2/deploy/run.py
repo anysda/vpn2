@@ -29,8 +29,8 @@ SSH_PLUGIN = {'ANSIBLE_STRATEGY': 'linear', 'ANSIBLE_TIMEOUT': '10'}
 FRESH_LOGIN = {**SSH_PLUGIN, 'ANSIBLE_SSH_ARGS': '-o ControlMaster=no -o ControlPath=none'}
 QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 # Экзитная часть стадии идёт рядом со следующими стадиями entry, которым экзиты не нужны, до названной:
-# секреты экзитов забирает 20-ru-router, аварийка экзитов не нужна 25-27.
-BESIDE = {'10-foreign': '20-ru-router', '23-emergency': '29-control'}
+# секреты экзитов забирает 20-ru-router, аварийка экзитов до панели не нужна никому.
+BESIDE = {'10-foreign': '20-ru-router', '23-emergency': '30-frontend'}
 
 
 class Interrupted(SystemExit):

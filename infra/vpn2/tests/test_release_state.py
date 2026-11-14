@@ -71,7 +71,7 @@ def free_space(free):
 
 
 def build_manifest(directory, migrations_after_tag):
-    """Выпуск: тег v1.0.0, потом коммиты; возвращает собранный манифест и путь к нему."""
+    """Выпуск: тег 1.0.0, потом коммиты; возвращает собранный манифест и путь к нему."""
     work = Path(tempfile.mkdtemp(dir=directory))
     repo, folder = work / 'repo', work / 'repo/app/server/database/migrations'
     (folder / 'meta').mkdir(parents=True)
@@ -88,7 +88,7 @@ def build_manifest(directory, migrations_after_tag):
 
     subprocess.run(['git', 'init', '-q', str(repo)], check=True)
     commit(2, 'release')
-    subprocess.run(git + ['tag', 'v1.0.0'], check=True)
+    subprocess.run(git + ['tag', '1.0.0'], check=True)
     commit(2 + migrations_after_tag, 'next')
     (repo / 'notes').write_text('later commit')
     commit(2 + migrations_after_tag, 'later')

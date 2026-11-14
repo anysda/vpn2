@@ -259,7 +259,7 @@ jobs:
         os: ['24.04', '26.04']
     env:
       STAND_OS: ${{ matrix.os }}
-      UPGRADE_FROM: v1.1.5
+      UPGRADE_FROM: 1.1.5
     steps:
       # fetch-depth 0: нужен тег выпуска (archive и список удалённых файлов).
       - uses: actions/checkout@v7

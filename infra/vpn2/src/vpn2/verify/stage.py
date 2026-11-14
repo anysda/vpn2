@@ -250,7 +250,7 @@ def tcp_return():
     """TCP_RETURN_S сторожа: столько секунд hy2 жив подряд, прежде чем канал вернётся с TCP."""
     try:
         found = re.findall(r'^TCP_RETURN_S=([0-9]+(?:\.[0-9]+)?)$', FAILOVER_ENV.read_text(), re.MULTILINE)
-    except OSError:
+    except (OSError, ValueError):
         found = []
     return float(found[-1]) if found else 60.0
 

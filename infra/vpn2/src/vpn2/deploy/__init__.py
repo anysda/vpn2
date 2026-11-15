@@ -331,6 +331,20 @@ def prep_keys():
         subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-C', 'anysda-entry-mgmt', '-f', mgmt], check=True)
     shutil.copyfile(f'{mgmt}.pub', out / 'entry_mgmt_key')
     (out / 'entry_mgmt_key').chmod(0o600)
+    # Ключ человека на entry - не свой ключ узла: заданный у хостера или админом. С ним вход по паролю закрывается.
+    (out / 'admin_keys').write_text(human_keys(read_raw(authorized), *map(read_raw, (pub, ssh / 'id_rsa.pub', f'{mgmt}.pub'))))
+
+
+def human_keys(authorized, *own):
+    """Строки authorized_keys, кроме ключей самого узла (own - тексты его .pub)."""
+    skip = {key_id(text) for text in own} | {None}
+    return ''.join(f'{line}\n' for line in authorized.splitlines() if key_id(line) not in skip)
+
+
+def key_id(line):
+    """Тип и тело ключа из строки authorized_keys или .pub: опции и комментарий не в счёт."""
+    found = re.search(r'(?:^|\s)((?:ssh|ecdsa|sk)-\S+ [A-Za-z0-9+/=]+)', line)
+    return found[1] if found else None
 
 
 def read_raw(path):

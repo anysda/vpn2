@@ -61,3 +61,15 @@ def test_different_target_wins_and_source_is_kept(layout, capsys):
     assert (state / 'mgmt-ips.txt').read_text() == 'us 3\n'
     assert (state / 'checkout-old/mgmt-ips.txt').read_text() == 'us 2\n'
     assert 'состояние в checkout отличалось' in capsys.readouterr().err
+
+
+def test_human_keys_skip_node_own_keys():
+    """VPN2-966: ключ, заданный у хостера, - ключ человека; ключи оркестратора и mgmt - нет."""
+    from vpn2.deploy import human_keys
+    own = 'ssh-ed25519 AAAAown anysda-orchestrator\n'
+    authorized = ('ssh-ed25519 AAAAown anysda-orchestrator\n'
+                  'from="127.0.0.1" ssh-ed25519 AAAAmgmt anysda-entry-mgmt\n'
+                  '# comment\n\n'
+                  'ssh-ed25519 AAAAhuman user@laptop\n')
+    assert human_keys(authorized, own, '', 'ssh-ed25519 AAAAmgmt anysda-entry-mgmt\n') == 'ssh-ed25519 AAAAhuman user@laptop\n'
+    assert human_keys(own, own) == ''

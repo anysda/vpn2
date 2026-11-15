@@ -1,5 +1,6 @@
 import { eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import pkg from '../../package.json' with { type: 'json' }
 import { useDb } from '../database/client'
 import { clients, deviceTrafficHourly, devices } from '../database/schema'
 
@@ -15,7 +16,7 @@ export default {
   'GET /version': () => {
     // HTTP слушает раньше конца инициализации, а деплой ждёт именно готовую панель.
     if (!isPanelReady()) throw createError({ statusCode: 503, statusMessage: 'panel_starting', message: 'Панель запускается' })
-    return { name: 'anysda-vpn2', version: '1.2.0', license: 'MIT' }
+    return { name: 'anysda-vpn2', version: pkg.version, license: 'MIT' }
   },
   'GET /events': admin(async event => recentEvents((await getValidatedQuery(event, EventsQuery.parse)).limit)),
   'GET /wg-endpoint-warning': admin(async (event) => {

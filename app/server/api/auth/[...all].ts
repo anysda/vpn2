@@ -49,6 +49,10 @@ async function humanError(res: Response): Promise<Response> {
     code = 'INVALID_BODY'
     message = field ? `Проверьте поле «${FIELD_LABELS[field] ?? field}»` : 'Проверьте данные запроса'
   }
+  const retryAfter = Number(res.headers.get('x-retry-after'))
+  if (code === 'TOO_MANY_REQUESTS' && retryAfter > 0) {
+    message = `Слишком много попыток, попробуйте через ${Math.max(1, Math.ceil(retryAfter / 60))} мин`
+  }
   const headers = new Headers(res.headers)
   headers.delete('content-length')
   headers.set('content-type', 'application/json')

@@ -81,3 +81,23 @@ def test_play_from_warm_process_matches_separate_ansible_playbook(tmp_path):
     assert warm == [(found.returncode, re.sub(banner.format(skipped), '', found.stdout) if skipped else found.stdout,
                      found.stderr) for found, (_args, skipped) in zip(cold, runs)]
     assert plays.proc.returncode == 0
+
+
+def test_late_code_of_interrupted_play_keeps_reader_alive():
+    """Код плея, чьё ожидание прервано (запись уже снята), не роняет читателя: следующий плей получает свой код."""
+    import json
+    import socket
+    import threading
+
+    plays = Plays.__new__(Plays)
+    plays.sock, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    plays.lock, plays.waiting = threading.Lock(), {2: {'done': threading.Event()}}
+    reader = threading.Thread(target=plays.read, daemon=True)
+    reader.start()
+    theirs.send(json.dumps({'id': 1, 'code': 143}).encode())
+    theirs.send(json.dumps({'id': 2, 'code': 0}).encode())
+    assert plays.waiting[2]['done'].wait(5)
+    assert plays.waiting[2]['code'] == 0
+    assert reader.is_alive()
+    theirs.close()
+    reader.join(5)

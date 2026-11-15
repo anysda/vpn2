@@ -32,9 +32,11 @@ class Plays:
             while message := self.sock.recv(4096):
                 found = json.loads(message)
                 with self.lock:
-                    entry = self.waiting.get(found['id'], {})
+                    # Ожидание прерванного плея уже снято: его поздний код никому не нужен.
+                    if (entry := self.waiting.get(found['id'])) is None:
+                        continue
                     entry.update(found)
-                if 'code' in found and entry:
+                if 'code' in found:
                     entry['done'].set()
         with self.lock:
             for entry in self.waiting.values():

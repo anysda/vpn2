@@ -59,58 +59,58 @@ describe('ensureDeviceIkev2', () => {
     expect(calls).toEqual(['db:select'])
   })
 
-  it('клиента нет - ошибка с номером клиента, записи нет', async () => {
-    dbResults.push([empty], [])
-    expect((await rejection(ensureDeviceIkev2(4))).message).toBe('client 7 not found')
-    expect(calls).not.toContain('db:update')
-  })
-
-  it('выдача: логин из слагов клиента и устройства, пароль 20 символов alnum, адрес из пула', async () => {
-    dbResults.push([empty], [{ name: 'Anna' }], [{ username: 'other-dev', ip: '10.68.68.2' }], [{ id: 4 }])
+  it('выдача: короткий логин из номеров клиента и устройства, пароль 20 символов alnum, адрес из пула', async () => {
+    dbResults.push([empty], [{ username: 'other-dev', ip: '10.68.68.2' }], [{ id: 4 }])
     await ensureDeviceIkev2(4)
     const set = lastSet()
-    expect(set.ikev2Username).toBe('anna-phone-1')
+    expect(set.ikev2Username).toBe('c7-d4')
     expect(set.ikev2Password).toMatch(/^[A-Za-z0-9]{20}$/)
     expect(set.ikev2Ip).toBe('10.68.68.3')
   })
 
+  it('логин не длиннее 9 знаков при номерах клиента и устройства до 46655', async () => {
+    dbResults.push([{ ...empty, id: 46655, clientId: 46655 }], [], [{ id: 46655 }])
+    await ensureDeviceIkev2(46655)
+    expect(lastSet().ikev2Username).toBe('czzz-dzzz')
+  })
+
   it('занятый логин получает числовой суффикс -2, затем -3', async () => {
-    dbResults.push([empty], [{ name: 'Anna' }], [{ username: 'anna-phone-1', ip: null }, { username: 'anna-phone-1-2', ip: null }], [{ id: 4 }])
+    dbResults.push([empty], [{ username: 'c7-d4', ip: null }, { username: 'c7-d4-2', ip: null }], [{ id: 4 }])
     await ensureDeviceIkev2(4)
-    expect(lastSet().ikev2Username).toBe('anna-phone-1-3')
+    expect(lastSet().ikev2Username).toBe('c7-d4-3')
   })
 
   it('частично заполненное устройство сохраняет выданные логин и пароль', async () => {
-    dbResults.push([{ ...empty, ikev2Username: 'anna-phone', ikev2Password: 'test-pass' }], [{ name: 'Anna' }], [], [{ id: 4 }])
+    dbResults.push([{ ...empty, ikev2Username: 'anna-phone', ikev2Password: 'test-pass' }], [], [{ id: 4 }])
     await ensureDeviceIkev2(4)
     expect([lastSet().ikev2Username, lastSet().ikev2Password]).toEqual(['anna-phone', 'test-pass'])
   })
 
   it('уже выданный адрес сохраняется, логин и пароль добираются', async () => {
-    dbResults.push([{ ...empty, ikev2Ip: '10.68.68.9' }], [{ name: 'Anna' }], [{ username: null, ip: '10.68.68.9' }], [{ id: 4 }])
+    dbResults.push([{ ...empty, ikev2Ip: '10.68.68.9' }], [{ username: null, ip: '10.68.68.9' }], [{ id: 4 }])
     await ensureDeviceIkev2(4)
-    expect([lastSet().ikev2Ip, lastSet().ikev2Username]).toEqual(['10.68.68.9', 'anna-phone-1'])
+    expect([lastSet().ikev2Ip, lastSet().ikev2Username]).toEqual(['10.68.68.9', 'c7-d4'])
   })
 
   it('запись ничего не вернула - перечитывается и берётся готовая строка', async () => {
-    dbResults.push([empty], [{ name: 'Anna' }], [], [], [full])
+    dbResults.push([empty], [], [], [full])
     expect(await ensureDeviceIkev2(4)).toBe(full)
     expect(calls.filter(c => c === 'db:update')).toHaveLength(1)
   })
 
   it('конфликт UNIQUE - повтор с перечитанными занятыми значениями', async () => {
-    dbResults.push([empty], [{ name: 'Anna' }], [], failing(unique), [empty], [{ name: 'Anna' }], [{ username: null, ip: '10.68.68.2' }], [{ id: 4 }])
+    dbResults.push([empty], [], failing(unique), [empty], [{ username: null, ip: '10.68.68.2' }], [{ id: 4 }])
     await ensureDeviceIkev2(4)
     expect(dbOps.filter(o => o.op === 'set').map(o => (o.args[0] as Record<string, string>).ikev2Ip)).toEqual(['10.68.68.2', '10.68.68.3'])
   })
 
   it('чужая ошибка записи не глотается', async () => {
-    dbResults.push([empty], [{ name: 'Anna' }], [], failing(new Error('disk I/O error')))
+    dbResults.push([empty], [], failing(new Error('disk I/O error')))
     expect((await rejection(ensureDeviceIkev2(4))).message).toBe('disk I/O error')
   })
 
   it('50 конфликтов подряд - ошибка про логин и адрес IKEv2', async () => {
-    for (let i = 0; i < 50; i++) dbResults.push([empty], [{ name: 'Anna' }], [], failing(unique))
+    for (let i = 0; i < 50; i++) dbResults.push([empty], [], failing(unique))
     expect((await rejection(ensureDeviceIkev2(4))).message).toBe('device 4: не удалось занять логин и адрес IKEv2')
     expect(calls.filter(c => c === 'db:update')).toHaveLength(50)
   })

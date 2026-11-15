@@ -15,9 +15,12 @@ export function entryHost(): string {
   return String(process.env.ENTRY_HOST || useRuntimeConfig().wgPublicHost || '').trim()
 }
 
-/** `<клиент>-<устройство>`, уникальный среди всех устройств: это id в secrets swanctl. */
-function buildIkev2Username(clientName: string, deviceName: string, takenUsernames: Array<string | null>): string {
-  const base = `${slugify(clientName)}-${slugify(deviceName)}`
+/**
+ * `c<клиент>-d<устройство>` по номерам в base36: логин вводят руками на телефоне, при номерах до
+ * 46655 он не длиннее 9 знаков. Уникален среди всех устройств: это id в secrets swanctl.
+ */
+function buildIkev2Username(clientId: number, deviceId: number, takenUsernames: Array<string | null>): string {
+  const base = `c${clientId.toString(36)}-d${deviceId.toString(36)}`
   const taken = new Set(takenUsernames)
   for (let i = 1; i < 1000; i++) {
     const name = i === 1 ? base : `${base}-${i}`
@@ -26,17 +29,15 @@ function buildIkev2Username(clientName: string, deviceName: string, takenUsernam
   throw new Error(`unable to allocate unique ikev2 username for ${base}`)
 }
 
-/** Выдаёт устройству логин, пароль и адрес IKEv2, если их нет. */
+/** Выдаёт устройству логин, пароль и адрес IKEv2, если их нет; выданные не меняются. */
 export function ensureDeviceIkev2(deviceId: number) {
   const db = useDb()
   return claimUnique(`device ${deviceId}: не удалось занять логин и адрес IKEv2`, async () => {
     const row = await deviceById(deviceId)
     if (row.ikev2Username && row.ikev2Password && row.ikev2Ip) return row
-    const [client] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, row.clientId)).limit(1)
-    if (!client) throw new Error(`client ${row.clientId} not found`)
     const all = await db.select({ username: devicesTable.ikev2Username, ip: devicesTable.ikev2Ip }).from(devicesTable)
     const [updated] = await db.update(devicesTable).set({
-      ikev2Username: row.ikev2Username ?? buildIkev2Username(client.name, row.name, all.map(r => r.username)),
+      ikev2Username: row.ikev2Username ?? buildIkev2Username(row.clientId, row.id, all.map(r => r.username)),
       ikev2Password: row.ikev2Password ?? generatePassword(),
       ikev2Ip: row.ikev2Ip ?? nextPoolAddress('ikev2', all.map(r => r.ip)),
       updatedAt: new Date(),

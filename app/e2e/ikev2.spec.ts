@@ -11,7 +11,6 @@ import { execFileSync } from 'node:child_process'
 import * as schema from '../server/database/schema'
 import { nextPoolAddress } from '../server/utils/address-pools'
 import { coalesceRuns } from '../server/utils/api'
-import { slugify } from '../server/utils/naming'
 import { serverModule } from './support/server-module'
 
 test.describe('ikev2-delivery', () => {
@@ -112,7 +111,7 @@ test.describe('ikev2-repair', () => {
       const ikev2 = serverModule<typeof import('../server/utils/ikev2')>(
         'server/utils/ikev2.ts', {
           '../database/client': { useDb: () => db }, '../database/schema': schema,
-          './address-pools': { nextPoolAddress }, './naming': { slugify },
+          './address-pools': { nextPoolAddress },
           './api': { coalesceRuns }, './client-status': { isClientActive: () => true, expiryForControl: () => null },
           './client-dns': { clientDns: () => ['192.0.2.53'] },
           './control': { controlApply: async (_method: string, params: unknown) => {

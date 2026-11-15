@@ -7,7 +7,7 @@ const CYR: Record<string, string> = {
 }
 
 /** Имя → слаг латиницей: «Артём Фёдоров» → «artem-fedorov», «iPhone 14» → «iphone-14». */
-export function slugify(s: string): string {
+function slugify(s: string): string {
   const latin = s.trim().toLowerCase().replace(/[Ѐ-ӿ]/g, ch => CYR[ch] ?? '')
   return latin.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'
 }

@@ -197,14 +197,14 @@ describe('enqueueAccess: версия, вид и содержимое опера
     expect(values().deviceId).toBe(2)
   })
 
-  it('reissue: новые ключи WG и пароль IKEv2, rotateOvpn с прежним сертификатом, retired со старым ключом', async () => {
+  it('reissue: новые ключи WG, логин и пароль IKEv2 сброшены под новую выдачу, rotateOvpn с прежним сертификатом, retired со старым ключом', async () => {
     queue({ devices: [device(1)] })
     tail(1)
     await enqueueAccess({ clientId: 7, actor: 'admin', kind: 'reissue' })
     const set = sets()[1]!
     for (const key of ['wgPrivateKey', 'wgPublicKey', 'wgPresharedKey']) expect(set[key]).toMatch(/^[A-Za-z0-9+/]{43}=$/)
     expect(set.wgPublicKey).not.toBe('test-key-wg-1')
-    expect(set.ikev2Password).toMatch(/^[A-Za-z]{20}$/)
+    expect([set.ikev2Username, set.ikev2Password]).toEqual([null, null])
     expect(payloadOf().rotateOvpn).toEqual([{ id: 1, cert: 'test-cert-1' }])
     expect(payloadOf().retired).toEqual([{ id: 1, wgPublicKey: 'test-key-wg-1', ovpnCert: 'test-cert-1' }])
   })
@@ -214,7 +214,7 @@ describe('enqueueAccess: версия, вид и содержимое опера
     queue({ devices: [device(1)] })
     tail(1)
     await enqueueAccess({ clientId: 7, actor: 'admin', kind: 'reissue' })
-    expect(Object.keys(sets()[1]!).sort()).toEqual(['ikev2Password', 'updatedAt'])
+    expect(Object.keys(sets()[1]!).sort()).toEqual(['ikev2Password', 'ikev2Username', 'updatedAt'])
     expect(payloadOf().rotateOvpn).toEqual([])
     const protocols = values().protocols as Record<string, { state: string, nextRetry: number | null }>
     expect([protocols.wg!.state, protocols.openvpn!.state, protocols.ikev2!.state]).toEqual(['not_required', 'not_required', 'pending'])

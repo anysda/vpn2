@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from vpn2.config import STATE_DIR
@@ -195,6 +196,22 @@ def prune_venvs():
             shutil.rmtree(build, ignore_errors=True)
 
 
+def pip():
+    return [PYTHON, f'{first("pip-*.whl")}/pip', '--disable-pip-version-check']
+
+
+def fill_store(out, pins):
+    """Колёса ansible под пины - в pip-wheels из сети; при тех же пинах они уже там."""
+    store = ROOT / 'pip-wheels'
+    if read(store / '.vpn2-pins') == pins:
+        return
+    shutil.rmtree(store, ignore_errors=True)
+    store.mkdir(parents=True)
+    retried(out, *pip(), 'download', '--only-binary', ':all:', '-d', store, '-c', INFRA / 'ansible/constraints.txt',
+            'ansible-core', 'mitogen')
+    (store / '.vpn2-pins').write_text(f'{pins}\n')
+
+
 def install_venv(out):
     """venv - симлинк на сборку venvs/<пины>-<исходники>: подмена одним rename, действующая не трогается.
 
@@ -210,19 +227,14 @@ def install_venv(out):
         prune_venvs()
         out.write('[deploy] ansible: пины те же, без загрузки\n')
         return
-    pip = [PYTHON, f'{first("pip-*.whl")}/pip', '--disable-pip-version-check']
-    new, store, constraints = ROOT / f'venvs/{pins[:12]}-{stamp[:12]}', ROOT / 'pip-wheels', INFRA / 'ansible/constraints.txt'
+    new = ROOT / f'venvs/{pins[:12]}-{stamp[:12]}'
     if not (new / '.vpn2-pins').is_file():
         shutil.rmtree(new, ignore_errors=True)
         new.parent.mkdir(parents=True, exist_ok=True)
-        if read(store / '.vpn2-pins') != pins:
-            shutil.rmtree(store, ignore_errors=True)
-            store.mkdir(parents=True)
-            retried(out, *pip, 'download', '--only-binary', ':all:', '-d', store, '-c', constraints, 'ansible-core', 'mitogen')
-            (store / '.vpn2-pins').write_text(f'{pins}\n')
+        fill_store(out, pins)
         call(out, PYTHON, '-m', 'venv', '--without-pip', new)
-        call(out, *pip, '--python', new / 'bin/python', 'install', '--no-index', '--find-links', store, '-c', constraints, 'ansible-core', 'mitogen')
-        call(out, *pip, '--python', new / 'bin/python', 'install', '--no-index', '--no-deps', wheel)
+        call(out, *pip(), '--python', new / 'bin/python', 'install', '--no-index', '--find-links', ROOT / 'pip-wheels',
+             '-c', INFRA / 'ansible/constraints.txt', 'ansible-core', 'mitogen', wheel)
     (new / '.vpn2-wheel').write_text(f'{stamp}\n')
     (new / '.vpn2-pins').write_text(f'{pins}\n')
     with contextlib.suppress(FileNotFoundError):
@@ -240,7 +252,13 @@ def ensure_venv():
     path = ROOT / 'ansible-venv.log'
     with open(path, 'w') as out:
         try:
-            build_wheel(out)
+            # Новые пины - всё равно загрузка: она идёт, пока собирается колесо vpn2.
+            pins = venv_pins()
+            with ThreadPoolExecutor(1) as pool:
+                early = pool.submit(fill_store, out, pins) if read(ROOT / 'venv/.vpn2-pins') != pins else None
+                build_wheel(out)
+                if early:
+                    early.result()
             with locked(ROOT / '.lock'):
                 install_venv(out)
             failed = None

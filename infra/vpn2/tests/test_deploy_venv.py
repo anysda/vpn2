@@ -16,7 +16,6 @@ case "$1" in
   -m) log venv; mkdir -p "$4/bin" ;;
   */pip) case " $* " in
       *' download '*) log download ;;
-      *' --no-deps '*) log install-wheel ;;
       *) log install-ansible; [ -z "$FAKE_FAIL" ] || exit 1 ;;
     esac ;;
 esac
@@ -70,7 +69,9 @@ def test_source_hash_ignores_pycache(box):
 
 def test_install_branches(box):
     deploy.ensure_venv()
-    assert steps(box) == ['build', 'download', 'venv', 'install-ansible', 'install-wheel']
+    found = steps(box)
+    # Загрузка идёт рядом со сборкой колеса.
+    assert sorted(found[:2]) == ['build', 'download'] and found[2:] == ['venv', 'install-ansible']
     current = (box / 'opt/venv').resolve()
     deploy.ensure_venv()
     assert steps(box) == []
@@ -78,13 +79,13 @@ def test_install_branches(box):
     # Правка исходников: новое колесо и сборка, без загрузки; старая сборка убрана.
     (box / 'infra/vpn2/src/vpn2/__init__.py').write_text('# edit\n')
     deploy.ensure_venv()
-    assert steps(box) == ['build', 'venv', 'install-ansible', 'install-wheel']
+    assert steps(box) == ['build', 'venv', 'install-ansible']
     assert 'колесо vpn2 обновлено' in (box / 'opt/ansible-venv.log').read_text()
     assert (box / 'opt/venv').resolve() != current and not current.exists()
     # Смена пинов: загрузка заново.
     (box / 'infra/ansible/constraints.txt').write_text('ansible-core==2.1\n')
     deploy.ensure_venv()
-    assert steps(box) == ['download', 'venv', 'install-ansible', 'install-wheel']
+    assert steps(box) == ['download', 'venv', 'install-ansible']
 
 
 def test_aborted_build_leaves_current_venv_working(box, monkeypatch):
@@ -100,7 +101,7 @@ def test_aborted_build_leaves_current_venv_working(box, monkeypatch):
     steps(box)
     deploy.ensure_venv()
     # Оборванная сборка без .vpn2-pins собирается заново, склад колёс уже под новые пины.
-    assert steps(box) == ['venv', 'install-ansible', 'install-wheel']
+    assert steps(box) == ['venv', 'install-ansible']
 
 
 def test_build_of_running_process_is_kept(box):

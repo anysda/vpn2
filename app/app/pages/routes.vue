@@ -18,10 +18,12 @@ definePageMeta({ title: 'Маршруты' })
 const { act, busy } = useAct()
 const mobile = useMobile()
 
-const { data: rules, refresh } = useFetch('/api/routes', { default: () => [], server: false })
+// До первого ответа списка нет (null): «0 правил» и пустой выбор выхода были бы неправдой.
+const { data: loaded, refresh } = useFetch('/api/routes', { default: () => null, server: false })
 const { data: outbounds, refresh: refreshOutbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
 usePoll(() => Promise.all([refresh(), refreshOutbounds()]), 4000)
-const count = computed(() => `${rules.value.length} ${plural(rules.value.length, 'rule')}`)
+const rules = computed(() => loaded.value ?? [])
+const count = computed(() => loaded.value ? `${rules.value.length} ${plural(rules.value.length, 'rule')}` : 'Загрузка…')
 usePageSub(() => `${count.value} · какой сайт через какой выход`)
 
 const columns = computed(() => routeColumns(outbounds.value))
@@ -66,18 +68,20 @@ watch(cells, (list) => {
   if (!newRule.outbound && list.length) newRule.outbound = list.find(c => c.outbound === 'direct-ru')?.outbound ?? list[0]!.outbound
 }, { immediate: true })
 // Второй Enter или клик, пока идёт первый POST, правило не дублирует.
-const add = () => busy.value.has('add') || act('add', async () => {
+const add = () => busy.value.has('add') || !cells.value.some(c => c.outbound === newRule.outbound) || act('add', async () => {
   await $fetch<unknown>('/api/routes', { method: 'POST', body: { value: newRule.value.trim(), outbound: newRule.outbound } })
   newRule.value = ''
   await refresh()
 }, 'Правило добавлено')
 
 // Проверка адреса: пустое поле - разбор примера серым; после правок правил - заново.
+// Опрос даёт новый массив правил каждые 4 с: следим за computed-строкой, она меняется только с правилами.
 const query = ref('')
 const asked = useDebounced(query, 250)
+const ruleSet = computed(() => rules.value.map(r => `${r.id}:${r.outbound}`).join())
 const { data: checked, error: checkError } = useFetch('/api/routes/check', {
   query: { q: computed(() => asked.value.trim() || EXAMPLE) },
-  watch: [() => rules.value.map(r => `${r.id}:${r.outbound}`).join()],
+  watch: [ruleSet],
   server: false,
 })
 const checkRule = computed(() => {
@@ -114,8 +118,8 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
         <h3 class="text-sm font-medium text-(--t2)">Новое правило</h3>
         <label class="inp big2"><input v-model="newRule.value" placeholder="netflix.com / *.openai.com / 8.8.8.8/32" spellcheck="false" aria-label="Новое правило"></label>
         <div class="mt-3 flex gap-2">
-          <USelect v-model="newRule.outbound" :items="cells.map(c => ({ label: c.name, value: c.outbound }))" class="min-w-0 flex-1" size="lg" aria-label="Выход" />
-          <button type="submit" class="pill w" :disabled="!newRule.value.trim() || !newRule.outbound">
+          <USelect v-model="newRule.outbound" :items="cells.map(c => ({ label: c.name, value: c.outbound }))" :placeholder="cells.length ? undefined : 'Загрузка…'" :disabled="!cells.length" class="min-w-0 flex-1" size="lg" aria-label="Выход" />
+          <button type="submit" class="pill w" :disabled="!newRule.value.trim() || !cells.some(c => c.outbound === newRule.outbound)">
             Добавить
           </button>
         </div>

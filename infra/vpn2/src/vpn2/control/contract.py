@@ -42,7 +42,8 @@ settings.read: {resource: routes|preferences|disabled-exits}
 settings.apply: {resource, version, config: resource-specific schema}
     Fixed JSON resources consumed by existing host route/watchdog services.
 routes.plan: {offset: 0..32 MiB, revision: empty or returned revision}
-    Fixed public routing snapshot, base64 chunks <=256 KiB; rejects a changed
+    Fixed public routing snapshot, base64 chunks <=256 KiB; offset 0 with the
+    current revision returns empty data, a later offset rejects a changed
     revision. No arbitrary path, command or unbounded response is accepted.
 
 Version domains: all WG peers; all IKEv2 clients; each OpenVPN device.

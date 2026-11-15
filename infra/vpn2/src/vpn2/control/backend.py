@@ -223,13 +223,16 @@ class Backend:
         if method == 'routes.plan':
             # A fixed public resource may exceed the per-response limit.
             # Open once per chunk; an atomic router replacement changes revision.
+            # Offset 0 with a revision is "my copy is this": the same one gets no data,
+            # another one gets the first chunk of the new plan.
             with self.path('/etc/anysda/route-plan.json').open('rb') as source:
                 stat = os.fstat(source.fileno())
                 require(stat.st_size <= 32 * LIMIT, 'limit')
                 revision = f'{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}'
-                require(not params['revision'] or params['revision'] == revision, 'stale')
-                source.seek(params['offset'])
-                data = source.read(LIMIT // 4)
+                offset, known = params['offset'], params['revision']
+                require(not offset or not known or known == revision, 'stale')
+                source.seek(offset)
+                data = b'' if not offset and known == revision else source.read(LIMIT // 4)
                 return {'revision': revision, 'size': stat.st_size, 'data': base64.b64encode(data).decode()}
         if method == 'profile.read':
             return self.profile(params['protocol'])

@@ -13,7 +13,8 @@ let cached: { revision: string, plan: RoutePlan } | null = null
 async function loadPlan(): Promise<RoutePlan> {
   try {
     type Chunk = { revision: string, size: number, data: string }
-    let part = await control<Chunk>('routes.plan', { offset: 0, revision: '' })
+    // С ревизией кэша роутер отвечает без данных, если план тот же.
+    let part = await control<Chunk>('routes.plan', { offset: 0, revision: cached?.revision ?? '' })
     if (cached?.revision === part.revision) return cached.plan
     const revision = part.revision
     const chunks = [Buffer.from(part.data, 'base64')]

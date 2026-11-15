@@ -259,3 +259,16 @@ def test_service_reply_has_the_recorded_fields_and_types(example, host):
     reply = host.ask(example['method'], example['params'])
     assert reply['ok'], reply
     assert shape(reply['result']) == shape(example['result'])
+
+
+def test_route_plan_with_current_revision_sends_no_data(host):
+    """Панель спрашивает план на каждый опрос «Маршрутов»: тот же план не пересылается заново."""
+    host.file('/etc/anysda/route-plan.json', '{"rules":[],"final":"direct-ru","rule_set":{}}')
+    first = host.ask('routes.plan', {'offset': 0, 'revision': ''})['result']
+    assert first['data']
+    same = host.ask('routes.plan', {'offset': 0, 'revision': first['revision']})['result']
+    assert same == {**first, 'data': ''}
+    host.file('/etc/anysda/route-plan.json', '{"rules":[1],"final":"direct-ru","rule_set":{}}')
+    fresh = host.ask('routes.plan', {'offset': 0, 'revision': first['revision']})['result']
+    assert fresh['revision'] != first['revision'] and fresh['data']
+    assert host.ask('routes.plan', {'offset': 1, 'revision': first['revision']})['error'] == 'stale'

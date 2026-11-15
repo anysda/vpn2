@@ -45,7 +45,7 @@ class Deploy:
         self.stages = stages.load(SITE)
         self.stage_log, self.verify_warnings, self.deploy_warnings, self.skipped = [], [], [], []
         self.mutating = self.opened = self.staged = self.guard_warned = self.closing = self.old_layout = False
-        self.plays, self.beat, self.beats, self.nodes, self.logins = None, None, 0, {}, {}
+        self.plays, self.beat, self.nodes, self.logins = None, None, {}, {}
         self.outside = self.pulled = False
         self.lock = threading.Lock()
         self.load_nodes()
@@ -136,9 +136,9 @@ class Deploy:
             self.fresh('ru', f'touch -c {GUARD}/alive')
 
     def guard_beat(self):
-        """Пульс сторожу раз в BEAT_EVERY с, пока идёт хоть одна стадия со сторожем; первый даёт arm."""
+        """Пульс сторожу раз в BEAT_EVERY с от первой стадии со сторожем до конца деплоя; первый даёт arm.
+        Между стадиями пульс идёт вхолостую (touch -c без сторожа), зато стадия не ждёт своего первого."""
         with self.lock:
-            self.beats += 1
             if self.beat:
                 return
             nodes = self.expand('all')
@@ -155,10 +155,9 @@ class Deploy:
             self.beat = (stop, threading.Thread(target=beat, daemon=True))
             self.beat[1].start()
 
-    def stop_beat(self, every=False):
+    def stop_beat(self):
         with self.lock:
-            self.beats = 0 if every else self.beats - 1
-            if self.beats > 0 or not self.beat:
+            if not self.beat:
                 return
             stop, thread = self.beat
             self.beat = None
@@ -180,7 +179,6 @@ class Deploy:
 
     def guard_finish(self, stage, nodes):
         """Сторож снят новым входом; узел, что не пускает, ждёт окно сторожа: он вернёт фаервол, и вход появится."""
-        self.stop_beat()
         deadline, left, code = time.time() + GUARD_WINDOW + 30, nodes.split(','), 0
         while True:
             done = self.each(left, lambda _node: f'python3 -I {GUARD}/fwguard.py disarm {stage}', show=True)
@@ -421,7 +419,7 @@ class Deploy:
     def close(self, code):
         """Выход деплоя: кто бы ни прервал, дочерние плеи гаснут, журнал узлов честен."""
         self.closing = True
-        self.stop_beat(every=True)
+        self.stop_beat()
         if self.plays:
             self.plays.stop()
         if code and self.mutating:

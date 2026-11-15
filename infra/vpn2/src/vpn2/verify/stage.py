@@ -40,6 +40,8 @@ SINGBOX_CONFIG = Path('/etc/sing-box/config.json')
 FAILOVER_ENV = Path('/etc/anysda/failover-watchdog.env')
 HY2_PROBE_URL = 'http://www.gstatic.com/generate_204'
 WARP_STATE = Path('/var/lib/anysda-warp-watchdog/state.json')
+# Проверка WARP полного деплоя (роль exit): своим юнитом, стадия её не ждёт.
+WARP_UNIT = 'anysda-warp-bootstrap.service'
 TARGETS_URL = 'http://127.0.0.1:8428/api/v1/targets'
 YT_CHECK = '/usr/local/bin/anysda-yt-check'
 TRAFFIC_LABEL = 'трафик: контрольный клиент'
@@ -436,6 +438,18 @@ def warp_trouble(config=None, state=None):
     return 'Cloudflare не отвечает, сторож повторяет попытки' if dead else None
 
 
+def warp_settled(final, pause=1):
+    """Проверка WARP своим юнитом закончена; итоговый verify её дожидается, проверка экзита в 10-foreign - нет."""
+    deadline = time.monotonic() + warp.BOOTSTRAP_SECONDS + warp.BOOTSTRAP_STEP * 3
+    while sh('systemctl', 'is-active', '--quiet', WARP_UNIT)[0] == 0:
+        if not final:
+            return False
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(pause)
+    return True
+
+
 def active(*units):
     return chain(*(('systemctl', 'is-active', '--quiet', unit) for unit in units))
 
@@ -674,8 +688,9 @@ def exit_node(stage):
     for name, variable, default in (('direct', 'HY2_DIRECT_PORT', '443'), ('warp', 'HY2_WARP_PORT', '8443')):
         port = stage.get(variable, default)
         stage.check(f'Hysteria2 {name}: udp/{port} слушает', udp, port)
-    trouble = warp_trouble()
-    if trouble:
+    if not warp_settled(after_stage()):
+        stage.line('WARP: проверка ещё идёт, итог в итоговом verify')
+    elif trouble := warp_trouble():
         stage.warning(f'WARP: {trouble} — экзит работает без канала warp; '
                       f'повтор: ./deploy.sh 10-foreign {stage.tag}')
     if not stage.image:

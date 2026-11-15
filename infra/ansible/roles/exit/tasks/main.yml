@@ -105,7 +105,7 @@
 - name: Проверка WARP
   ansible.builtin.command:
     argv: ["{{ exit_vpn2 }}", watchdog, warp, --bootstrap]
-  when: exit_warp_enabled
+  when: exit_warp_enabled and exit_warp_wait
   register: exit_warp_check
   changed_when: false
   failed_when: false
@@ -113,13 +113,23 @@
 - name: Предупреждение о WARP
   ansible.builtin.debug:
     msg: "WARNING: проверка WARP не удалась; экзит продолжает работу"
-  when: exit_warp_enabled and (exit_warp_check.rc != 0 or 'WARNING' in exit_warp_check.stdout)
+  when: exit_warp_enabled and exit_warp_wait and (exit_warp_check.rc != 0 or 'WARNING' in exit_warp_check.stdout)
+
+# Полный деплой не ждёт WARP: проверка идёт своим юнитом, таймер стартует за ней (иначе он взял бы flock
+# первым), итог читает итоговый 99-verify.
+- name: Проверка WARP своим юнитом  # noqa: command-instead-of-module
+  ansible.builtin.shell: >-
+    systemctl stop {{ exit_warp_unit }} 2>/dev/null;
+    systemd-run --quiet --collect --unit={{ exit_warp_unit }} /bin/sh -c
+    '{{ exit_vpn2 }} watchdog warp --bootstrap; exec systemctl start anysda-warp-watchdog.timer'
+  when: exit_warp_enabled and not exit_warp_wait
+  changed_when: false
 
 - name: Таймер сторожа WARP
   ansible.builtin.systemd_service:
     name: anysda-warp-watchdog.timer
     enabled: true
-    state: started
+    state: "{{ 'started' if exit_warp_wait else omit }}"
   when: exit_warp_enabled
 
 - name: Порты экзита в ufw

@@ -26,6 +26,9 @@ exit_env: "{{ vpn2_env | dict2items | rejectattr('key', 'eq', 'SSH_PASS') | item
 
 # Сторож WARP живёт в пакете vpn2: venv экзита ставит первая стадия.
 exit_vpn2: /opt/vpn2/venv/bin/vpn2
+# false - WARP проверяется своим юнитом, стадия его не ждёт (полный деплой: итог в итоговом 99-verify).
+exit_warp_wait: true
+exit_warp_unit: anysda-warp-bootstrap
 
 exit_wgcf_version: '2.3.1'
 # Версию wgcf не печатает (ни `version`, ни `--version`): сверка по sha256 релиза.

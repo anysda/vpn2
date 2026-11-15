@@ -118,6 +118,29 @@ def test_exit_warns_about_dead_warp(node, tmp_path, capsys, address, state, reas
     assert warnings == (expected if reason else [])
 
 
+@pytest.mark.parametrize('final, busy, settled, polls', [(False, 9, False, 1), (True, 2, True, 3), (True, 0, True, 1)])
+def test_warp_check_of_full_deploy_is_awaited_only_by_final_verify(monkeypatch, final, busy, settled, polls):
+    asked = []
+
+    def sh(*argv, **_options):
+        asked.append(argv)
+        return (0 if len(asked) <= busy else 3), '', ''
+    monkeypatch.setattr(stage, 'sh', sh)
+    assert stage.warp_settled(final, pause=0) is settled
+    assert asked == [('systemctl', 'is-active', '--quiet', 'anysda-warp-bootstrap.service')] * polls
+
+
+@pytest.mark.usefixtures('node')
+def test_exit_verify_in_10_foreign_does_not_judge_running_warp_check(tmp_path, capsys, monkeypatch):
+    os.utime(stage.STAMPS / '23-emergency', ns=(0, 0))
+    (tmp_path / 'sing-box.json').write_text(warp_config('162.159.192.1'))
+    (tmp_path / 'warp.json').write_text(json.dumps({'bad_since': 5}))
+    monkeypatch.setattr(stage, 'warp_settled', lambda final: final)
+    stage.run({'HOST_TAG': 'nl', 'MGMT_IP': '10.0.0.2', 'HY2_MGMT_PORT': '8444'})
+    out = capsys.readouterr()
+    assert '[nl] WARP: проверка ещё идёт, итог в итоговом verify' in out.out + out.err and '⚠ WARP' not in out.err
+
+
 def test_warp_state_unreadable_is_not_a_warning(tmp_path):
     (tmp_path / 'c').write_text(warp_config('162.159.192.1'))
     assert stage.warp_trouble(tmp_path / 'c', tmp_path / 'none') is None

@@ -32,6 +32,8 @@ QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 # Экзитная часть стадии идёт рядом со следующими стадиями entry, которым экзиты не нужны, до названной:
 # секреты экзитов забирает 20-ru-router, аварийка экзитов до панели не нужна никому.
 BESIDE = {'10-foreign': '20-ru-router', '23-emergency': '30-frontend'}
+# WARP экзита в полном деплое поднимается своим юнитом, итог - в итоговом 99-verify: до 20-ru-router его не ждут.
+WARP_LATER = ('-e', '{"exit_warp_wait": false}')
 
 
 class Interrupted(SystemExit):
@@ -238,7 +240,7 @@ class Deploy:
                 ok(f'[99-verify → {host}] done')
         return result
 
-    def run_stage(self, stage, group):
+    def run_stage(self, stage, group, extra=()):
         t0, code = time.time(), 0
         nodes = self.stage_nodes(stage, self.expand(group))
         if not nodes:
@@ -256,7 +258,7 @@ class Deploy:
                 warn('единственный экзит: на время его обновления возможен перерыв VPN')
             # Экзиты обновляются по одному, следующий - только когда предыдущий прошёл проверку.
             for host in nodes.split(','):
-                if self.stage_once(stage, host) or self.verify(host):
+                if self.stage_once(stage, host, extra=extra) or self.verify(host):
                     code = 1
                     break
         elif stage == '99-verify':
@@ -316,7 +318,7 @@ class Deploy:
 
         def track():
             try:
-                self.run_stage(stage, 'foreign')
+                self.run_stage(stage, 'foreign', WARP_LATER if stage == '10-foreign' else ())
                 if stage == '10-foreign':
                     self.pull_secrets()
             except BaseException as error:

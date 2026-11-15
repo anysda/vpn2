@@ -21,7 +21,7 @@ import json, os, sys, time
 args, argv = ' '.join(sys.argv[1:]), sys.argv[1:]
 with open(os.environ['FAKE_PLAYS'], 'a') as out:
     out.write(json.dumps({'args': args, 'follows': os.environ.get('VPN2_PANEL_FOLLOWS'), 'pid': os.getpid(), 't': time.time()}) + '\n')
-extra = dict(argv[i + 1].split('=', 1) for i, a in enumerate(argv) if a == '-e')
+extra = dict(argv[i + 1].split('=', 1) for i, a in enumerate(argv) if a == '-e' and '=' in argv[i + 1])
 hosts = argv[argv.index('--limit') + 1].split(',') if '--limit' in argv else []
 for host in hosts if '99-verify --limit' in args else ():
     open(f"{os.environ['VPN2_VERIFY_OUT']}/{host}", 'w').write(f'0\n[{host}] ✓ всё измерено\n')
@@ -230,6 +230,9 @@ def test_full_deploy_follows_site_yml(tree, inproc):
         ('21-failover-watchdog', 'ru', None), ('22-adguard', 'ru', None), ('23-emergency', 'ru', None),
         ('25-monitoring', 'ru', None), ('26-backup', 'ru', None), ('27-ikev2', 'ru', None), ('29-control', 'ru', None),
         ('35-telegram', 'ru', 'true'), ('30-frontend', 'ru', None), ('99-verify', 'ru,us,gb', None)]
+    # WARP экзитов полный деплой не ждёт: проверка своим юнитом, итог в итоговом 99-verify.
+    tags = lambda call: call['args'].split('--tags ')[1].split()[0]  # noqa: E731
+    assert [tags(call) for call in calls if '{"exit_warp_wait": false}' in call['args']] == ['10-foreign', '10-foreign']
     at = [item[0] for item in staged].index
     assert at('05-mgmt-mesh') < at('10-foreign') and staged.index(('99-verify', 'gb', None)) < at('20-ru-router')
     assert at('22-adguard') < staged.index(('23-emergency', 'us,gb', None)) < at('30-frontend')

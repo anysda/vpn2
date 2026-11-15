@@ -1,26 +1,41 @@
 import { errText, failedStatus, SESSION_GONE } from '#shared/error-text'
 
-/** Повтор `fn` каждые `ms`, пока компонент на экране, и сразу при возврате на вкладку. */
-export function usePoll(fn: () => unknown, ms: number) {
-  let timer: ReturnType<typeof setInterval> | undefined
-  const onShow = () => document.visibilityState === 'visible' && void fn()
+const shared = new Map<string, { subs: number, stop: () => void }>()
+
+/**
+ * Повтор `fn` каждые `ms`, пока компонент на экране; скрытая вкладка не опрашивает,
+ * при возврате на неё - сразу. С `key` опрос один на всех подписчиков ключа.
+ */
+export function usePoll(fn: () => unknown, ms: number, key?: string) {
+  let stop = () => {}
   onMounted(() => {
-    timer = setInterval(() => void fn(), ms)
-    document.addEventListener('visibilitychange', onShow)
+    const own = key ? shared.get(key) : undefined
+    if (own) return void own.subs++
+    const tick = () => document.visibilityState === 'visible' && void fn()
+    const timer = setInterval(tick, ms)
+    document.addEventListener('visibilitychange', tick)
+    stop = () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', tick)
+    }
+    if (key) shared.set(key, { subs: 1, stop })
   })
   onUnmounted(() => {
-    clearInterval(timer)
-    document.removeEventListener('visibilitychange', onShow)
+    const own = key ? shared.get(key) : undefined
+    if (!own) return stop()
+    if (--own.subs) return
+    own.stop()
+    shared.delete(key!)
   })
 }
 
 /** Общий на панель опрос `url` раз в `ms`; сбой опроса оставляет последний удачный ответ. */
-export function usePolledFetch<P extends ApiPath, T = Api<P>>(url: P, ms: number, timeout: number, initial: T) {
+export function usePolledFetch<P extends ApiPath, T = Api<P>>(url: P, ms: number, timeout: number, initial: T, opts: { query?: Record<string, unknown>, server?: boolean } = {}) {
   const last = useState<T>(`last ${url}`, () => initial)
   const { data, refresh, status, error } = useFetch(url, {
-    key: url, default: () => last.value, transform: (v: T) => (last.value = v), server: false, dedupe: 'defer', timeout,
+    key: url, query: opts.query, default: () => last.value, transform: (v: T) => (last.value = v), server: opts.server ?? false, dedupe: 'defer', timeout,
   })
-  usePoll(refresh, ms)
+  usePoll(refresh, ms, url)
   return { data: data as Ref<T>, refresh, status, error }
 }
 

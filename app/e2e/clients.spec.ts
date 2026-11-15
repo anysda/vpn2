@@ -209,7 +209,7 @@ test.describe('client-draft', () => {
         await input.press('Enter')
         await expect(toast(page, `Клиент с именем «${taken}» уже существует`)).toBeVisible()
         await expect(input).toHaveText(taken)
-        // Карточка опрашивается каждые 3 с: свежий ответ сервера не затирает черновик.
+        // Карточка опрашивается каждые 5 с: свежий ответ сервера не затирает черновик.
         const id = await clientId(page, name)
         await page.waitForResponse(r => r.request().method() === 'GET' && new URL(r.url()).pathname === `/api/clients/${id}`)
         await page.evaluate(() => new Promise(done => setTimeout(() => requestAnimationFrame(() => done(null)), 50)))

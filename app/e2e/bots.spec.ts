@@ -187,7 +187,8 @@ test.describe('bot-delivery-ui', () => {
     failed = true
     const title = 'Рассылка: доставка не удалась. Повторов не будет.'
     const errorToast = toast(page, title)
-    await expect(errorToast).toBeVisible()
+    // Колокольчик опрашивает раз в 15 с (VPN2-938).
+    await expect(errorToast).toBeVisible({ timeout: 20_000 })
     await page.mouse.move(0, 0)
     await expect(errorToast, 'окончательная ошибка тоже не висит вечно').toHaveCount(0)
     await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
@@ -267,7 +268,7 @@ test.describe('bot-delivery-ui', () => {
       const created = await page.request.post('/api/clients', { data: { name } })
       expect(created.ok()).toBe(true)
       clientId = (await created.json()).id
-      await expect(toast(page, 'Бот недоступен, 1 уведомление в очереди')).toBeVisible()
+      await expect(toast(page, 'Бот недоступен, 1 уведомление в очереди')).toBeVisible({ timeout: 20_000 })
       await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
       await expect(page.getByRole('dialog').getByText('Бот недоступен, 1 уведомление в очереди', { exact: true })).toBeVisible()
       await page.keyboard.press('Escape')
@@ -280,7 +281,7 @@ test.describe('bot-delivery-ui', () => {
     `, clientId)
       const changed = await page.request.patch(`/api/clients/${clientId}`, { data: { deviceLimit: 4 } })
       expect(changed.ok()).toBe(true)
-      await expect(page.getByRole('button', { name: 'Уведомления: 2', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Уведомления: 2', exact: true })).toBeVisible({ timeout: 20_000 })
       await page.getByRole('button', { name: 'Уведомления: 2', exact: true }).click()
       await expect(page.getByRole('dialog').getByText('Бот недоступен, 2 уведомления в очереди', { exact: true })).toBeVisible()
       await page.keyboard.press('Escape')

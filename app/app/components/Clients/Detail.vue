@@ -25,6 +25,7 @@ async function load() {
   try {
     const next = await fetchClient(props.clientId)
     if (my !== version) return
+    toast.remove('panel-down')
     d.value = next
     if (!prev || expDraft.value === expText(prev)) expDraft.value = expText(next)
     if (!prev || limDraft.value === limText(prev)) limDraft.value = limText(next)
@@ -34,13 +35,16 @@ async function load() {
   }
   catch (e) {
     if (my !== version) return
+    const code = (e as { statusCode?: number }).statusCode
     // Клиента уже нет (удалён здесь, в другой вкладке или другим админом): страница выберет следующего.
-    if ((e as { statusCode?: number }).statusCode === 404) emit('gone', props.clientId)
+    if (code === 404) emit('gone', props.clientId)
+    // Панель перезапускается: один тост на всё окно, опрос продолжается.
+    else if (!code || code >= 502) toast.add({ id: 'panel-down', title: 'Панель недоступна, повторяю…', color: 'warning' })
     else if (!isSessionGone(e)) toast.add({ title: errText(e, 'Не удалось загрузить клиента'), color: 'error' })
   }
 }
 watch(() => props.clientId, load, { immediate: true })
-usePoll(load, 3000)
+usePoll(load, 5000)
 onUnmounted(() => { version++ })
 
 async function changed() {

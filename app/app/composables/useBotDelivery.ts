@@ -16,7 +16,8 @@ export function useBotDelivery() {
       if (announce && (r.status === 'failed' || r.rejected) && seen.value[r.id] !== state) toast.add({ id: `bot-${r.id}`, title: botDeliveryText(r), color: 'error' })
       seen.value[r.id] = state
     }
-    if (!queued.value) return toast.remove('bot-queue')
+    // remove() стирает id через 200 мс даже без тоста: до показа не звать, иначе съест свежий тост.
+    if (!queued.value) return queueShown.value && toast.remove('bot-queue')
     if (queueShown.value) return
     queueShown.value = true
     try {

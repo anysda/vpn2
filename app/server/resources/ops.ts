@@ -5,9 +5,9 @@ import { useDb } from '../database/client'
 import { clients, deviceTrafficHourly, devices } from '../database/schema'
 
 const HOURS = 24
-// Спарклайн узла: 13 точек с шагом опроса панели (2 с), дальше страница дописывает их сама.
+// Спарклайн узла: 13 точек с шагом опроса панели (3 с), дальше страница дописывает их сама.
 const POINTS = 13
-const STEP = 2
+const STEP = 3
 const EventsQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).default(4) })
 
 const mbps = (bps: number | null | undefined) => bps != null ? bps * 8 / 1e6 : null

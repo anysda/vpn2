@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { botDeliveryText, botDeliveryTime, botQueueText } from '#shared/bot-delivery'
+import { botDeliveryPending, botDeliveryText, botDeliveryTime, botQueueText } from '#shared/bot-delivery'
 
 const { rows, queued, sync } = useBotDelivery()
-const pending = computed(() => rows.value.filter(r => r.status !== 'accepted'))
+const pending = computed(() => rows.value.filter(botDeliveryPending))
 const label = computed(() => pending.value.length ? `Уведомления: ${pending.value.length}` : 'Уведомления')
 let first = true
 
@@ -13,7 +13,7 @@ async function refresh() {
   first = false
 }
 onMounted(refresh)
-usePoll(refresh, 2000)
+usePoll(refresh, 15_000)
 onUnmounted(() => sync([], false))
 </script>
 
@@ -30,7 +30,7 @@ onUnmounted(() => sync([], false))
         <span class="dot mt-1.5" style="background:var(--amber)" />{{ botQueueText(queued) }}
       </p>
       <div v-for="r in pending" :key="r.id" data-testid="bell-row" class="flex gap-2.5 px-2 py-1 text-sm">
-        <span class="dot mt-1.5" :style="{ background: r.status === 'failed' ? 'var(--red)' : 'var(--amber)' }" />
+        <span class="dot mt-1.5" :style="{ background: r.status === 'failed' || r.rejected ? 'var(--red)' : 'var(--amber)' }" />
         <div>
           <b class="font-medium">{{ r.label }}</b>{{ botDeliveryText(r).slice(r.label.length) }}
           <small v-if="r.created" class="block text-xs text-(--t3)">{{ botDeliveryTime(r.created) }}</small>

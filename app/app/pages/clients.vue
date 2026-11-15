@@ -17,7 +17,7 @@ const removed = ref<number[]>([])
 const clients = computed(() => fetched.value.filter(c => !removed.value.includes(c.id)))
 
 const { data: traffic, refresh: refreshTraffic } = useFetch('/api/clients/traffic', { default: () => ({}) as Api<'/api/clients/traffic'>, server: false })
-usePoll(refreshTraffic, 3000)
+usePoll(refreshTraffic, 5000)
 const { data: outbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
 const exits = computed(() => routeColumns(outbounds.value).filter(c => c.tag !== 'ru' && c.cells.some(x => !x.warp)).map(c => c.tag))
 

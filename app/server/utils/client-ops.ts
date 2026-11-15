@@ -66,6 +66,9 @@ function normalized(patch: ClientPatch): ClientUpdate {
   return upd
 }
 
+const exitLabel = (tag: string | null) => tag ? tag.toUpperCase() : 'авто'
+const limitLabel = (limit: number | null) => limit === null ? 'без ограничений' : String(limit)
+
 /** Текст клиенту о смене лимита устройств; пусто - лимит не изменился. */
 function limitText(before: number | null, after: number | null): string {
   const rank = (v: number | null) => v ?? Infinity
@@ -111,9 +114,20 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     if (upd.name !== undefined) await assertNameFree(upd.name, id)
     throw createError({ statusCode: 409, statusMessage: 'device_limit_below_count', message: 'Лимит не может быть меньше числа устройств клиента' })
   }
-  if (patch.preferredExit !== undefined) await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
+  const synced = patch.preferredExit === undefined || await syncClientPrefsFile().then(() => true, (err) => {
+    useLogger().error({ err }, 'client prefs sync failed')
+    return false
+  })
 
   const object = `client:${row.id}`
+  const changes = [
+    { type: 'client_exit', title: 'Экзит изменён', from: exitLabel(before.preferredExit), to: exitLabel(row.preferredExit) },
+    { type: 'client_renamed', title: 'Имя изменено', from: before.name, to: row.name },
+    { type: 'client_device_limit', title: 'Лимит устройств изменён', from: limitLabel(before.deviceLimit), to: limitLabel(row.deviceLimit) },
+  ]
+  for (const c of changes.filter(c => c.from !== c.to)) {
+    await recordEvent({ type: c.type, level: 'info', object, actor, title: `${c.title} · ${row.name}`, detail: joinDetail(`${c.from} → ${c.to}`, actor) })
+  }
   if (row.frozenManual !== before.frozenManual) {
     const n = await deviceCount(id)
     await recordEvent({
@@ -136,5 +150,7 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   const limit = chat && patch.deviceLimit !== undefined ? limitText(before.deviceLimit, row.deviceLimit) : ''
   if (chat && limit) warnings.push(await notifyWarning(notifyClient(chat, limit, row.name)))
   const warning = [...new Set(warnings.filter(Boolean))].join(' ')
+  // Запись в базе уже есть, cron повторит отправку роутеру: ответ не должен выдавать её за применённую.
+  if (!synced) throw createError({ statusCode: 502, statusMessage: 'prefs_not_applied', message: 'Экзит сохранён, но роутер его ещё не получил: повтор раз в минуту' })
   return { ...row, ...(queued ? { operation: queued.operation } : {}), ...(warning ? { warning } : {}) }
 }

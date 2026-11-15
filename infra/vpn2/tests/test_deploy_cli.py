@@ -70,10 +70,11 @@ def make_tree(tmp_path):
     venv.mkdir(parents=True)
     (venv / 'ansible-playbook').write_text(PLAYBOOK.replace('PYTHON', sys.executable))
     (venv / 'ansible').write_text('#!/bin/sh\nexit 4\n')
+    (venv / 'python3').symlink_to(sys.executable)
     (tmp_path / 'bin').mkdir()
     (tmp_path / 'bin/ssh').write_text(SSH.replace('PYTHON', sys.executable))
     (tmp_path / 'bin/sshpass').write_text('#!/bin/sh\nshift\nexec "$@"\n')
-    for fake in (*venv.iterdir(), *(tmp_path / 'bin').iterdir()):
+    for fake in (venv / 'ansible-playbook', venv / 'ansible', *(tmp_path / 'bin').iterdir()):
         fake.chmod(0o755)
     return tmp_path
 

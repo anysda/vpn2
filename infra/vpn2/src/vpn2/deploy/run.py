@@ -16,6 +16,7 @@ from pathlib import Path
 from vpn2 import ports, release, stages
 from vpn2.config import STATE_DIR
 from vpn2.deploy import CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, log, ok, prep_keys, report, step, warn
+from vpn2.deploy.plays import Plays
 
 PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
 # Стадии, что трогают фаервол: на время каждой узел держит сторожа (vpn2/fwguard.py).
@@ -24,8 +25,6 @@ GUARDED = {'00-bootstrap', '05-mgmt-mesh', '10-foreign', '19-yt-zapret', '20-ru-
 GUARD_WINDOW = int(os.environ.get('VPN2_FW_GUARD_WINDOW') or 90)
 # Шесть пульсов на окно сторожа хватает и на пути с потерями.
 BEAT_EVERY = max(5, GUARD_WINDOW // 6)
-# Плеи идут на Mitogen (ansible.cfg); pre-flight - ssh-плагином: он разбирает текст отказа ssh.
-SSH_PLUGIN = {'ANSIBLE_STRATEGY': 'linear', 'ANSIBLE_TIMEOUT': '10'}
 GUARD = '/run/vpn2-fw-guard'
 QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 # Экзитная часть стадии идёт рядом со следующими стадиями entry, которым экзиты не нужны, до названной:
@@ -44,7 +43,7 @@ class Deploy:
         self.stages = stages.load(SITE)
         self.stage_log, self.verify_warnings, self.deploy_warnings, self.skipped = [], [], [], []
         self.mutating = self.opened = self.staged = self.guard_warned = self.closing = self.old_layout = False
-        self.children, self.beat, self.beats, self.nodes, self.logins = set(), None, 0, {}, {}
+        self.plays, self.beat, self.beats, self.nodes, self.logins = None, None, 0, {}, {}
         self.outside = self.pulled = False
         self.lock = threading.Lock()
         self.load_nodes()
@@ -88,24 +87,15 @@ class Deploy:
         except stages.StageError as error:
             die(str(error))
 
-    def spawn(self, *args, stdout=None, stderr=None, env=None):
+    def play(self, *args, stdout=None, stderr=None, env=None):
+        """ansible-playbook с этими аргументами; все плеи запуска - из одного прогретого процесса (plays.py)."""
         # Деплой закрывается: потоки цепочек и пульса новых плеев не начинают.
         if self.closing and threading.current_thread() is not threading.main_thread():
             raise SystemExit(1)
         env = {**os.environ, 'ANSIBLE_CONFIG': str(INFRA / 'ansible/ansible.cfg'), 'VPN2_CONFIG': str(CONFIG), **(env or {})}
-        proc = subprocess.Popen([ROOT / 'venv/bin/ansible-playbook', *map(str, args)], stdin=subprocess.DEVNULL,
-                                stdout=stdout, stderr=stderr, env=env)
-        self.children.add(proc)
-        return proc
-
-    def play(self, *args, **options):
-        proc = self.spawn(*args, **options)
-        try:
-            return proc.wait()
-        finally:
-            if proc.poll() is None:
-                proc.terminate()
-            self.children.discard(proc)
+        with self.lock:
+            self.plays = self.plays or Plays(ROOT, env)
+        return self.plays.run(list(map(str, args)), env, stdout, stderr)
 
     def service(self, *args, **options):
         return self.play(PLAYBOOK, '-e', f'manifest={self.manifest}', *args, **options)
@@ -416,9 +406,8 @@ class Deploy:
         """Выход деплоя: кто бы ни прервал, дочерние плеи гаснут, журнал узлов честен."""
         self.closing = True
         self.stop_beat(every=True)
-        for proc in list(self.children):
-            with contextlib.suppress(OSError):
-                proc.terminate()
+        if self.plays:
+            self.plays.stop()
         if code and self.mutating:
             print('deploy interrupted: operation journal retained; inspect services, then run ./deploy.sh recover '
                   '(or ./deploy.sh rollback)', file=sys.stderr)
@@ -427,6 +416,8 @@ class Deploy:
         # Пакет и манифест на экзитах живут до конца запуска.
         if self.staged:
             self.each([tag for tag in self.exit_tags() if tag not in self.skipped], lambda _node: 'rm -rf /tmp/anysda')
+        if self.plays:
+            self.plays.close()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def warn_insecure_exits(self):
@@ -495,7 +486,7 @@ class Deploy:
         step('pre-flight: доступность SSH')
         out = Path(tempfile.mkdtemp(dir=self.tmp))
         with open(out / 'log', 'w') as journal:
-            code = self.service('--tags', 'preflight', '-e', f'out={out}', stdout=journal, stderr=journal, env=SSH_PLUGIN)
+            code = self.service('--tags', 'preflight', '-e', f'out={out}', stdout=journal, stderr=journal)
         reasons, fixes, auth, net = [], [], False, False
         for host in self.expand('all'):
             if not (out / f'{host}.fail').is_file():

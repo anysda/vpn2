@@ -9,9 +9,12 @@
 # Сторож фаервола, пульс, закрытие журнала и уборка /tmp/anysda - новыми ssh-входами из vpn2.deploy.run.
 # Переменные запуска (-e): out, manifest, partial, bundle, journal, bootstrap, scope.
 
+# Вход - ssh-плагином, не Mitogen: он разбирает текст отказа ssh.
 - name: Вход по ssh
   hosts: all
   tags: [preflight]
+  strategy: linear
+  vars: {ansible_ssh_timeout: 10}
   tasks:
     - name: Узел отвечает
       ansible.builtin.wait_for_connection:

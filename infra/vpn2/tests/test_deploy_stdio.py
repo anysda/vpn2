@@ -29,7 +29,7 @@ from pathlib import Path
 from vpn2.deploy import run
 work = Path(os.environ['FAKE_WORK'])
 deploy = run.Deploy.__new__(run.Deploy)
-deploy.logins, deploy.children, deploy.closing = {'nl': ('nl', '', '')}, set(), False
+deploy.logins, deploy.plays, deploy.closing = {'nl': ('nl', '', '')}, None, False
 deploy.lock, deploy.beat, deploy.beats = threading.Lock(), None, 1
 side = threading.Thread(target=deploy.guard_finish, args=('23-emergency', 'nl'))
 side.start()
@@ -40,6 +40,7 @@ if sys.argv[1] == 'shared':
 code = deploy.play('--version')
 (work / 'played').touch()
 side.join()
+deploy.plays.close()
 os.set_blocking(1, True)
 print(f'play={code}', flush=True)
 '''
@@ -52,6 +53,8 @@ def test_guard_ssh_leaves_shared_output_blocking(tmp_path, mode, refused):
     venv.mkdir(parents=True)
     fakes.mkdir()
     (venv / 'ansible-playbook').symlink_to(vpn_roles.ansible_playbook())
+    # Процесс плеев - интерпретатор этого ansible-playbook, как python3 venv деплоя.
+    (venv / 'python3').symlink_to(Path(vpn_roles.ansible_playbook()).read_text().split('\n', 1)[0][2:].split()[0])
     (fakes / 'ssh').write_text(SSH.replace('PYTHON', sys.executable))
     (fakes / 'ssh').chmod(0o755)
     env = {**os.environ, 'VPN2_ROOT': str(tmp_path / 'root'), 'FAKE_WORK': str(tmp_path), 'PYTHONPATH': str(ROOT / 'infra/vpn2/src'),

@@ -18,7 +18,6 @@ BASIC = [
     'аварийка: образ установлен',
 ]
 ENTRY = [
-    'mgmt scrape: все ожидаемые targets up после свежего скрейпа',
     'ssh nl через hy2-mgmt',
     'ssh de через hy2-mgmt',
     'nl: транспорт hy2, не запасной TCP',
@@ -45,6 +44,7 @@ ENTRY = [
     'ikev2 sync: таймер active',
     'трафик: контрольный клиент',
     'ikev2 sync: статус обновлён менее 120 секунд назад',
+    'mgmt scrape: все ожидаемые targets up после свежего скрейпа',
     'yt-zapret: A/B-проверка обхода',
     'yt-failover: selector и последняя видеопроба',
     'yt-failover: таймер active',

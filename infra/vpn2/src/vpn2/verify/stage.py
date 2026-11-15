@@ -573,40 +573,49 @@ def basic(stage):
     stage.check('аварийка: образ установлен', emergency_image, EMERGENCY_ROOT, VENV, not after_stage())
 
 
+def background(probe, *args):
+    """Проба своим потоком, пока проверяется остальное; возвращённая функция ждёт её итог."""
+    found = []
+    worker = threading.Thread(target=lambda: found.append(probe(*args)), daemon=True)
+    worker.start()
+
+    def outcome():
+        worker.join()
+        return found[0] if found else (1, 'проба не выполнилась')
+    return outcome
+
+
+def youtube_probe():
+    ab = command(YT_CHECK)
+    # Судит свежая проба: прошлый успех таймера не видит поломку после него. Разовый таймаут
+    # CDN сторож поломкой не считает (HITS подряд) - после плохой пробы ещё одна.
+    for _ in range(2):
+        command('systemctl', 'start', 'anysda-yt-failover.service')
+        if not yt_status()[0]:
+            break
+    return ab
+
+
 def youtube(stage):
     """Выключенный YouTube - штатный пропуск; включённый требует A/B-проверку и запасной маршрут.
 
-    Пробы видеопотока идут своим потоком, пока проверяется остальное; итог пишет возвращённая функция.
+    Пробы видеопотока идут, пока проверяется остальное; итог пишет возвращённая функция.
     """
     route = stage.get('YT_ROUTE', 'off')
     if route != 'zapret':
         return lambda: stage.line(f'yt-zapret: пропущен (youtube.route={route})')
-    found = {}
-
-    def probe():
-        found['ab'] = command(YT_CHECK)
-        # Судит свежая проба: прошлый успех таймера не видит поломку после него. Разовый таймаут
-        # CDN сторож поломкой не считает (HITS подряд) - после плохой пробы ещё одна.
-        for _ in range(2):
-            command('systemctl', 'start', 'anysda-yt-failover.service')
-            if not yt_status()[0]:
-                break
-
-    worker = threading.Thread(target=probe, daemon=True)
-    worker.start()
+    ab = background(youtube_probe)
 
     def record():
-        worker.join()
-        stage.check('yt-zapret: A/B-проверка обхода', lambda: found.get('ab', (1, 'проба не выполнилась')),
-                    allow_unmeasured=True)
+        stage.check('yt-zapret: A/B-проверка обхода', ab, allow_unmeasured=True)
         stage.check('yt-failover: selector и последняя видеопроба', yt_status, allow_unmeasured=True)
         stage.check('yt-failover: таймер active', service, 'anysda-yt-failover.timer')
     return record
 
 
 def entry(stage):
-    stage.check('mgmt scrape: все ожидаемые targets up после свежего скрейпа', mgmt_scrape, stage.tag,
-                {'ru', *stage.exits}, stage.get('VERIFY_SCRAPE_TIMEOUT', '30'), stage.get('VERIFY_SCRAPE_INTERVAL', '1'))
+    scrape = background(mgmt_scrape, stage.tag, {'ru', *stage.exits}, stage.get('VERIFY_SCRAPE_TIMEOUT', '30'),
+                        stage.get('VERIFY_SCRAPE_INTERVAL', '1'))
     if not stage.exits:
         stage.fail('ssh экзитов: EXIT_TAGS пуст — нет узлов для проверки')
     videos = youtube(stage)
@@ -644,6 +653,7 @@ def entry(stage):
         ('ikev2 sync: таймер active', service, 'anysda-ikev2-sync.timer')])
     stage.traffic()
     stage.check('ikev2 sync: статус обновлён менее 120 секунд назад', ikev2_status)
+    stage.check('mgmt scrape: все ожидаемые targets up после свежего скрейпа', scrape)
     videos()
     for tag in stage.exits:
         if stage.env.get(tag.upper().replace('-', '_') + '_HY2_INSECURE') == '1':

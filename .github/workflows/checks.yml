@@ -8,10 +8,32 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  shell:
-    name: проверка shell
+  # dev, main и тег выпуска получают коммит, уже проверенный на ветке полосы
+  # или соседнем ref: прогон того же sha не повторяется (.github/reuse.py).
+  reuse:
+    name: повтор проверок коммита
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.ref_type == 'tag')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      rest: ${{ steps.reuse.outputs.rest }}
+      e2e: ${{ steps.reuse.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+      - id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/reuse.py checks
+
+  lint:
+    name: shell, линт Python и тесты бота
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,16 +50,11 @@ jobs:
           python3 --version
           pip install --quiet pytest PyYAML
           PYTHONPATH=infra/vpn2/src python3 -m pytest infra/vpn2/tests/test_setup.py -p no:cacheprovider
-
-  python-lint:
-    name: линт Python
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
+          cache: pip
+          cache-dependency-path: telegram/requirements.txt
       - name: ruff
         run: git ls-files -z '*.py' | xargs -0 pipx run --spec ruff==0.17.4 ruff check --isolated --select E9,F,ARG,ERA
       - name: vulture
@@ -53,18 +70,6 @@ jobs:
           python3 -B infra/ansible/inventory.py --prepare
           python3 -B infra/ansible/inventory.py --env ru > "$d/ru.env"
           test -s "$d/ru.env"
-
-  telegram:
-    name: тесты бота
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.15'
-          cache: pip
-          cache-dependency-path: telegram/requirements.txt
       # zbarimg раскодирует PNG QR бота (test_qr_size.py).
       - name: zbarimg
         timeout-minutes: 5
@@ -77,8 +82,11 @@ jobs:
           python3 -m pip install -r telegram/requirements.txt
           # Модули в параллельных процессах; сумма тестов частей сверяется с найденной
           python3 infra/tests/run_parallel.py --dir telegram/tests
+
   backup-restore:
     name: 'бэкап: восстановление'
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -131,7 +139,9 @@ jobs:
           exit "$failed"
 
   panel:
-    name: линт панели
+    name: линт и unit-тесты панели
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -163,25 +173,6 @@ jobs:
         run: |
           pnpm dlx knip@6.44.2
           pnpm dlx knip@6.44.2 --production --exclude dependencies,unlisted,binaries
-
-  panel-unit:
-    name: unit-тесты панели
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 12
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: pnpm
-          cache-dependency-path: app/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
       - name: vitest
         run: pnpm test:unit
 
@@ -194,6 +185,8 @@ jobs:
   # долю общего разбиения, вместе - каждый тест ровно один раз.
   panel-e2e-shard:
     name: 'e2e панели ${{ matrix.part }}/${{ strategy.job-total }}'
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.e2e != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -288,6 +281,8 @@ jobs:
   # проверки образа без браузера (e2e/image-checks.sh).
   panel-e2e-qr:
     name: e2e панели QR
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.e2e != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -397,6 +392,8 @@ jobs:
           exit 1
   vpn2-package:
     name: пакет vpn2 (${{ matrix.python }})
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -453,7 +450,8 @@ jobs:
         run: |
           set -o pipefail
           # shellcheck disable=SC2086
-          python -m pytest infra/vpn2/tests -q -n auto --dist loadgroup -rs --durations=40 $COVERAGE | tee /tmp/pytest.log
+          # Тесты больше ждут таймаутов и процессов, чем считают: 8 процессов на 4 ядра.
+          python -m pytest infra/vpn2/tests -q -n 8 --dist loadgroup -rs $COVERAGE | tee /tmp/pytest.log
           # Тест без openvpn, wg, Caddy или sudo пропускается: в CI это отказ, а не зелёный прогон.
           ! grep -E 'SKIPPED.*(needs |cannot be made here)' /tmp/pytest.log
 
@@ -462,6 +460,8 @@ jobs:
   # что прогнала ровно свою долю.
   ansible:
     name: 'роли ansible ${{ matrix.part }}/2'
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:

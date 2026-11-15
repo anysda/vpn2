@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   packages: write
+  actions: read
 
 # Прогоны одной ветки по очереди: прогон старого коммита, закончив позже,
 # перетёр бы плавающий тег (dev, main) образом старого sha.
@@ -17,8 +18,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # main и тег выпуска на коммите dev: те же образы прогона dev получают
+  # теги ref (manifest выпуска и так ссылается на них по digest), без сборки.
+  reuse:
+    name: образы коммита из прогона dev
+    if: github.event_name == 'push' && github.ref != 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      build: ${{ steps.reuse.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+      - id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/reuse.py images
+      - if: steps.reuse.outputs.build == 'skip'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        if: steps.reuse.outputs.build == 'skip'
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}/panel
+            ghcr.io/${{ github.repository }}/tgbot
+            ghcr.io/${{ github.repository }}/emergency
+          tags: &image-tags |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-{{branch}}-,enable=${{ github.ref_type == 'branch' }}
+      - name: теги ref на образы dev
+        if: steps.reuse.outputs.build == 'skip'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          for name in panel tgbot emergency; do
+            image="ghcr.io/$GITHUB_REPOSITORY/$name"
+            src="$image:sha-dev-${GITHUB_SHA::7}"
+            mapfile -t tags < <(grep "^$image:" <<< "$TAGS" | sed 's/^/--tag=/')
+            docker buildx imagetools create "${tags[@]}" "$src"
+            digest=$(docker buildx imagetools inspect "$src" --format '{{json .Manifest}}' | jq -r .digest)
+            echo "::notice title=$name:$VERSION::$digest"
+          done
+
   build:
     name: 'образ ${{ matrix.name }}'
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.build != 'skip' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -53,10 +106,7 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}/${{ matrix.name }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=sha,prefix=sha-{{branch}}-,enable=${{ github.ref_type == 'branch' }}
+          tags: *image-tags
 
       # Версия образа - из коммита, не из ref: манифест выпуска ссылается
       # на образы прогона dev, и аварийка выпуска должна знать свой номер.
@@ -184,6 +234,8 @@ jobs:
   # задания и список packages.txt. Тег уже выложен - задание кончается за секунды.
   ci-debs:
     name: пакеты раннера для CI
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.build != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -198,6 +250,7 @@ jobs:
   manifest:
     name: манифест выпуска
     needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

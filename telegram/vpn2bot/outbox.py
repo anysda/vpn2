@@ -70,7 +70,7 @@ class Outbox:
             for payload in payloads:
                 event_id = self.db.execute(
                     'INSERT INTO events (chat_id, payload, expires, due) VALUES (?, ?, ?, ?)',
-                    (payload['chat_id'], json.dumps(payload, ensure_ascii=False), now + TTL_SEC,
+                    (payload['chat_id'], json.dumps(payload | ({'delivery_id': delivery_id} if delivery_id else {}), ensure_ascii=False), now + TTL_SEC,
                      max(now, self.throttled_until))).lastrowid
             if delivery_id is not None:
                 self.db.execute('INSERT INTO receipts VALUES (?, ?, ?, ?)',
@@ -112,6 +112,8 @@ class Outbox:
 
     async def deliver(self, row: dict, send, on_rejected) -> None:
         payload = json.loads(row['payload'])
+        # The panel's delivery this message belongs to: its bell row shows the refusal.
+        delivery_id = payload.pop('delivery_id', None)
         try:
             async with asyncio.timeout(45):
                 await send(**payload)
@@ -135,7 +137,7 @@ class Outbox:
                 return
             log.warning('outbox rejected id=%d status=%d', row['id'], rejected)
             try:
-                await on_rejected(payload, rejected)
+                await on_rejected(payload, rejected, delivery_id)
             except Exception as report_error:
                 log.warning('outbox rejection report failed id=%d error=%s',
                             row['id'], type(report_error).__name__)

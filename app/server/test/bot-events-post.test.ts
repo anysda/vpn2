@@ -3,10 +3,11 @@ import { installStubs } from './stubs'
 
 const recordEvent = vi.hoisted(() => vi.fn())
 const notifyBackupFailed = vi.hoisted(() => vi.fn())
+const deliveryRejected = vi.hoisted(() => vi.fn())
 const body = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
 
 vi.mock('../utils/bot-api', async () => (await import('./stubs')).botApiModule)
-vi.mock('../utils/bot', async importOriginal => ({ ...await importOriginal<object>(), recordEvent, notifyBackupFailed }))
+vi.mock('../utils/bot', async importOriginal => ({ ...await importOriginal<object>(), recordEvent, notifyBackupFailed, deliveryRejected }))
 vi.mock('../utils/api', async importOriginal => ({
   ...await importOriginal<object>(),
   readBodyAs: async (_event: unknown, schema: { parse: (v: unknown) => unknown }) => schema.parse(body.value),
@@ -19,6 +20,7 @@ beforeEach(() => {
   installStubs()
   recordEvent.mockReset()
   notifyBackupFailed.mockReset()
+  deliveryRejected.mockReset()
 })
 
 describe('POST /api/bot/events', () => {
@@ -36,6 +38,15 @@ describe('POST /api/bot/events', () => {
     }
     expect(recordEvent).toHaveBeenCalledTimes(2)
     expect(notifyBackupFailed).not.toHaveBeenCalled()
+    expect(deliveryRejected, 'отказ без id доставки (бот до обновления) - только строка ленты').not.toHaveBeenCalled()
+  })
+
+  it('отказ Telegram с id доставки отмечает её, лента называет уведомление', async () => {
+    deliveryRejected.mockResolvedValue('Рассылка')
+    body.value = { type: 'telegram_rejected', status: 400, recipient: 'client', deliveryId: 'd-1' }
+    await expect(handler({})).resolves.toEqual({ ok: true })
+    expect(deliveryRejected).toHaveBeenCalledExactlyOnceWith('d-1', 400)
+    expect(recordEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'telegram_rejected', detail: 'Рассылка · клиенту · код 400' }))
   })
 
   it('смена маршрута YouTube сторожем - строка ленты с тем же текстом, что боту', async () => {

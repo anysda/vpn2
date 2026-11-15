@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from telegram import Bot
-from telegram.error import Forbidden, RetryAfter, TelegramError
+from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 
 from harness import FakeTelegram, import_bot
 
@@ -152,7 +152,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         reported = AsyncMock()
         self.queue.enqueue([{'chat_id': 200, 'text': 'bad token'}])
         await self.worker_until(self.bot.api.send, lambda: not self.rows(), reported)
-        reported.assert_awaited_once_with({'chat_id': 200, 'text': 'bad token'}, 404)
+        reported.assert_awaited_once_with({'chat_id': 200, 'text': 'bad token'}, 404, None)
 
     async def test_permanent_rejection_is_reported_once_and_report_failure_is_harmless(self):
         reported = AsyncMock(side_effect=[RuntimeError('panel down'), None])
@@ -160,7 +160,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
             self.queue.enqueue([{'chat_id': 200, 'text': text}])
             await self.worker_until(AsyncMock(side_effect=Forbidden('bot was blocked by the user')),
                                     lambda: not self.rows(), reported)
-        self.assertEqual(reported.await_args_list[0].args, ({'chat_id': 200, 'text': 'first'}, 403))
+        self.assertEqual(reported.await_args_list[0].args, ({'chat_id': 200, 'text': 'first'}, 403, None))
         self.assertEqual(reported.await_count, 2)
         self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
         await self.worker_until(AsyncMock(side_effect=TelegramError('Internal Server Error')),
@@ -172,13 +172,27 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         response = Mock(raise_for_status=Mock())
         with patch.object(bot.api.panel_http, 'post', AsyncMock(return_value=response)) as post:
             await bot.events.report_rejected({'chat_id': bot.config.CHAT_ID, 'text': 'x'}, 400)
-            await bot.events.report_rejected({'chat_id': bot.config.CHAT_ID + 1, 'text': 'x'}, 403)
+            await bot.events.report_rejected({'chat_id': bot.config.CHAT_ID + 1, 'text': 'x'}, 403, 'd-1')
         self.assertEqual([c.args[0] for c in post.await_args_list], ['/api/bot/events'] * 2)
         self.assertEqual([c.kwargs['json'] for c in post.await_args_list], [
             {'type': 'telegram_rejected', 'status': 400, 'recipient': 'admin'},
-            {'type': 'telegram_rejected', 'status': 403, 'recipient': 'client'},
+            {'type': 'telegram_rejected', 'status': 403, 'recipient': 'client', 'deliveryId': 'd-1'},
         ])
         self.assertTrue(bot.api.panel_http.headers['Authorization'].startswith('Bearer '))
+
+    async def test_rejection_names_the_panel_delivery(self):
+        request = self.event(type='broadcast', chatIds=[200, 300], text='hello', deliveryId='bcast-1')
+        self.assertEqual((await self.bot.events.handle_event(request)).status, 200)
+
+        async def send(**kwargs):
+            if kwargs['chat_id'] == 300:
+                raise BadRequest('Chat not found')
+        sent = AsyncMock(side_effect=send)
+        reported = AsyncMock()
+        await self.worker_until(sent, lambda: not self.rows(), reported)
+        self.assertTrue(all('delivery_id' not in c.kwargs for c in sent.await_args_list))
+        self.assertEqual(reported.await_args_list[0].args[1:], (400, 'bcast-1'))
+        self.assertEqual(reported.await_count, 1)
 
     async def test_retry_after_pauses_all_recipients(self):
         self.queue.enqueue([{'chat_id': 200, 'text': 'rate limited'}])

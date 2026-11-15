@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
-import { and, asc, count, desc, eq, gt, inArray, lt, lte, ne, or } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, inArray, lt, lte, ne, or, sql } from 'drizzle-orm'
 import type { BotDelivery } from '../../shared/bot-delivery'
 import type { EventLevel } from '../../shared/events'
 import { parseOutbound } from '../../shared/outbounds'
@@ -121,8 +121,12 @@ const RETENTION = 24 * TTL
 const CAPACITY = 1024
 const inFlight = new Map<string, Promise<void>>()
 
-function delivery(row: Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'status' | 'attempts' | 'created'>): BotDelivery {
-  return { id: row.id, label: row.label, status: row.status, remaining: row.status === 'queued' ? MAX_ATTEMPTS - row.attempts : 0, created: row.created }
+type Row = Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'status' | 'attempts' | 'created' | 'recipients' | 'rejected' | 'rejectedCode'>
+function delivery(row: Row): BotDelivery {
+  return {
+    id: row.id, label: row.label, status: row.status, remaining: row.status === 'queued' ? MAX_ATTEMPTS - row.attempts : 0, created: row.created,
+    recipients: row.recipients, rejected: row.rejected, rejectedCode: row.rejectedCode,
+  }
 }
 
 export async function notifyBot(type: string, payload: Record<string, unknown>, label = `Уведомление о клиенте «${payload.name ?? '?'}»`, single = false): Promise<BotDelivery | null> {
@@ -130,7 +134,8 @@ export async function notifyBot(type: string, payload: Record<string, unknown>, 
   const now = Date.now()
   const body = JSON.stringify({ ...payload, type })
   if (Buffer.byteLength(body) > 128 * 1024) throw createError({ statusCode: 413, message: 'Уведомление слишком большое. Повторов не будет.' })
-  const row = { id: randomUUID(), label, payload: body, status: 'queued' as const, attempts: 0, due: now, expires: now + TTL, created: now }
+  const recipients = Array.isArray(payload.chatIds) ? payload.chatIds.length : 1
+  const row = { id: randomUUID(), label, payload: body, status: 'queued' as const, attempts: 0, due: now, expires: now + TTL, created: now, recipients, rejected: 0, rejectedCode: null }
   const pending = await useDb().transaction(async (tx) => {
     if (single) {
       const [waiting] = await tx.select().from(botOutbox).where(and(eq(botOutbox.label, label), eq(botOutbox.status, 'queued'))).limit(1)
@@ -208,9 +213,18 @@ export async function retryBotEvents() {
 
 export async function botDeliveries(): Promise<BotDelivery[]> {
   const shown = botConfigured() ? or(ne(botOutbox.status, 'queued'), gt(botOutbox.lastFailure, 0)) : ne(botOutbox.status, 'queued')
-  const rows = await useDb().select({ id: botOutbox.id, label: botOutbox.label, status: botOutbox.status, attempts: botOutbox.attempts, created: botOutbox.created })
-    .from(botOutbox).where(shown).orderBy(asc(botOutbox.created))
+  const rows = await useDb().select({
+    id: botOutbox.id, label: botOutbox.label, status: botOutbox.status, attempts: botOutbox.attempts, created: botOutbox.created,
+    recipients: botOutbox.recipients, rejected: botOutbox.rejected, rejectedCode: botOutbox.rejectedCode,
+  }).from(botOutbox).where(shown).orderBy(asc(botOutbox.created))
   return rows.map(delivery)
+}
+
+/** Telegram отверг сообщение доставки `id` одному получателю; подпись доставки - для журнала. */
+export async function deliveryRejected(id: string, status: number): Promise<string | undefined> {
+  const [row] = await useDb().update(botOutbox).set({ rejected: sql`${botOutbox.rejected} + 1`, rejectedCode: status })
+    .where(eq(botOutbox.id, id)).returning({ label: botOutbox.label })
+  return row?.label
 }
 
 export function notifyClient(chatId: number, text: string, name: string): Promise<BotDelivery | null> {

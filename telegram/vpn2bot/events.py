@@ -19,10 +19,11 @@ OUTBOX_KEY = web.AppKey('outbox', Outbox)
 sending: set[asyncio.Task] = set()
 
 
-async def report_rejected(payload: dict, status: int) -> None:
+async def report_rejected(payload: dict, status: int, delivery_id: str | None = None) -> None:
     recipient = 'admin' if payload.get('chat_id') == config.CHAT_ID else 'client'
     r = await api.panel_http.post('/api/bot/events', json={
-        'type': 'telegram_rejected', 'status': status, 'recipient': recipient})
+        'type': 'telegram_rejected', 'status': status, 'recipient': recipient,
+        **({'deliveryId': delivery_id} if delivery_id else {})})
     r.raise_for_status()
 
 

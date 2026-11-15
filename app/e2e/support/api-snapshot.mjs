@@ -133,7 +133,7 @@ const NORMALIZATION = [
   ...rule([SNAPSHOT], 'field', ['nodes.*.rxMbps', 'nodes.*.txMbps'], '<mbps>', RATE, 'скорость подставной VM: другие спеки меняют её в шарде, проверено неотрицательное число'),
   ...rule([SNAPSHOT], 'field', ['nodes.*.uptimeSec', 'nodes.*.staleSec', 'outbounds.*.rttMs', 'connections'], '<count>', ID, 'время работы, давность, задержка и соединения подставных VM и clash: от момента опроса и других спеков, проверено целое неотрицательное'),
 
-  ...rule(['admin/broadcast.post'], 'field', ['recipients'], '<count>', ID, 'число привязанных чатов шарда: зависит от других спеков'),
+  ...rule(['admin/broadcast.post'], 'field', ['recipients', 'delivery.recipients'], '<count>', ID, 'число привязанных чатов шарда: зависит от других спеков'),
   ...rule(['admin/broadcast.post'], 'field', ['delivery.id'], '<uuid>', UUID, 'идентификатор доставки: случайный'),
   ...rule(['admin/broadcast.post'], 'field', ['delivery.created'], '<ms>', MS, R_TIME),
   ...rule(['admin/broadcast.post'], 'field', ['delivery.status'], '<first-attempt>', /^(accepted|queued)$/, 'итог первой попытки: бот за 1,5 с под сменой сети CI может не ответить (server/utils/bot-events.ts:76,91); конечное accepted сценарий дожидается до admin/bot-deliveries.get'),

@@ -8,7 +8,14 @@ export interface BotDelivery {
   remaining: number
   /** Постановка в очередь, мс. */
   created: number
+  /** Получателей; скольким Telegram отказал и код последнего отказа. */
+  recipients?: number
+  rejected?: number
+  rejectedCode?: number | null
 }
+
+/** Доставка, которая не дошла хотя бы до одного получателя: строка колокольчика. */
+export const botDeliveryPending = (row: BotDelivery) => row.status !== 'accepted' || !!row.rejected
 
 const day = new Intl.DateTimeFormat('en-CA', { timeZone: MSK })
 const clock = new Intl.DateTimeFormat('ru-RU', { timeZone: MSK, hour: '2-digit', minute: '2-digit' })
@@ -28,6 +35,7 @@ export function botQueueText(count: number): string {
 }
 
 export function botDeliveryText(row: BotDelivery): string {
+  if (row.rejected) return `${row.label}: не доставлено ${row.rejected} из ${Math.max(row.rejected, row.recipients ?? 1)}, Telegram ${row.rejectedCode}`
   if (row.status === 'accepted') return `${row.label}: передано боту.`
   if (row.status === 'failed') return `${row.label}: доставка не удалась. Повторов не будет.`
   return `${row.label}: не отправлено. Ещё попыток: ${row.remaining}.`

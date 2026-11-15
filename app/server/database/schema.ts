@@ -200,6 +200,10 @@ export const botOutbox = sqliteTable('bot_outbox', {
   status: text('status', { enum: ['queued', 'accepted', 'failed'] }).notNull(),
   attempts: integer('attempts').notNull().default(0),
   lastFailure: integer('last_failure').notNull().default(0),
+  // Получателей в уведомлении и сколько из них Telegram отверг (код последнего отказа).
+  recipients: integer('recipients').notNull().default(1),
+  rejected: integer('rejected').notNull().default(0),
+  rejectedCode: integer('rejected_code'),
   due: integer('due').notNull(),
   expires: integer('expires').notNull(),
   created: integer('created').notNull(),

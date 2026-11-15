@@ -10,6 +10,7 @@ import { apiRoute, serverModule } from './support/server-module'
 import { eq } from 'drizzle-orm'
 import * as outbounds from '../shared/outbounds'
 import * as plural from '../shared/plural'
+import { botDeliveryPending, botDeliveryText } from '../shared/bot-delivery'
 
 // Бот настроен: файл Telegram с токеном и чатом; секрет - в useRuntimeConfig теста.
 const telegramFile = (mocks: Record<string, unknown> = {}, globals: Record<string, unknown> = {}) => {
@@ -255,6 +256,40 @@ test.describe('expiry-reminder', () => {
       await reminder.remindExpiring(now + 2 * DAY + 120_000)
       expect(sent.map(s => s.name).sort()).toEqual(['Рано', 'Скоро', 'Скоро'])
       expect(sent.find((s, i) => i > 0 && s.name === 'Скоро')!.text).toContain('через 3 дня — 23.05.2031')
+    }
+    finally {
+      client.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('отказ Telegram отмечает доставку: колокольчик «не доставлено N из M», журнал называет уведомление', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'panel-outbox-'))
+    const client = createClient({ url: `file:${join(directory, 'panel.sqlite')}` })
+    const db = drizzle(client, { schema })
+    const queue = serverModule<typeof import('../server/utils/bot')>(new URL('../server/utils/bot.ts', import.meta.url), {
+      '../database/client': { useDb: () => db },
+      '../database/schema': schema,
+      './api': telegramFile(),
+    }, {
+      useRuntimeConfig: () => ({ tgbotSecret: 'test' }),
+      createError: (error: object) => Object.assign(new Error('queue'), error),
+      $fetch: async (_url: string, options: { body: { deliveryId: string } }) => ({ ok: true, delivery_id: options.body.deliveryId }),
+    })
+    try {
+      await migrate(db, { migrationsFolder: 'server/database/migrations' })
+      const one = await queue.notifyBot('broadcast', { chatIds: [100], text: 'hi' }, 'Рассылка')
+      const two = await queue.notifyBot('broadcast', { chatIds: [100, 200], text: 'hi' }, 'Рассылка')
+      const fine = await queue.notifyBot('client_notify', { chatId: 100, text: 'ok' }, 'Уведомление клиенту «Тест»')
+      expect(await queue.deliveryRejected(one!.id, 400)).toBe('Рассылка')
+      await queue.deliveryRejected(two!.id, 403)
+      expect(await queue.deliveryRejected('unknown', 400), 'чужой id - без отметки').toBeUndefined()
+      const rows = await queue.botDeliveries()
+      const text = (id: string) => botDeliveryText(rows.find(r => r.id === id)!)
+      expect(text(one!.id)).toBe('Рассылка: не доставлено 1 из 1, Telegram 400')
+      expect(text(two!.id)).toBe('Рассылка: не доставлено 1 из 2, Telegram 403')
+      expect(text(fine!.id), 'доставленное - как раньше').toBe('Уведомление клиенту «Тест»: передано боту.')
+      expect(rows.filter(botDeliveryPending).map(r => r.id), 'значок колокольчика - только отказы').toEqual([one!.id, two!.id])
     }
     finally {
       client.close()

@@ -4532,7 +4532,8 @@
    {
     "chat_id": 100,
     "text": "👤 Новый клиент: *Иван*\\_*П*",
-    "parse_mode": "Markdown"
+    "parse_mode": "Markdown",
+    "delivery_id": "d-1"
    }
   ],
   [
@@ -4557,14 +4558,16 @@
    "queued",
    {
     "chat_id": 200,
-    "text": "Работы *ночью*"
+    "text": "Работы *ночью*",
+    "delivery_id": "d-2"
    }
   ],
   [
    "queued",
    {
     "chat_id": 300,
-    "text": "Работы *ночью*"
+    "text": "Работы *ночью*",
+    "delivery_id": "d-2"
    }
   ],
   [

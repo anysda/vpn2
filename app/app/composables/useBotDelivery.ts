@@ -11,8 +11,10 @@ export function useBotDelivery() {
   function sync(list: BotDelivery[], announce = true) {
     rows.value = list
     for (const r of list) {
-      if (announce && r.status === 'failed' && seen.value[r.id] !== 'failed') toast.add({ id: `bot-${r.id}`, title: botDeliveryText(r), color: 'error' })
-      seen.value[r.id] = r.status
+      // Ключ строки: статус и число отказов - новый отказ Telegram объявляется тостом один раз.
+      const state = `${r.status} ${r.rejected ?? 0}`
+      if (announce && (r.status === 'failed' || r.rejected) && seen.value[r.id] !== state) toast.add({ id: `bot-${r.id}`, title: botDeliveryText(r), color: 'error' })
+      seen.value[r.id] = state
     }
     if (!queued.value) return toast.remove('bot-queue')
     if (queueShown.value) return

@@ -11,7 +11,10 @@
         "label": "Рассылка",
         "status": "<first-attempt>",
         "remaining": "<first-attempt>",
-        "created": "<ms>"
+        "created": "<ms>",
+        "recipients": "<count>",
+        "rejected": 0,
+        "rejectedCode": null
       }
     }
   }

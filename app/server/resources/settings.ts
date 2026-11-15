@@ -7,7 +7,10 @@ import { DAY_MS } from '../../shared/msk'
 
 // События извне: от бота (Telegram отверг сообщение), скрипта бэкапа и сторожа YouTube этой ноды.
 const BotEvent = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('telegram_rejected'), status: z.number().int().min(100).max(599), recipient: z.enum(['admin', 'client']) }),
+  z.object({
+    type: z.literal('telegram_rejected'), status: z.number().int().min(100).max(599), recipient: z.enum(['admin', 'client']),
+    deliveryId: z.string().min(1).max(128).optional(),
+  }),
   z.object({ type: z.literal('backup_failed'), detail: z.string().trim().max(200).default('') }),
   z.object({ type: z.literal('backup_warning'), detail: z.string().trim().max(200).default('') }),
   // detail - тот же текст, что сторож отправил боту.
@@ -74,9 +77,11 @@ export default {
   'POST /bot/events': bot(async (event) => {
     const body = await readBodyAs(event, BotEvent)
     if (body.type === 'telegram_rejected') {
+      // Отказ отмечает доставку в колокольчике; уведомления до обновления бота приходят без её id.
+      const label = body.deliveryId ? await deliveryRejected(body.deliveryId, body.status) : undefined
       await recordEvent({
         type: 'telegram_rejected', level: 'alarm', object: 'bot', title: 'Telegram не принял сообщение бота',
-        detail: `${body.recipient === 'client' ? 'клиенту' : 'админу'} · код ${body.status}`,
+        detail: joinDetail(label, body.recipient === 'client' ? 'клиенту' : 'админу', `код ${body.status}`),
       })
       return { ok: true }
     }

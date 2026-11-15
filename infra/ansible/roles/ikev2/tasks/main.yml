@@ -83,12 +83,14 @@
                         after: strongswan-starter.service, routes: "{{ ikev2_subnets }}", v6_reject: true,
                         xfrm_dev: "{{ ikev2_route.stdout.split(' dev ')[1].split()[0] }}", subnet6: "{{ ikev2_subnet6 }}"}
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Таймер счётчиков IKEv2 включён
   ansible.builtin.systemd_service:
     name: anysda-ikev2-sync.timer
     enabled: true
     state: started
-    daemon_reload: true
 
 - name: Первый проход счётчиков IKEv2
   ansible.builtin.command:  # noqa: command-instead-of-module
@@ -122,12 +124,14 @@
         mode: '0644'
       loop: [anysda-ikev2-cert-sync.service, anysda-ikev2-cert-sync.path]
 
+    - name: Изменённые юниты перечитаны
+      ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
     - name: Слежение и таймер включены
       ansible.builtin.systemd_service:
         name: "{{ item }}"
         enabled: true
         state: started
-        daemon_reload: true
       loop: [anysda-ikev2-cert-sync.path, anysda-ikev2-cert-sync.timer]
 
 - name: Без домена слежение за сертификатом выключено

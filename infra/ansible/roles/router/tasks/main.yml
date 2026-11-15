@@ -81,12 +81,14 @@
     - {name: manual-routes.json, content: "[]\n"}
     - {name: client-prefs.json, content: "{}\n"}
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Роутер и наблюдатель ручных маршрутов включены
   ansible.builtin.systemd_service:
     name: "{{ item.name }}"
     enabled: true
     state: "{{ item.state | default(omit) }}"
-    daemon_reload: true
   loop:
     - {name: sing-box}
     - {name: anysda-apply-routes.path, state: started}

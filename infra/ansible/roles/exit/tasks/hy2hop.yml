@@ -32,12 +32,14 @@
         - {src: anysda-hy2hop.service, dest: /etc/systemd/system/anysda-hy2hop.service}
         - {src: 90-anysda-hy2hop.conf, dest: /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf}
 
+    - name: Изменённые юниты перечитаны
+      ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
     - name: Служба смены портов hy2 включена
       ansible.builtin.systemd_service:
         name: anysda-hy2hop.service
         enabled: true
         state: started
-        daemon_reload: true
 
 - name: Смена портов hy2 выключена
   when: not exit_hop_enabled
@@ -64,6 +66,5 @@
         - /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
         - /etc/nftables-hy2hop.conf
 
-    - name: Systemd перечитал юниты
-      ansible.builtin.systemd_service:
-        daemon_reload: true
+    - name: Изменённые юниты перечитаны
+      ansible.builtin.include_role: {name: resources, tasks_from: reload}

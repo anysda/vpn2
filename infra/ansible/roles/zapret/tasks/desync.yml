@@ -128,11 +128,13 @@
   vars:
     resources_units: "{{ zapret_resource_units }}"
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Службы десинка включены
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     enabled: true
-    daemon_reload: true
   loop: [anysda-yt-nft.service, anysda-yt-nfqws.service]
 
 - name: Офлоад выключен
@@ -165,12 +167,14 @@
 - name: Видеопроба
   ansible.builtin.include_tasks: probe.yml
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Таймер видеопробы запущен
   ansible.builtin.systemd_service:
     name: anysda-yt-failover.timer
     enabled: true
     state: started
-    daemon_reload: true
 
 - name: Видеопроба перемерена после смены её кода
   ansible.builtin.command:

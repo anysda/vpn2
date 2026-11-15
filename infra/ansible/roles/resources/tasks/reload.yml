@@ -1,0 +1,12 @@
+---
+# daemon-reload, только когда systemd сам видит изменённый на диске юнит или drop-in
+# (NeedDaemonReload): холостой деплой systemd не перечитывает. Новый юнит systemd
+# подхватывает при первом обращении и без reload.
+- name: Изменённые юниты перечитаны
+  ansible.builtin.shell: |
+    set -o pipefail
+    stale=$(systemctl show --property=NeedDaemonReload --value '*' | grep -cx yes)
+    [ "$stale" -eq 0 ] || { systemctl daemon-reload && echo reloaded; }
+  args: {executable: /bin/bash}
+  register: resources_reload
+  changed_when: "'reloaded' in resources_reload.stdout"

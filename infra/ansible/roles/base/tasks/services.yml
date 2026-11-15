@@ -80,11 +80,13 @@
     create_home: false
     shell: /usr/sbin/nologin
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Служба node_exporter включена
   ansible.builtin.systemd_service:
     name: node_exporter
     enabled: true
-    daemon_reload: true
 
 - name: Служба node_exporter перезапущена при смене входов
   ansible.builtin.command:

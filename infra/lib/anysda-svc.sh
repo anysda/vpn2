@@ -25,12 +25,11 @@ nftables_preserve_rules() {
     [[ -e "$conf.before-vpn2" ]] || cp -a "$conf" "$conf.before-vpn2"
     sed -i -E "s/$flush/# vpn2: preserve tables owned by ufw, routing, Docker and fail2ban/" "$conf"
   fi
-  mkdir -p /etc/systemd/system/nftables.service.d
-  cat > /etc/systemd/system/nftables.service.d/10-anysda-preserve.conf <<'EOF'
-[Service]
-# Stopping this loader must not remove rules owned by other services.
-ExecStop=
-EOF
+  local dropin=/etc/systemd/system/nftables.service.d/10-anysda-preserve.conf body
+  body=$'[Service]\n# Stopping this loader must not remove rules owned by other services.\nExecStop='
+  [[ -f "$dropin" && "$(cat "$dropin")" == "$body" ]] && return 0
+  mkdir -p "${dropin%/*}"
+  printf '%s\n' "$body" > "$dropin"
   systemctl daemon-reload
 }
 

@@ -70,11 +70,13 @@
 - name: Сторож WARP
   ansible.builtin.import_tasks: warp.yml
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Служба sing-box включена
   ansible.builtin.systemd_service:
     name: sing-box
     enabled: true
-    daemon_reload: true
 
 - name: Ресурсы sing-box, сторожа WARP и смены портов hy2
   ansible.builtin.include_role:

@@ -59,11 +59,13 @@
     adguard_limits: "{{ adguard_limits_json.stdout | from_json }}"
   loop: [adguardhome, adguardhome-unfiltered]
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Службы AdGuard включены
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     enabled: true
-    daemon_reload: true
   loop: [anysda-doh-routing, adguardhome, adguardhome-unfiltered]
 
 - name: Правила DoH применены

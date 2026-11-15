@@ -158,12 +158,14 @@
   vars:
     resources_units: [anysda-fq, node_exporter]
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Очередь WAN включена
   ansible.builtin.systemd_service:
     name: anysda-fq
     enabled: true
     state: started
-    daemon_reload: true
 
 - name: Очередь WAN выставлена
   ansible.builtin.command:

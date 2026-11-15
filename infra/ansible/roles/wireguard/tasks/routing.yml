@@ -24,11 +24,13 @@
   vars:
     resources_units: ["{{ wireguard_routing.unit }}"]
 
+- name: Изменённые юниты перечитаны
+  ansible.builtin.include_role: {name: resources, tasks_from: reload}
+
 - name: Включена маршрутизация {{ wireguard_routing.iface }}
   ansible.builtin.systemd_service:
     name: "{{ wireguard_routing.unit }}"
     enabled: true
-    daemon_reload: true
 
 # Рестарт - это down + up: только при смене юнита или скрипта.
 - name: С текущими входами запущена маршрутизация {{ wireguard_routing.iface }}

@@ -140,6 +140,26 @@ def test_env_key_ignore_variable_on_one_side_only():
     assert diff(old, new, [env_rule()]) == []
 
 
+def test_order_ignore_compares_list_as_multiset():
+    old, new = env_pair(['A=1', 'B=2'], ['B=2', 'A=1'])
+    assert diff(old, new, [env_rule('env[]')]) == []
+    assert diff(old, new) == ['units xray.service env: ["A=1", "B=2"] -> ["B=2", "A=1"]']
+    assert old['units']['xray.service']['env'] == ['A=1', 'B=2']
+
+
+def test_order_ignore_keeps_content_difference():
+    old, new = env_pair(['A=1', 'B=2'], ['B=2', 'A=1', 'A=1'])
+    assert diff(old, new, [env_rule('env[]')]) == [
+        'units xray.service env: ["A=1", "B=2"] -> ["A=1", "A=1", "B=2"]']
+
+
+def test_order_ignore_unused_without_that_list():
+    old, new = make(), make()
+    assert unused_ignore(old, new, [env_rule('env[]')]) == [env_rule('env[]')]
+    old, new = env_pair(['A=1'], ['A=1'])
+    assert unused_ignore(old, new, [env_rule('env[]')]) == []
+
+
 def test_star_field_hides_missing_and_extra():
     new = make()
     del new['files']['/etc/ufw/ufw.conf']

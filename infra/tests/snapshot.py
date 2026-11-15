@@ -37,7 +37,8 @@ def load_ignore(path):
 
     name - маска fnmatch.fnmatchcase; её "*" переходит и через "/", поэтому
     /etc/wireguard/*.conf подходит и к /etc/wireguard/sub/x.conf.
-    field - имя поля или "*" (вся запись, включая её наличие); "поле:ключ" убирает из списка поля строки "ключ=...".
+    field - имя поля или "*" (вся запись, включая её наличие); "поле:ключ" убирает из списка поля строки "ключ=...";
+    "поле[]" сверяет список поля без порядка строк.
     Нет ключа, лишний ключ, reason короче 10 символов или файл не список -
     SnapshotError с номером записи (с 1). Пустой файл даёт пустой список.
     """
@@ -105,12 +106,15 @@ def _visible(section, name, record, ignore):
     """Запись без игнорируемых полей или None, если правило "*" скрывает её целиком."""
     hidden = set()
     dropped = []
+    unordered = set()
     for rule in ignore:
         if not _matches(rule, section, name):
             continue
         if rule['field'] == '*':
             return None
-        if ':' in rule['field']:
+        if rule['field'].endswith('[]'):
+            unordered.add(rule['field'][:-2])
+        elif ':' in rule['field']:
             dropped.append(rule['field'].split(':', 1))
         else:
             hidden.add(rule['field'])
@@ -119,6 +123,9 @@ def _visible(section, name, record, ignore):
         if isinstance(result.get(field), list):
             result[field] = [item for item in result[field]
                              if not (isinstance(item, str) and item.startswith(f'{key}='))]
+    for field in unordered:
+        if isinstance(result.get(field), list):
+            result[field] = sorted(result[field], key=_dumps)
     return result
 
 
@@ -167,7 +174,7 @@ def unused_ignore(old, new, ignore):
             for name, record in snapshot.get(rule['section'], {}).items():
                 if not fnmatch.fnmatchcase(name, rule['name']):
                     continue
-                if rule['field'] == '*' or rule['field'] in record:
+                if rule['field'] == '*' or rule['field'] in record or rule['field'].removesuffix('[]') in record:
                     used = True
                 elif ':' in rule['field']:
                     field, key = rule['field'].split(':', 1)

@@ -6,8 +6,8 @@ name: stand
 #   again - слепок против эталона и повторный деплой (слепок тот же с допусками
 #   ignore-again.yml); restore - бот с поддельным токеном (панель жива, бот на
 #   паузе) и restore эталонного архива бэкапа.
-# upgrade: выпуск UPGRADE_FROM, поставленный по манифесту (диски узлов после
-#   установки живут в кэше, ВМ грузятся с них), обновление деревом ветки, слепок
+# upgrade: выпуск UPGRADE_FROM, поставленный по манифесту (на dev диски узлов
+#   после установки живут в кэше, ВМ грузятся с них), обновление деревом ветки, слепок
 #   как у чистой установки с допусками ignore-upgrade.yml. С прошлого выпуска -
 #   всегда, на ветке выпуска ещё и с 1.1.5.
 # udp-cut: на своём стенде обрыв UDP entry → экзит.
@@ -387,20 +387,21 @@ jobs:
         if: steps.release-cache.outputs.cache-hit != 'true'
         run: sudo infra/tests/ci-stand.sh deploy-release "$UPGRADE_FROM" "$RUNNER_TEMP/release-manifest.json"
 
-      # Диски выпуска - в кэш; ВМ грузятся с них, как в прогоне с попаданием.
+      # Диски выпуска - в кэш dev (кэш ветки другим веткам не виден, место
+      # общее); ВМ грузятся с них, как в прогоне с попаданием.
       - name: выпуск в кэш
-        if: steps.release-cache.outputs.cache-hit != 'true'
+        if: steps.release-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev'
         run: sudo infra/tests/ci-stand.sh release-save && sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh up-bg --release
 
       - name: release cache save
-        if: steps.release-cache.outputs.cache-hit != 'true'
+        if: steps.release-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev'
         uses: actions/cache/save@v6
         with:
           path: /var/tmp/vpn2-release-cache
           key: ${{ steps.image.outputs.release }}
 
       - name: up с дисков выпуска
-        if: steps.release-cache.outputs.cache-hit != 'true'
+        if: steps.release-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev'
         run: sudo infra/tests/ci-stand.sh up-wait
 
       - name: обновление до ветки

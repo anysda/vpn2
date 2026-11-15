@@ -6,10 +6,12 @@
 # ./deploy.sh с самого entry, как по README; 99-verify гоняет настоящий
 # трафик WireGuard/OpenVPN/IKEv2.
 #
-#   sudo infra/tests/ci-stand.sh up                     поднять ВМ
-#   sudo infra/tests/ci-stand.sh up-bg | up-wait        то же фоном и ожидание
+#   sudo infra/tests/ci-stand.sh up [--release]         поднять ВМ; с флагом - с дисков сохранённого выпуска
+#   sudo infra/tests/ci-stand.sh up-bg [--release] | up-wait  то же фоном и ожидание
 #   sudo infra/tests/ci-stand.sh deploy <образ панели>  полный деплой
 #   sudo infra/tests/ci-stand.sh deploy-release <тег> <манифест>  установка выпуска по манифесту
+#   sudo infra/tests/ci-stand.sh release-save           остановить ВМ, диски и базу слепка выпуска - в кэш
+#   infra/tests/ci-stand.sh release-key <тег>            ключ кэша установленного выпуска (stand.yml)
 #   sudo infra/tests/ci-stand.sh deploy-upgrade <образ> <тег>     поверх выпуска - дерево ветки
 #   sudo infra/tests/ci-stand.sh deploy-udp             стадии до 22-adguard
 #   sudo infra/tests/ci-stand.sh verify [--stop-openvpn]
@@ -58,6 +60,10 @@ fi
 # Образ и ядро живут вне STAND_DIR (down его стирает); в CI каталог между
 # прогонами хранит actions/cache по ключу image-key.
 IMAGE_DIR=${STAND_IMAGE_CACHE:-/var/tmp/vpn2-image-cache}/$IMAGE_KEY
+# Установленный выпуск для сценария обновления: диски узлов после чистой
+# остановки, база слепка и секреты стенда. В CI каталог хранит actions/cache
+# по ключу release-key; диски ссылаются на образ из IMAGE_DIR.
+RELEASE_DIR=${STAND_RELEASE_CACHE:-/var/tmp/vpn2-release-cache}
 # Адреса вне частных диапазонов: sing-box отклоняет клиентские соединения в
 # частные сети, а проверка трафика ходит на адреса entry и экзита.
 NET=198.18.10
@@ -452,6 +458,8 @@ vm_wait_ready() {
 
 cmd_up() {
   [[ -e /dev/kvm ]] || die '/dev/kvm нет: нужна машина с аппаратной виртуализацией'
+  local from=''
+  [[ ${1:-} != --release ]] || from=$RELEASE_DIR
   mkdir -p "$STAND_DIR"
   host_machine
   host_stats 'начало up'
@@ -487,6 +495,12 @@ cmd_up() {
     boot=(-kernel "$kernel"
       -append 'root=/dev/vda1 rootwait ro console=tty1 console=ttyS0 mitigations=off systemd.mask=snapd.service systemd.mask=snapd.socket systemd.mask=snapd.seeded.service')
   fi
+  if [[ -n $from ]]; then
+    [[ -f $from/entry.qcow2 ]] || die "в $from нет сохранённого выпуска"
+    install -d -m 700 "$STAND_DIR/acme"
+    install -m 600 "$from/root-password" "$from/id_ed25519" "$from/id_ed25519.pub" "$from/acme.pem" "$STAND_DIR/"
+    install -m 600 "$from/acme.key" "$STAND_DIR/acme/"
+  fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")
   net_up
@@ -502,7 +516,7 @@ cmd_up() {
     tap=$BRIDGE-$name
     seed "$name" "$ip" "$mac" "$(cat "$STAND_DIR/root-password")"
     # Диск одноразовый: fsync гостя (dpkg на каждый пакет) хосту не нужен.
-    qemu-img create -q -f qcow2 -F qcow2 -b "$image" "$STAND_DIR/$name.qcow2" 20G
+    qemu-img create -q -f qcow2 -F qcow2 -b "${from:+$from/$name.qcow2}${from:-$image}" "$STAND_DIR/$name.qcow2" 20G
     ip link show "$tap" >/dev/null 2>&1 || ip tuntap add dev "$tap" mode tap
     ip link set "$tap" master "$BRIDGE" up
     qemu-system-x86_64 -name "vpn2-$name" -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" \
@@ -521,6 +535,13 @@ cmd_up() {
   done
   local p
   for p in "${waits[@]}"; do wait "$p" || die 'ВМ стенда не поднялись'; done
+  # База слепка жила в /run выключенного узла.
+  for node in "${NODES[@]}"; do
+    [[ -n $from ]] || break
+    read -r name ip _ <<<"$node"
+    { snapshot_tool "$ip" && ssh_node "$ip" "cat > $SNAP_DIR/base.json" < "$from/base-$name.json"; } \
+      || die "база слепка выпуска не вернулась на $name"
+  done
   host_stats 'ВМ готовы'
   entry_stats 'ВМ готовы'
 }
@@ -531,7 +552,7 @@ cmd_up_bg() {
   mkdir -p "$STAND_DIR"
   chmod 700 "$STAND_DIR"
   : > "$STAND_DIR/up.rc"
-  setsid nohup bash -c '"$0" up > "$1/up.log" 2>&1; echo $? > "$1/up.rc"' "$0" "$STAND_DIR" \
+  setsid nohup bash -c '"$0" up "${@:2}" > "$1/up.log" 2>&1; echo $? > "$1/up.rc"' "$0" "$STAND_DIR" "$@" \
     < /dev/null > /dev/null 2>&1 &
 }
 
@@ -718,6 +739,44 @@ cmd_deploy_release() {
   log "установка выпуска $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   warm_report
   return "$rc"
+}
+
+# Сохранённый выпуск: узлы гасятся штатно, их диски, база слепка и секреты
+# стенда, которыми выпуск ставился, уходят в RELEASE_DIR. Сеть, прокси и ACME
+# стенда остаются: следом up --release.
+cmd_release_save() {
+  local node name ip started=$SECONDS
+  rm -rf "$RELEASE_DIR"
+  mkdir -p "$RELEASE_DIR"
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    ssh_node "$ip" "cat $SNAP_DIR/base.json" > "$RELEASE_DIR/base-$name.json" || die "база слепка $name не забрана"
+    ssh_node "$ip" 'fstrim -a >/dev/null 2>&1; systemctl poweroff --no-block' || true
+  done
+  for node in "${NODES[@]}"; do
+    read -r name _ <<<"$node"
+    while kill -0 "$(cat "$STAND_DIR/$name.pid")" 2>/dev/null; do
+      (( SECONDS - started < 120 )) || die "ВМ $name не остановилась за 2 мин"
+      sleep 1
+    done
+    mv "$STAND_DIR/$name.qcow2" "$RELEASE_DIR/"
+  done
+  cp "$STAND_DIR/root-password" "$STAND_DIR/id_ed25519" "$STAND_DIR/id_ed25519.pub" "$STAND_DIR/acme.pem" \
+    "$STAND_DIR/acme/acme.key" "$RELEASE_DIR/"
+  # actions/cache сохраняет каталог от пользователя раннера.
+  chmod -R a+rX "$RELEASE_DIR"
+  log "выпуск сохранён за $((SECONDS - started)) с: $(du -sh "$RELEASE_DIR" | cut -f1)"
+}
+
+# Ключ сохранённого выпуска: тег, образ и то, чем стенд его ставит - узлы,
+# заготовка cloud-init, раскладка исходников, config.yaml и инструмент слепка.
+release_key() {
+  local tag=${1:?тег выпуска}
+  printf '%s-%s-%s\n' "$tag" "$IMAGE_KEY" "$( {
+    declare -p NODES NET
+    declare -f seed warm_script push_tree snapshot_base snapshot_tool snapshot_run cmd_deploy_release acme_up
+    cat "$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml" "$REPO_ROOT/infra/tests/snapshot.py"
+  } | sha256sum | cut -c1-16)"
 }
 
 # ssh-мультиплексор стадии живёт 60 с и держит унаследованный замок
@@ -1297,11 +1356,13 @@ cmd_down() {
 }
 
 case "${1:-}" in
-  up) cmd_up ;;
-  up-bg) cmd_up_bg ;;
+  up) cmd_up "${@:2}" ;;
+  up-bg) cmd_up_bg "${@:2}" ;;
   up-wait) cmd_up_wait ;;
   deploy) cmd_deploy "${@:2}" ;;
   deploy-release) cmd_deploy_release "${@:2}" ;;
+  release-save) cmd_release_save ;;
+  release-key) release_key "${@:2}" ;;
   deploy-upgrade) cmd_deploy_upgrade "${@:2}" ;;
   deploy-udp) cmd_deploy_udp ;;
   deploy-again) cmd_deploy_again "${@:2}" ;;
@@ -1316,5 +1377,5 @@ case "${1:-}" in
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
   image-key) echo "$IMAGE_KEY" ;;
-  *) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

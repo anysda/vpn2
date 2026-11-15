@@ -6,8 +6,10 @@ name: stand
 #   again - слепок против эталона и повторный деплой (слепок тот же с допусками
 #   ignore-again.yml); restore - бот с поддельным токеном (панель жива, бот на
 #   паузе) и restore эталонного архива бэкапа.
-# upgrade: установка выпуска UPGRADE_FROM по манифесту, обновление деревом ветки,
-#   слепок как у чистой установки с допусками ignore-upgrade.yml.
+# upgrade: выпуск UPGRADE_FROM, поставленный по манифесту (диски узлов после
+#   установки живут в кэше, ВМ грузятся с них), обновление деревом ветки, слепок
+#   как у чистой установки с допусками ignore-upgrade.yml. С прошлого выпуска -
+#   всегда, на ветке выпуска ещё и с 1.1.5.
 # udp-cut: на своём стенде обрыв UDP entry → экзит.
 # Запускается на dev, на ветке выпуска и вручную, не на каждый PR. Коммит выпуска
 # проверяется на lane/release вместе с checks, dev этот прогон не повторяет.
@@ -278,7 +280,7 @@ jobs:
           key: ${{ steps.apt-cache.outputs.cache-primary-key }}
 
   upgrade:
-    name: стенд обновление с выпуска Ubuntu ${{ matrix.os }}
+    name: стенд обновление с выпуска ${{ matrix.from }} Ubuntu ${{ matrix.os }}
     needs: reuse
     if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
@@ -287,9 +289,10 @@ jobs:
       fail-fast: false
       matrix:
         os: ['24.04', '26.04']
+        from: ${{ fromJSON(github.ref == 'refs/heads/lane/release' && '["1.2.0", "1.1.5"]' || '["1.2.0"]') }}
     env:
       STAND_OS: ${{ matrix.os }}
-      UPGRADE_FROM: 1.1.5
+      UPGRADE_FROM: ${{ matrix.from }}
     steps:
       # fetch-depth 0: нужен тег выпуска (archive и список удалённых файлов).
       - uses: actions/checkout@v7
@@ -299,7 +302,9 @@ jobs:
       # Образ и ядро ВМ между ранами: с Ubuntu - только при новой сборке образа.
       - name: ключ образа ВМ
         id: image
-        run: echo "key=stand-image-$(infra/tests/ci-stand.sh image-key)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "key=stand-image-$(infra/tests/ci-stand.sh image-key)" >> "$GITHUB_OUTPUT"
+          echo "release=stand-release-$(infra/tests/ci-stand.sh release-key "$UPGRADE_FROM")" >> "$GITHUB_OUTPUT"
 
       - name: image cache
         id: image-cache
@@ -307,6 +312,14 @@ jobs:
         with:
           path: /var/tmp/vpn2-image-cache
           key: ${{ steps.image.outputs.key }}
+
+      # Установленный выпуск: есть в кэше - ВМ грузятся с его дисков.
+      - name: release cache
+        id: release-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /var/tmp/vpn2-release-cache
+          key: ${{ steps.image.outputs.release }}
 
       # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
       # До up: прокси поднимается до запуска ВМ, их прогрев идёт через него.
@@ -328,7 +341,7 @@ jobs:
 
       # ВМ грузятся, пока собирается образ панели. STAND_OS sudo сам не передаёт.
       - name: up (фоном)
-        run: sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh up-bg
+        run: sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh up-bg ${{ steps.release-cache.outputs.cache-hit == 'true' && '--release' || '' }}
 
       - uses: docker/setup-buildx-action@v4
         with:
@@ -364,13 +377,31 @@ jobs:
 
       # Манифест выпуска: образы по digest, как их собрал релиз.
       - name: манифест выпуска
+        if: steps.release-cache.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "$UPGRADE_FROM" -p release-manifest.json -D "$RUNNER_TEMP"
 
       # Сценарий 4 карточки: чистая установка выпуска, поверх - дерево ветки.
       - name: установка выпуска
+        if: steps.release-cache.outputs.cache-hit != 'true'
         run: sudo infra/tests/ci-stand.sh deploy-release "$UPGRADE_FROM" "$RUNNER_TEMP/release-manifest.json"
+
+      # Диски выпуска - в кэш; ВМ грузятся с них, как в прогоне с попаданием.
+      - name: выпуск в кэш
+        if: steps.release-cache.outputs.cache-hit != 'true'
+        run: sudo infra/tests/ci-stand.sh release-save && sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh up-bg --release
+
+      - name: release cache save
+        if: steps.release-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: /var/tmp/vpn2-release-cache
+          key: ${{ steps.image.outputs.release }}
+
+      - name: up с дисков выпуска
+        if: steps.release-cache.outputs.cache-hit != 'true'
+        run: sudo infra/tests/ci-stand.sh up-wait
 
       - name: обновление до ветки
         run: sudo infra/tests/ci-stand.sh deploy-upgrade vpn2-stand/panel:${{ github.sha }} "$UPGRADE_FROM"
@@ -404,7 +435,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: verify-report-upgrade-ubuntu-${{ matrix.os }}
+          name: verify-report-upgrade-${{ matrix.from }}-ubuntu-${{ matrix.os }}
           path: stand-report/
           if-no-files-found: warn
 

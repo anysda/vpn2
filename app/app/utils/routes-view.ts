@@ -36,6 +36,12 @@ export function countryName(tag: string): string {
   return tag.toUpperCase()
 }
 
+/** Экзит в выборе и тостах: страна и тег, как колонка «Маршрутов» и карточка «Обзора» («Нидерланды · NL»). */
+export function exitLabel(tag: string): string {
+  const name = countryName(tag)
+  return name === tag.toUpperCase() ? name : `${name} · ${tag.toUpperCase()}`
+}
+
 // direct-ru не проверяется на задержку: выход в интернет с самого входа.
 function ruDelay(delay: number | null, ru: boolean) {
   return ru && delay === null ? 0 : delay

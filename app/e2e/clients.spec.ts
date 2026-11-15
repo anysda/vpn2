@@ -996,7 +996,7 @@ test.describe('mobile-clients', { tag: '@mobile' }, () => {
           await panel.getByRole('button', { name: 'Безлимитно' }).tap()
           await expect(panel.getByText('лимит снят (∞)')).toBeVisible()
           await panel.getByLabel('Предпочитаемый экзит').selectOption('fi')
-          await expect(toast(page, 'Предпочитаемый экзит: FI')).toBeVisible()
+          await expect(toast(page, 'Предпочитаемый экзит: Финляндия · FI')).toBeVisible()
 
           // Девайс и конфиги.
           const device = 'phone'

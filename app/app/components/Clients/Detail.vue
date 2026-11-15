@@ -94,7 +94,7 @@ const stepLimit = (by: number) => saveLimit(d.value!.deviceLimit === null ? minL
 async function saveExit(e: Event) {
   const el = e.target as HTMLSelectElement
   const tag = el.value || null
-  if (!await save({ preferredExit: tag }, `Предпочитаемый экзит: ${tag ? tag.toUpperCase() : 'авто'}`, 'Ошибка')) el.value = d.value?.preferredExit ?? ''
+  if (!await save({ preferredExit: tag }, `Предпочитаемый экзит: ${tag ? exitLabel(tag) : 'авто'}`, 'Ошибка')) el.value = d.value?.preferredExit ?? ''
 }
 
 async function toggleFreeze() {
@@ -230,7 +230,7 @@ async function addDev() {
       <span class="sel">
         <select :value="d.preferredExit ?? ''" aria-label="Предпочитаемый экзит" @change="saveExit">
           <option value="">Авто</option>
-          <option v-for="x in exits" :key="x" :value="x">{{ x.toUpperCase() }}</option>
+          <option v-for="x in exits" :key="x" :value="x">{{ exitLabel(x) }}</option>
         </select>
         <svg class="i" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5" /></svg>
       </span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countryName, routeColumns, rtc } from './routes-view'
+import { countryName, exitLabel, routeColumns, rtc } from './routes-view'
 
 const ob = (name: string, delay: number | null) => ({ name, type: 'x', delay, isWarp: name.endsWith('-warp'), isDirectRu: name === 'direct-ru' })
 
@@ -48,5 +48,13 @@ describe('countryName', () => {
 describe('rtc', () => {
   it('красит задержку по порогам 60, 100 и 150 мс', () => {
     expect([null, 0, 59, 60, 99, 100, 149, 150].map(rtc)).toEqual(['', '', '', 'rtv', 'rtv', 'rta', 'rta', 'rtp'])
+  })
+})
+
+describe('exitLabel', () => {
+  it('страна и тег, без страны - только тег', () => {
+    expect(exitLabel('nl')).toBe('Нидерланды · NL')
+    expect(exitLabel('at')).toBe('Австрия · AT')
+    expect(exitLabel('lab')).toBe('LAB')
   })
 })

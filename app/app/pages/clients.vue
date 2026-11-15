@@ -127,7 +127,7 @@ const usage = (c: Client) => {
     total: sizeBinRu((t(c.id)?.rxBytes ?? c.rxTotal) + (t(c.id)?.txBytes ?? c.txTotal)),
   }
 }
-const exitText = (c: Client) => c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто'
+const exitText = (c: Client) => c.preferredExit ? exitLabel(c.preferredExit) : 'Авто'
 const tgText = (c: Client) => c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram'
 </script>
 

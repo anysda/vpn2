@@ -1,4 +1,5 @@
-"""Плеи деплоя из одного прогретого процесса ansible: импорт и разбор плейбуков с ролями - раз за запуск.
+"""Плеи деплоя из одного прогретого процесса ansible: импорт, разбор плейбуков с ролями и входы Mitogen
+на узлы - раз за запуск.
 
 Каждый плей - fork прогретого процесса, внутри - консольный ansible-playbook venv с теми же аргументами,
 окружением и stdout/stderr, что дал бы ему Popen; дескрипторы вывода приходят через сокет.
@@ -104,6 +105,12 @@ def warm(infra):
         if (path.parent == infra or path.parent.name in ('tasks', 'handlers', 'defaults', 'vars')) and path.is_file():
             with contextlib.suppress(AnsibleError):
                 loader.load_from_file(str(path), trusted_as_template=True)
+    from ansible import constants
+    if constants.DEFAULT_STRATEGY.startswith('mitogen'):
+        # Мультиплексоры Mitogen - общие для всех плеев: вход на узел и его python живут весь деплой.
+        with contextlib.suppress(ImportError):
+            import ansible_mitogen.process
+            ansible_mitogen.process.get_classic_worker_model()
     cache, init = loader._FILE_CACHE, DataLoader.__init__
 
     def shared(self):

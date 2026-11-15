@@ -27,7 +27,9 @@ function reset() {
 }
 watch(disableOpen, reset)
 
+// Второй Enter, пока идёт первый запрос, уже погашенный код не шлёт.
 function call<T>(path: string, body: object, fail: string, done: (r: T) => unknown) {
+  if (busy.value) return
   return act('2fa', async () => done(await $fetch<unknown>(`/api/auth/two-factor/${path}`, { method: 'POST', body }) as T), undefined, { title: fail })
 }
 
@@ -39,7 +41,7 @@ function typedCode(passwordGiven = true) {
 
 function startSetup() {
   if (!pwd.value) return toast.add({ title: 'Введите текущий пароль', color: 'error' })
-  return call<{ totpURI: string }>('enable', { password: pwd.value }, 'Ошибка setup', (r) => {
+  return call<{ totpURI: string }>('enable', { password: pwd.value }, 'Не удалось начать настройку 2FA', (r) => {
     totpUri.value = r.totpURI
     pwd.value = ''
   })

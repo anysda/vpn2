@@ -10,6 +10,8 @@ const form = reactive({ ...BLANK })
 watch(open, now => now && Object.assign(form, BLANK))
 
 function submit() {
+  // Второй Enter, пока идёт первый POST, клиента не дублирует.
+  if (busy.value.has('create')) return
   const name = form.name.trim()
   if (!name) return toast.add({ title: 'Укажите имя', color: 'error' })
   const expiresAt = form.expires.trim() ? parseRuDateUtc(form.expires) : null
@@ -30,7 +32,7 @@ function submit() {
 
 <template>
   <PanelDialog v-model:open="open" title="Новый клиент" ok="Создать" :busy="busy.has('create')" @ok="submit">
-    <label class="fl2"><span>Имя</span><input v-model="form.name" class="in" placeholder="Иван Иванов" @keydown.enter="submit"></label>
+    <label class="fl2"><span>Имя</span><input v-model="form.name" class="in" placeholder="Иван Иванов" maxlength="64" @keydown.enter="submit"></label>
     <label class="fl2">
       <span>Срок действия</span>
       <input

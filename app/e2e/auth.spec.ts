@@ -146,7 +146,7 @@ test.describe('auth', () => {
       await hydrated(page)
       await page.locator('#tfa').getByLabel('Текущий пароль').fill(`${ADMIN_PASSWORD}-wrong`)
       await page.getByRole('button', { name: 'Включить 2FA' }).click()
-      await expect(toast(page, 'Ошибка setup').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
+      await expect(toast(page, 'Не удалось начать настройку 2FA').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
     })
 

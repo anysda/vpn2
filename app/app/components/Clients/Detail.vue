@@ -285,7 +285,7 @@ async function addDev() {
     </div>
 
     <PanelDialog v-model:open="newDev.open" title="Новый девайс" ok="Добавить" :busy="!newDev.name.trim() || busy.has('dev')" @ok="addDev">
-      <label class="fl2"><span>Название девайса</span><input v-model="newDev.name" class="in" placeholder="напр. iPhone" @keydown.enter="addDev"></label>
+      <label class="fl2"><span>Название девайса</span><input v-model="newDev.name" class="in" placeholder="напр. iPhone" maxlength="64" @keydown.enter="addDev"></label>
     </PanelDialog>
     <ClientsDeviceConfig v-if="cfg" v-model:open="cfgOpen" :client-id="d.id" :device="cfg.device" :kind="cfg.kind" />
   </div>

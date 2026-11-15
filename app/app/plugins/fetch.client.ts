@@ -2,12 +2,13 @@
 // - текст ошибки из `message` тела отдаётся как `statusText`;
 // - без cookie vpn2-signed-in запрос к закрытым ручкам сразу получает 401 без сети;
 // - первый 401 закрытой ручки (сессию отозвали, истекла, вышли в другой вкладке) снимает
-//   признак, даёт один тост и уводит на /login: опросы встают вместе со страницей;
+//   признак, даёт один тост и уводит на /login; до нового входа закрытые ручки - без сети;
 // - смена пароля и 2FA пересоздают сессию: остальные запросы ждут их ответа не дольше 15 с.
 import { SESSION_GONE as GONE } from '#shared/error-text'
 
 const OPEN = /^\/api\/(auth\/|bot\/|_nuxt_icon\/|sso$|version$)/
 const ROTATES = /^\/api\/auth\/(two-factor\/(disable|verify-totp)|change-password)$/
+const SIGNS_IN = /^\/api\/auth\/(sign-in\/username|two-factor\/verify-totp)$/
 const MARK = 'vpn2-signed-in'
 
 function withText(res: Response, text: string) {
@@ -57,10 +58,11 @@ export default defineNuxtPlugin((nuxtApp) => {
         gone = true
         void res.then(r => r.ok && unmark())
       }
+      if (SIGNS_IN.test(path)) void res.then((r) => { if (r.ok) gone = false })
       return res
     }
-    if (document.cookie.split(/;\s*/).some(c => c.startsWith(`${MARK}=`))) {
-      gone = false
+    // После конца сессии - без сети до нового входа: старая cookie могла вернуть признак.
+    if (!gone && document.cookie.split(/;\s*/).some(c => c.startsWith(`${MARK}=`))) {
       const res = await send(...args)
       if (res.status === 401) sessionGone()
       return res

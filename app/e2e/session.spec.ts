@@ -135,7 +135,7 @@ test.describe('session-gone', () => {
   // опросы панели не уходят без сессии и не сыплют 401 в консоль.
   // Сторож из fixtures ловит любой 401 за тест.
 
-  test('cookie стёрты на странице настроек: опросы админки не уходят без сессии', async ({ page }) => {
+  test('cookie стёрты на странице настроек: опросы админки не уходят без сессии, страница уходит на вход', async ({ page }) => {
     await loginApi(page)
     await page.goto('/settings')
     await hydrated(page)
@@ -147,13 +147,16 @@ test.describe('session-gone', () => {
     const sent: string[] = []
     page.on('request', (r) => {
       const path = new URL(r.url()).pathname
-      if (path.startsWith('/api/') && !path.startsWith('/api/auth/')) sent.push(`${r.method()} ${path}`)
+      // Страница входа сама зовёт открытые /api/sso и /api/auth/*.
+      if (path.startsWith('/api/') && !/^\/api\/(auth\/|sso$|version$)/.test(path)) sent.push(`${r.method()} ${path}`)
     })
     await page.context().clearCookies()
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     // Опрос доставок ботов идёт раз в 2 с: окно его захватывает.
     await page.waitForTimeout(2_500)
     expect(sent, 'запросы без сессии').toEqual([])
+    await expect(page).toHaveURL(/\/login$/)
+    await expect(toast(page, 'Сессия завершена, войдите заново')).toHaveCount(1)
   })
 })
 

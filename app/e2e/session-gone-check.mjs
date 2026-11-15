@@ -7,7 +7,8 @@
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { beforeEach, test } from 'node:test'
 
 const APP = join(import.meta.dirname, '..')
@@ -15,12 +16,15 @@ const ts = createRequire(join(APP, 'package.json'))('typescript')
 const SESSION = 'better-auth.session_token'
 const OPEN = /^\/api\/(auth\/|sso$|version$)/
 
-/** Модуль .ts без импортов: снять типы и загрузить. */
-async function load(file) {
+/** Модуль .ts как data:-адрес: типы сняты, `#shared/*` и `./*.json` - из папок панели. */
+function moduleUrl(file) {
   const src = readFileSync(file, 'utf8')
+    .replace(/'#shared\/([\w-]+)'/g, (_, name) => `'${moduleUrl(join(APP, 'shared', `${name}.ts`))}'`)
+    .replace(/'\.\/([\w-]+\.json)'/g, (_, name) => `'${pathToFileURL(join(dirname(file), name))}'`)
   const { outputText } = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } })
-  return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default
+  return `data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`
 }
+const load = async file => (await import(moduleUrl(file))).default
 
 /** Банка cookie браузера. */
 const jar = new Map()
@@ -31,8 +35,12 @@ const middleware = []
 async function serve(method, path) {
   const event = { method, path, headers: { cookie: header(), host: 'panel.test' }, node: { req: { headers: {} }, res: {} } }
   for (const handler of middleware) await handler(event)
-  return OPEN.test(path) || jar.has(SESSION) ? 200 : 401
+  return OPEN.test(path) || (jar.has(SESSION) && !revoked) ? 200 : 401
 }
+/** Сессию отозвал сервер (смена пароля в другом браузере, истёк срок): cookie в банке осталась. */
+let revoked = false
+/** Что страница показала после конца сессии: тосты и переходы. */
+const shown = []
 
 Object.assign(globalThis, {
   defineNuxtPlugin: f => f,
@@ -44,6 +52,10 @@ Object.assign(globalThis, {
   deleteCookie: (event, name) => { jar.delete(name) },
   sendRedirect: () => undefined,
   createError: o => Object.assign(new Error(o.message ?? o.statusMessage), o),
+  useAuthSession: () => ({ clear: () => shown.push('clear') }),
+  useToast: () => ({ add: t => shown.push(`toast ${t.title}`) }),
+  navigateTo: to => shown.push(`go ${to}`),
+  window: { addEventListener: () => {} },
   location: { origin: 'http://panel.test', pathname: '/settings' },
   document: {
     get cookie() {
@@ -75,7 +87,7 @@ for (const f of readdirSync(join(APP, 'server/middleware')).sort()) middleware.p
 // Плагины Nuxt ставятся по имени файла: позже поставленная обёртка — внешняя.
 for (const f of readdirSync(join(APP, 'app/plugins')).filter(f => f.endsWith('.client.ts')).sort()) {
   const file = join(APP, 'app/plugins', f)
-  if (readFileSync(file, 'utf8').includes('globalThis.fetch =')) (await load(file))()
+  if (readFileSync(file, 'utf8').includes('globalThis.fetch =')) (await load(file))({ runWithContext: f => f() })
 }
 
 async function request(path, method = 'GET') {
@@ -93,7 +105,11 @@ async function signedIn() {
 beforeEach(() => {
   jar.clear()
   sent.length = 0
+  shown.length = 0
+  revoked = false
 })
+
+const GONE = ['clear', 'toast Сессия завершена, войдите заново', 'go /login']
 
 test('вошёл: опросы админки уходят и получают ответ', async () => {
   await signedIn()
@@ -140,4 +156,34 @@ test('вход с 2FA: после пароля сессии ещё нет, по�
   await request('/api/auth/two-factor/verify-totp', 'POST')
   await request('/api/auth/get-session')
   assert.deepEqual(await request('/api/admin/telegram'), { status: 200, sent: true })
+})
+
+test('сессию отозвал сервер: первый 401 - один тост и /login, дальше опросы без сети', async () => {
+  await signedIn()
+  revoked = true
+  assert.deepEqual(await request('/api/admin/telegram'), { status: 401, sent: true })
+  // Ответ с живой cookie сессии вернул бы признак: до нового входа закрытые ручки всё равно молчат.
+  await serve('GET', '/api/ops/nodes')
+  for (const path of ['/api/admin/telegram', '/api/clients/1', '/api/ops/nodes']) assert.deepEqual(await request(path), { status: 401, sent: false })
+  assert.deepEqual(shown, GONE)
+  revoked = false
+  await request('/api/auth/sign-in/username', 'POST')
+  assert.deepEqual(await request('/api/admin/telegram'), { status: 200, sent: true })
+})
+
+test('выход в другой вкладке: без сети, один тост и /login', async () => {
+  await signedIn()
+  await request('/api/admin/telegram')
+  jar.clear()
+  for (const path of ['/api/admin/telegram', '/api/clients']) assert.deepEqual(await request(path), { status: 401, sent: false })
+  assert.deepEqual(shown, GONE)
+  await request('/api/auth/sign-in/username', 'POST')
+})
+
+test('свой выход: тоста о конце сессии нет', async () => {
+  await signedIn()
+  await request('/api/auth/sign-out', 'POST')
+  await request('/api/admin/telegram')
+  assert.deepEqual(shown, [])
+  await request('/api/auth/sign-in/username', 'POST')
 })

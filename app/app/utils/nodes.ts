@@ -1,7 +1,9 @@
+import { exitLabel } from './routes-view'
+
 export type NodeMetric = Api<'/api/ops/nodes'>[number]
 
-/** nl → «Нидерланды», entry - «Entry»; тег с цифрами - как есть. */
-export const exitName = (tag: string) => tag === 'ru' ? 'Entry' : /\d/.test(tag) ? tag.toUpperCase() : countryName(tag)
+/** Узел на «Обзоре»: entry - «Entry», экзит - как везде в панели («Германия · DE2»). */
+export const exitName = (tag: string) => tag === 'ru' ? 'Entry' : exitLabel(tag)
 
 export function uptimeShort(sec: number | null | undefined): string {
   if (!sec || sec < 0) return '—'

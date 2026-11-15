@@ -1,38 +1,43 @@
 import { describe, expect, it } from 'vitest'
+import { exitName } from './nodes'
 import { countryName, exitLabel, routeColumns, rtc } from './routes-view'
 
 const ob = (name: string, delay: number | null) => ({ name, type: 'x', delay, isWarp: name.endsWith('-warp'), isDirectRu: name === 'direct-ru' })
 
 describe('routeColumns', () => {
   // Эталон — вывод прежнего computed из Routes/Section.vue на том же входе.
-  it('собирает колонки как раньше: Россия первой, экзиты по алфавиту', () => {
+  it('Россия первой, экзиты по алфавиту; два экзита одной страны различимы по тегу', () => {
     const cols = routeColumns([
       ob('hy2-us2-warp', 180),
       ob('hy2-de-direct', 42),
+      ob('hy2-de2-direct', 50),
       ob('urltest-auto', 1),
       ob('direct-ru', null),
       ob('hy2-de-warp', null),
       ob('hy2-us2-direct', null),
     ])
     expect(cols).toEqual([
-      { tag: 'ru', name: 'Россия', sub: 'RU · entry', delay: 0, cells: [
-        { outbound: 'direct-ru', label: 'Напрямую', name: 'Россия', delay: 0, warp: false },
+      { tag: 'ru', name: 'Россия · RU', sub: 'entry', delay: 0, cells: [
+        { outbound: 'direct-ru', label: 'Напрямую', name: 'Россия · RU', delay: 0, warp: false },
       ] },
-      { tag: 'de', name: 'Германия', sub: 'DE', delay: 42, cells: [
-        { outbound: 'hy2-de-direct', label: 'Напрямую', name: 'Германия', delay: 42, warp: false },
-        { outbound: 'hy2-de-warp', label: 'WARP', name: 'Германия · WARP', delay: null, warp: true },
+      { tag: 'de', name: 'Германия · DE', sub: '', delay: 42, cells: [
+        { outbound: 'hy2-de-direct', label: 'Напрямую', name: 'Германия · DE', delay: 42, warp: false },
+        { outbound: 'hy2-de-warp', label: 'WARP', name: 'Германия · DE · WARP', delay: null, warp: true },
       ] },
-      { tag: 'us2', name: 'Соединенные Штаты', sub: 'US2', delay: null, cells: [
-        { outbound: 'hy2-us2-direct', label: 'Напрямую', name: 'Соединенные Штаты', delay: null, warp: false },
-        { outbound: 'hy2-us2-warp', label: 'WARP', name: 'Соединенные Штаты · WARP', delay: 180, warp: true },
+      { tag: 'de2', name: 'Германия · DE2', sub: '', delay: 50, cells: [
+        { outbound: 'hy2-de2-direct', label: 'Напрямую', name: 'Германия · DE2', delay: 50, warp: false },
+      ] },
+      { tag: 'us2', name: 'Соединенные Штаты · US2', sub: '', delay: null, cells: [
+        { outbound: 'hy2-us2-direct', label: 'Напрямую', name: 'Соединенные Штаты · US2', delay: null, warp: false },
+        { outbound: 'hy2-us2-warp', label: 'WARP', name: 'Соединенные Штаты · US2 · WARP', delay: 180, warp: true },
       ] },
     ])
   })
 
   it('колонка без прямого выхода остаётся без задержки в шапке', () => {
     expect(routeColumns([ob('hy2-nl-warp', 70)])).toEqual([
-      { tag: 'nl', name: 'Нидерланды', sub: 'NL', delay: null, cells: [
-        { outbound: 'hy2-nl-warp', label: 'WARP', name: 'Нидерланды · WARP', delay: 70, warp: true },
+      { tag: 'nl', name: 'Нидерланды · NL', sub: '', delay: null, cells: [
+        { outbound: 'hy2-nl-warp', label: 'WARP', name: 'Нидерланды · NL · WARP', delay: 70, warp: true },
       ] },
     ])
   })
@@ -55,6 +60,13 @@ describe('exitLabel', () => {
   it('страна и тег, без страны - только тег', () => {
     expect(exitLabel('nl')).toBe('Нидерланды · NL')
     expect(exitLabel('at')).toBe('Австрия · AT')
+    expect(exitLabel('de2')).toBe('Германия · DE2')
     expect(exitLabel('lab')).toBe('LAB')
+  })
+})
+
+describe('exitName', () => {
+  it('«Обзор» называет экзит как «Маршруты» и карточка клиента, entry - «Entry»', () => {
+    expect(['ru', 'de', 'de2'].map(exitName)).toEqual(['Entry', 'Германия · DE', 'Германия · DE2'])
   })
 })

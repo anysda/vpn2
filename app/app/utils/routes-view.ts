@@ -6,7 +6,7 @@ interface Cell {
   outbound: string
   /** Подпись ячейки: «Напрямую» или «WARP». */
   label: string
-  /** Имя ячейки в выборе выхода и в тостах: «Германия», «Германия · WARP». */
+  /** Имя ячейки в выборе выхода и в тостах: «Германия · DE», «Германия · DE · WARP». */
   name: string
   delay: number | null
   warp: boolean
@@ -26,7 +26,7 @@ const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
 /** Россия первой, экзиты по алфавиту тега. */
 export const ruFirst = (a: string, b: string) => a === 'ru' ? -1 : b === 'ru' ? 1 : a.localeCompare(b)
 
-// Страна по двухбуквенному тегу экзита: «de» → «Германия»; иной тег - как есть.
+// Страна по двухбуквенному тегу экзита: «de», «de2» → «Германия»; иной тег - как есть.
 export function countryName(tag: string): string {
   const code = tag.replace(/[0-9]+$/, '').toUpperCase()
   if (/^[A-Z]{2}$/.test(code)) {
@@ -36,7 +36,7 @@ export function countryName(tag: string): string {
   return tag.toUpperCase()
 }
 
-/** Экзит в выборе и тостах: страна и тег, как колонка «Маршрутов» и карточка «Обзора» («Нидерланды · NL»). */
+/** Экзит везде в панели: страна и тег («Германия · DE2»), два экзита одной страны различимы. */
 export function exitLabel(tag: string): string {
   const name = countryName(tag)
   return name === tag.toUpperCase() ? name : `${name} · ${tag.toUpperCase()}`
@@ -61,11 +61,11 @@ export function routeColumns(outbounds: Outbound[]): Column[] {
   return tags.map((tag) => {
     const { direct, warp } = byTag.get(tag)!
     const ru = tag === 'ru'
-    const name = countryName(tag)
+    const name = exitLabel(tag)
     const cells: Cell[] = []
     if (direct) cells.push({ outbound: direct.name, label: 'Напрямую', name, delay: ruDelay(direct.delay, ru), warp: false })
     if (warp) cells.push({ outbound: warp.name, label: 'WARP', name: `${name} · WARP`, delay: warp.delay, warp: true })
-    return { tag, name, sub: ru ? 'RU · entry' : tag.toUpperCase(), delay: direct ? ruDelay(direct.delay, ru) : null, cells }
+    return { tag, name, sub: ru ? 'entry' : '', delay: direct ? ruDelay(direct.delay, ru) : null, cells }
   })
 }
 

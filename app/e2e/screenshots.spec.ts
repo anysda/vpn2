@@ -270,7 +270,10 @@ async function walk(page: Page, mobile: boolean, onShot: (name: string) => Promi
     page.getByText('Трафика пока нет'), page.getByText('14,9%'),
   ])
 
+  // Ширина выбора экзита - по самому длинному экзиту: снимок после списка выходов.
+  const outbounds = page.waitForResponse('**/api/routes/outbounds')
   await page.goto('/clients')
+  await outbounds
   await expect(page.getByTestId('client-row')).toHaveCount(SEED.length)
   await snap('clients')
   const row = page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) })

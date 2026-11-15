@@ -8,9 +8,9 @@ test.describe('routes', () => {
   const stamp = () => `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
   const PLACEHOLDER = 'netflix.com / *.openai.com / 8.8.8.8/32'
 
-  // Ячейка доски называется по стране экзита: «Нидерланды», «Финляндия · WARP».
+  // Ячейка доски называется страной и тегом экзита: «Нидерланды · NL», «Финляндия · FI · WARP».
   const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
-  const exitName = (tag: string, warp = false) => `${regions.of(tag.toUpperCase())}${warp ? ' · WARP' : ''}`
+  const exitName = (tag: string, warp = false) => `${regions.of(tag.toUpperCase())} · ${tag.toUpperCase()}${warp ? ' · WARP' : ''}`
   const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
 
   function routesForm(page: Page) {
@@ -25,11 +25,11 @@ test.describe('routes', () => {
     return page.getByTestId('route-cell').filter({ has: chip(page, value) })
   }
 
-  /** Ячейка доски по имени, как в выборе выхода: «Германия» или «Германия · WARP». */
+  /** Ячейка доски по имени, как в выборе выхода: «Германия · DE» или «Германия · DE · WARP». */
   function cellNamed(page: Page, name: string) {
-    const [country, warp] = name.split(' · ')
-    return page.getByTestId('route-exit').filter({ has: page.getByTestId('route-exit-head').locator('b', { hasText: exact(country!) }) })
-      .getByTestId('route-cell').filter({ has: page.locator('span', { hasText: exact(warp ? 'WARP' : 'Напрямую') }) })
+    const head = name.replace(/ · WARP$/, '')
+    return page.getByTestId('route-exit').filter({ has: page.getByTestId('route-exit-head').locator('b', { hasText: exact(head) }) })
+      .getByTestId('route-cell').filter({ has: page.locator('span', { hasText: exact(head !== name ? 'WARP' : 'Напрямую') }) })
   }
 
   /** Счётчик POST /api/routes — ровно один запрос на одно добавление. */
@@ -375,7 +375,7 @@ test.describe('mobile-routes', { tag: '@mobile' }, () => {
 
   const stamp = () => `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
   const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
-  const exitName = (tag: string) => regions.of(tag.toUpperCase())!
+  const exitName = (tag: string) => `${regions.of(tag.toUpperCase())} · ${tag.toUpperCase()}`
   const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
   const PLACEHOLDER = 'netflix.com / *.openai.com / 8.8.8.8/32'
 

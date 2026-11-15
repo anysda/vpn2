@@ -21,7 +21,7 @@ watch(() => props.nodes, (list) => {
 
 function subtitle(n: NodeMetric) {
   if (n.tag === 'ru') return [n.host, uptimeShort(n.uptimeSec)].filter(Boolean).join(' · ')
-  return [n.tag.toUpperCase(), props.pings[n.tag] != null ? `${props.pings[n.tag]} мс` : '', n.lanesWarp ? 'WARP' : ''].filter(Boolean).join(' · ')
+  return [props.pings[n.tag] != null ? `${props.pings[n.tag]} мс` : '', n.lanesWarp ? 'WARP' : ''].filter(Boolean).join(' · ') || '\u00A0'
 }
 const openTag = ref<string | null>(null)
 const open = computed({ get: () => openTag.value !== null, set: (v) => { if (!v) openTag.value = null } })

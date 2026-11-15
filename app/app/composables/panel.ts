@@ -1,3 +1,5 @@
+import { failedStatus } from '#shared/error-text'
+
 /** Повтор `fn` каждые `ms`, пока компонент на экране, и сразу при возврате на вкладку. */
 export function usePoll(fn: () => unknown, ms: number) {
   let timer: ReturnType<typeof setInterval> | undefined
@@ -55,10 +57,7 @@ export function usePageSub(text?: () => string) {
   return sub
 }
 
-export function errText(e: unknown, fallback = 'Ошибка'): string {
-  const x = e as { data?: { message?: string }, statusMessage?: string, message?: string } | null
-  return x?.data?.message ?? x?.statusMessage ?? x?.message ?? fallback
-}
+export { errText } from '#shared/error-text'
 
 /** Тост завершённой операции; `warning` сервера (Telegram не ушёл) - жёлтым со своим текстом. */
 export function doneToast(title: string, warning?: string) {
@@ -67,7 +66,7 @@ export function doneToast(title: string, warning?: string) {
 
 type Note = string | { title: string, description?: string, color?: 'success' | 'info' | 'warning' }
 
-/** Действие: ключ занят, пока идёт запрос; ошибка - красным тостом (`fail` объектом - свой заголовок, причина ниже), успех - тостом `done`. */
+/** Действие: ключ занят, пока идёт запрос; ошибка (кроме 401) - красным тостом (`fail` объектом - свой заголовок, причина ниже), успех - тостом `done`. */
 export function useAct() {
   const toast = useToast()
   const busy = ref(new Set<string>())
@@ -80,6 +79,8 @@ export function useAct() {
       return true
     }
     catch (e) {
+      // Конец сессии сообщает один тост плагина fetch с переходом на /login.
+      if (failedStatus(e) === 401) return false
       if (typeof fail === 'object') toast.add({ title: fail.title, description: errText(e, '') || undefined, color: 'error' })
       else toast.add({ title: errText(e, fail), color: 'error' })
       return false

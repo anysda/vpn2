@@ -309,8 +309,8 @@ test.describe('clients-loading-text', () => {
   /**
    * До первого ответа списка клиентов в шапке и в списке пусто без текста: ни
    * «Загрузка…», ни «Пока нет клиентов», ни «0 клиентов». Причину сбоя загрузки
-   * панель пишет сама, по-русски: ошибка сервера с кодом, нет связи, сервер не
-   * ответил вовремя. Текст ответа сервера на страницу не попадает.
+   * панель пишет сама, по-русски: ошибка сервера с кодом, панель недоступна, панель не
+   * ответила вовремя. Текст ответа сервера на страницу не попадает.
    */
 
   const isList = (r: Request) => r.method() === 'GET' && new URL(r.url()).pathname === '/api/clients'
@@ -474,7 +474,7 @@ test.describe('clients-loading-text', () => {
     await page.request.delete(`/api/clients/${id}`)
   })
 
-  test('обрыв соединения на первой загрузке: «нет связи с сервером»', async ({ page, guard }) => {
+  test('обрыв соединения на первой загрузке: «Панель недоступна, проверьте соединение»', async ({ page, guard }) => {
     test.setTimeout(60_000)
     await loginApi(page)
     await page.route(url => url.pathname === '/api/clients', route => isList(route.request())
@@ -483,12 +483,12 @@ test.describe('clients-loading-text', () => {
     await page.goto('/clients')
     await hydrated(page)
     await expect(loadError(page)).toBeVisible({ timeout: 10_000 })
-    await reasonOnly(page, loadError(page), 'нет связи с сервером')
+    await reasonOnly(page, loadError(page), 'Панель недоступна, проверьте соединение')
     await page.unrouteAll({ behavior: 'ignoreErrors' })
     dropAbortNoise(guard)
   })
 
-  test('первый ответ дольше таймаута опроса: «сервер не ответил вовремя»', async ({ page }) => {
+  test('первый ответ дольше таймаута опроса: «Панель не ответила вовремя»', async ({ page }) => {
     test.setTimeout(60_000)
     await loginApi(page)
     await page.route(url => url.pathname === '/api/clients', async (route) => {
@@ -499,7 +499,7 @@ test.describe('clients-loading-text', () => {
     await page.goto('/clients')
     await hydrated(page)
     await expect(loadError(page)).toBeVisible({ timeout: 20_000 })
-    await reasonOnly(page, loadError(page), 'сервер не ответил вовремя')
+    await reasonOnly(page, loadError(page), 'Панель не ответила вовремя')
     await page.unrouteAll({ behavior: 'ignoreErrors' })
   })
 })

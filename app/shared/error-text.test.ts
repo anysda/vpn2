@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { panelErrorText } from './error-text'
+import { errText, failedStatus, panelErrorText } from './error-text'
 
 const sharedDir = fileURLToPath(new URL('.', import.meta.url))
 const appDir = join(sharedDir, '..')
@@ -13,7 +13,7 @@ const table = readJson(new URL('./error-text.json', import.meta.url))
 const readText = (rel: string) => readFileSync(join(appDir, '..', rel), 'utf8')
 
 const panelPairs: Record<string, string> = {
-  Unauthorized: 'Нужно войти',
+  Unauthorized: 'Сессия завершена, войдите заново',
   unauthorized: 'Неверный секрет бота',
   not_found: 'Не найдено',
   invalid_id: 'Неверный идентификатор',
@@ -26,7 +26,9 @@ const panelPairs: Record<string, string> = {
   wg_public_host_not_configured: 'Не задан публичный адрес WireGuard в конфиге',
   ovpn_public_host_not_configured: 'Не задан публичный адрес OpenVPN в конфиге',
   entry_host_not_configured: 'Не задан публичный адрес сервера в конфиге',
-  insert_failed: 'Не удалось сохранить запись'
+  insert_failed: 'Не удалось сохранить запись',
+  offline: 'Панель недоступна, проверьте соединение',
+  timeout: 'Панель не ответила вовремя'
 }
 
 const panelTriples: [string, string, string][] = [
@@ -49,8 +51,8 @@ describe('единая таблица текстов ошибок', () => {
     expect(Object.keys(table).sort()).toEqual(['bot', 'botFallback', 'panel', 'plural'])
   })
 
-  it('panel совпадает с 14 парами панели', () => {
-    expect(Object.keys(panelPairs).length).toBe(14)
+  it('panel совпадает с 16 парами панели', () => {
+    expect(Object.keys(panelPairs).length).toBe(16)
     expect(table.panel).toEqual(panelPairs)
   })
 
@@ -116,5 +118,30 @@ describe('единая таблица текстов ошибок', () => {
       }
     }
     expect(found, `литералы текстов: ${found.join('; ')}`).toEqual([])
+  })
+})
+
+describe('errText: текст ошибки запроса для человека', () => {
+  const fetchError = (status?: number, data?: unknown, message = '[GET] "/api/clients/1": <no response> Failed to fetch') =>
+    Object.assign(new Error(message), { name: 'FetchError', data, response: status ? { status } : undefined, statusMessage: undefined })
+  const nuxtError = (cause: Error) => Object.assign(new Error('x'), { name: 'NuxtError', statusCode: 500, cause })
+
+  it('без ответа - панель недоступна, без [GET] и английского', () => {
+    expect(errText(fetchError())).toBe('Панель недоступна, проверьте соединение')
+    expect(errText(nuxtError(fetchError()))).toBe('Панель недоступна, проверьте соединение')
+  })
+  it('таймаут - панель не ответила вовремя', () => {
+    expect(errText(fetchError(undefined, undefined, '[GET] "/api/x": <no response> The operation was aborted due to timeout'))).toBe('Панель не ответила вовремя')
+  })
+  it('401 - один текст о конце сессии, что бы ни прислал сервер', () => {
+    expect(errText(fetchError(401, { message: 'Нужно войти' }))).toBe('Сессия завершена, войдите заново')
+    expect(failedStatus(nuxtError(fetchError(401)))).toBe(401)
+  })
+  it('русский текст сервера - как есть, английский - запасной текст', () => {
+    expect(errText(fetchError(400, { message: 'Проверьте поле «Имя»' }))).toBe('Проверьте поле «Имя»')
+    expect(errText(fetchError(500, { message: 'Internal Server Error' }), 'Ошибка сохранения')).toBe('Ошибка сохранения')
+  })
+  it('своя ошибка страницы - свой текст', () => {
+    expect(errText(new Error('Дата — в формате ДД.ММ.ГГГГ'))).toBe('Дата — в формате ДД.ММ.ГГГГ')
   })
 })

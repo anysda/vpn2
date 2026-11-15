@@ -20,7 +20,7 @@ const TEXT: Record<string, string> = {
   ACCOUNT_TEMPORARILY_LOCKED: 'Слишком много неверных кодов, попробуйте позже',
   TOO_MANY_REQUESTS: 'Слишком много попыток, попробуйте позже',
   UNAUTHORIZED: errorText.panel.Unauthorized,
-  SESSION_EXPIRED: 'Сессия завершена, войдите заново',
+  SESSION_EXPIRED: errorText.panel.Unauthorized,
 }
 
 /**

@@ -124,7 +124,7 @@ test.describe('clients', () => {
       // Без сессии.
       const anon = await request.get('/api/clients')
       expect(anon.status()).toBe(401)
-      expect(await anon.json()).toMatchObject({ statusMessage: 'Unauthorized', message: 'Нужно войти' })
+      expect(await anon.json()).toMatchObject({ statusMessage: 'Unauthorized', message: 'Сессия завершена, войдите заново' })
     })
   })
 

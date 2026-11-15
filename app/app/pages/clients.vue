@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import '~/assets/css/clients.css'
+import { failedStatus } from '#shared/error-text'
 import { inDaysRu, plural } from '#shared/plural'
 import type { Client } from '~/composables/useClients'
 
@@ -25,9 +26,9 @@ const listed = ref(false)
 const loadError = ref('')
 watch(status, (s) => {
   if (s === 'success') [listed.value, loadError.value] = [true, '']
-  // Nuxt ставит 500 и обрыву связи: код - только у ответа сервера в исходной ошибке.
-  const code = (error.value?.cause as { response?: { status?: number } } | undefined)?.response?.status
-  if (s === 'error') loadError.value = code ? `ошибка сервера (код ${code})` : /TimeoutError|timed? ?out/i.test(String(error.value)) ? 'сервер не ответил вовремя' : 'нет связи с сервером'
+  // Текст ответа сервера сюда не идёт: только код; без ответа и 401 - общие тексты панели.
+  const code = failedStatus(error.value)
+  if (s === 'error') loadError.value = code && code !== 401 ? `ошибка сервера (код ${code})` : errText(error.value)
 }, { flush: 'sync' })
 
 const subtitle = computed(() => {

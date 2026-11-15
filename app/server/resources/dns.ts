@@ -47,7 +47,7 @@ const Setting = z.union([
 ])
 const badSetting = (message: string) => createError({ statusCode: 422, statusMessage: 'bad_setting', message })
 /** Список скачивает сам AdGuard: его отказ - русским текстом. */
-const listCall = (path: string, body: object) => agh(path, { method: 'POST', body, timeout: 60_000 }).catch((e: { statusMessage?: string, message?: string }) => {
+const listCall = (path: string, body: Record<string, unknown>) => agh(path, { method: 'POST', body, timeout: 60_000 }).catch((e: { statusMessage?: string, message?: string }) => {
   if (e.statusMessage !== 'agh_rejected') throw e
   throw createError({ statusCode: 400, statusMessage: 'agh_rejected', message: listError(e.message ?? '') })
 })

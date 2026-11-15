@@ -3,7 +3,7 @@ import os
 import time
 
 from aiohttp import web
-from telegram.error import InvalidToken
+from telegram.error import BadRequest, InvalidToken, NetworkError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from . import api, config, events, handlers, monitor
@@ -56,14 +56,25 @@ def run() -> None:
     log.info('Event server on 127.0.0.1:%d', config.EVENT_PORT)
     watchers.extend(loop.create_task(job()) for job in (restart_on_new_runtime, api.poll_watchdog, monitor.monitor_loop))
     tgapp = Application.builder().bot(api.bot).post_init(started).build()
+    tgapp.add_error_handler(log_error)
     tgapp.add_handler(CommandHandler(handlers.COMMANDS, handlers.dispatch))
     tgapp.add_handler(CallbackQueryHandler(handlers.dispatch))
     tgapp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.dispatch))
     try:
-        tgapp.run_polling(drop_pending_updates=True, bootstrap_retries=-1, close_loop=False)
+        # Updates that came in during a restart get their answer after the start.
+        tgapp.run_polling(bootstrap_retries=-1, close_loop=False)
     finally:
         # The port is free again before invalid_token_pause; the stopped loop no longer runs the watchers.
         loop.run_until_complete(runner.cleanup())
+
+
+async def log_error(_update, context) -> None:
+    """A broken path to Telegram is one line: the poller retries by itself."""
+    error = context.error
+    if isinstance(error, NetworkError) and not isinstance(error, BadRequest):
+        log.warning('нет связи с Telegram: %s', error)
+    else:
+        log.error('ошибка бота', exc_info=error)
 
 
 async def started(tgapp: Application) -> None:

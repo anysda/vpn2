@@ -75,8 +75,8 @@ def test_backup_warning_codes(script, code, said, tmp_path, monkeypatch, capfd):
 @pytest.mark.parametrize('sig, code', [(signal.SIGTERM, 143), (signal.SIGINT, 130)])
 def test_backup_streams_and_signal_mid_copy_is_a_failure(tree, tmp_path, sig, code):  # noqa: F811
     script = tmp_path / 'backup'
-    # Ловушка до первой строки: сигнал между echo и запуском sleep иначе ждал бы конца sleep.
-    script.write_text("#!/bin/sh\ntrap 'kill $!; exit 1' INT TERM\nsleep 30 &\necho 'копирую архив'\nwait\n")
+    # sleep без фона: сигнал группе застаёт sh или уже sleep, ни один не переживает его.
+    script.write_text("#!/bin/sh\necho 'копирую архив'\nexec sleep 30\n")
     script.chmod(0o755)
     runner = RUNNER.replace('sys.exit(', f"main.report.BACKUP = {str(script)!r}\nsys.exit(")
     with subprocess.Popen([sys.executable, '-B', '-c', runner, 'backup'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,

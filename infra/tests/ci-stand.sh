@@ -206,12 +206,13 @@ systemctl stop fwupd-refresh.timer 2>/dev/null || true
 # --error-on=any - иначе update с ошибкой зеркала возвращает 0. timeout - жёсткий
 # предел на случай, когда прокси держит соединение без ответа; по пределу попытка
 # неудачна и идёт обычным путём (вторая попытка, затем старый mtime списков).
-# Обычный update идёт до 20 с, 60 с - тройной запас; при зависшем прокси две попытки стоят две минуты, а не десять.
+# Обычный update идёт 5-7 с, с холодным кэшем прокси до 20 с; предел 30 с: зависший
+# прокси держит apt деплоя полминуты, а не минуту с лишним.
 n=1; ok=
 while [ "$n" -le 2 ]; do
   echo "попытка $n" >>/var/log/vpn2-ci-warm-update.log
-  if timeout 60 apt-get -q --error-on=any -o Acquire::http::Timeout=30 -o Acquire::Retries=1 update >>/var/log/vpn2-ci-warm-update.log 2>&1; then ok=1; break; fi
-  [ "$n" -lt 2 ] && sleep 10
+  if timeout 30 apt-get -q --error-on=any -o Acquire::http::Timeout=15 -o Acquire::Retries=1 update >>/var/log/vpn2-ci-warm-update.log 2>&1; then ok=1; break; fi
+  [ "$n" -lt 2 ] && sleep 2
   n=$((n + 1))
 done
 if [ -z "$ok" ]; then

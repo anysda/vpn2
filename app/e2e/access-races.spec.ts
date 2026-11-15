@@ -309,6 +309,37 @@ test('VPN2-468: отзыв между проверкой приглашения 
   }
 })
 
+test('VPN2-957: приглашение привязанного клиента из другого Telegram - отказ и запись в «Событиях»', async () => {
+  const { app, schema, db, route, useBot, close } = await panel()
+  try {
+    useBot()
+    const journal: Array<Record<string, unknown>> = []
+    app.patch('app/server/utils/bot.ts', {
+      recordEvent: async ({ type, title, detail, object }: Record<string, unknown>) => { journal.push({ type, title, detail, object }) },
+      joinDetail: (...parts: unknown[]) => parts.filter(Boolean).join(' · '),
+    })
+    const link = route('clients POST /bot/link')
+    const [client] = await db.insert(schema.clients).values({ name: 'invite', password: 'forwarded-invite' }).returning()
+    const object = `client:${client!.id}`
+    const first = await call(link, { body: { password: 'forwarded-invite', chatId: 1, username: 'owner' } })
+    const again = await call(link, { body: { password: 'forwarded-invite', chatId: 1, username: 'owner' } })
+    const stranger = await call(link, { body: { password: 'forwarded-invite', chatId: 2, username: 'stranger' } })
+    const [after] = await db.select().from(schema.clients).where(eq(schema.clients.id, client!.id))
+    console.log('приглашение chat 1, chat 1, chat 2:', first.status, again.status, stranger.status, { tgChatId: after!.tgChatId }, journal)
+    expect([first.status, again.status]).toEqual([200, 200])
+    expect(stranger).toMatchObject({ status: 404, body: { statusMessage: 'invalid_password' } })
+    expect(after).toMatchObject({ tgChatId: 1, tgUsername: 'owner', password: 'forwarded-invite' })
+    expect(journal).toEqual([
+      { type: 'client_tg_linked', object, title: 'Telegram привязан · invite', detail: '@owner' },
+      { type: 'client_tg_relink_refused', object, title: 'Отказ в перепривязке Telegram · invite',
+        detail: 'приглашение открыто из другого Telegram (@stranger) · клиент уже привязан' },
+    ])
+  }
+  finally {
+    close()
+  }
+})
+
 test('VPN2-468: отзыв бота во время добавления устройства через бота не создаёт устройство', async () => {
   const { app, schema, db, route, useBot, close } = await panel({ ovpnEnabled: true })
   try {

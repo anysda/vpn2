@@ -1,5 +1,5 @@
 import { createClient, updateClient } from '../utils/client-ops'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, isNull, ne, or } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
@@ -149,22 +149,39 @@ export default {
     return botClientView((await clientByChat(chatId)).id)
   }),
 
-  /** Пароль перепроверяется тем же UPDATE, что пишет привязку: отзыв между поиском и записью меняет пароль. */
+  /**
+   * Приглашение привязывает только непривязанного клиента: перепривязка - после «Отозвать доступ к боту».
+   * Пароль и привязка перепроверяются тем же UPDATE, что пишет привязку: отзыв или чужая привязка
+   * между поиском и записью его не пропускают.
+   */
   'POST /bot/link': bot(async (event) => {
     const body = await readBodyAs(event, Link)
     const db = useDb()
-    const [found] = await db.select({ id: clients.id }).from(clients).where(eq(clients.password, body.password)).limit(1)
+    const [found] = await db.select({ id: clients.id, name: clients.name, tgChatId: clients.tgChatId })
+      .from(clients).where(eq(clients.password, body.password)).limit(1)
     if (!found) throw invalidPassword()
-    const clientId = await db.transaction(async (tx) => {
-      const [linked] = await tx.update(clients)
+    const linked = found.tgChatId === null || found.tgChatId === body.chatId ? await db.transaction(async (tx) => {
+      const [row] = await tx.update(clients)
         .set({ tgChatId: body.chatId, tgUsername: body.username ?? null, updatedAt: new Date() })
-        .where(and(eq(clients.id, found.id), eq(clients.password, body.password)))
+        .where(and(eq(clients.id, found.id), eq(clients.password, body.password),
+          or(isNull(clients.tgChatId), eq(clients.tgChatId, body.chatId))))
         .returning({ id: clients.id })
-      if (!linked) throw invalidPassword()
       // Этот Telegram мог быть привязан к другому клиенту - там отвязывается.
-      await tx.update(clients).set({ tgChatId: null }).where(and(eq(clients.tgChatId, body.chatId), ne(clients.id, linked.id)))
-      return linked.id
-    }, { behavior: 'immediate' })
-    return botClientView(clientId)
+      if (row) await tx.update(clients).set({ tgChatId: null }).where(and(eq(clients.tgChatId, body.chatId), ne(clients.id, row.id)))
+      return !!row
+    }, { behavior: 'immediate' }) : false
+    const who = body.username ? `@${body.username}` : `chat ${body.chatId}`
+    if (!linked) {
+      const [now] = await db.select({ password: clients.password }).from(clients).where(eq(clients.id, found.id))
+      if (now?.password !== body.password) throw invalidPassword()
+      await recordEvent({ type: 'client_tg_relink_refused', level: 'warn', object: `client:${found.id}`, actor: BOT_ACTOR,
+        title: `Отказ в перепривязке Telegram · ${found.name}`, detail: joinDetail(`приглашение открыто из другого Telegram (${who})`, 'клиент уже привязан') })
+      throw invalidPassword()
+    }
+    if (found.tgChatId !== body.chatId) {
+      await recordEvent({ type: 'client_tg_linked', level: 'info', object: `client:${found.id}`, actor: BOT_ACTOR,
+        title: `Telegram привязан · ${found.name}`, detail: who })
+    }
+    return botClientView(found.id)
   }),
 }

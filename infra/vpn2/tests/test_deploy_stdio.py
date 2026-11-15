@@ -53,8 +53,11 @@ def test_guard_ssh_leaves_shared_output_blocking(tmp_path, mode, refused):
     venv.mkdir(parents=True)
     fakes.mkdir()
     (venv / 'ansible-playbook').symlink_to(vpn_roles.ansible_playbook())
-    # Процесс плеев - интерпретатор этого ansible-playbook, как python3 venv деплоя.
-    (venv / 'python3').symlink_to(Path(vpn_roles.ansible_playbook()).read_text().split('\n', 1)[0][2:].split()[0])
+    # Процесс плеев - интерпретатор этого ansible-playbook, как python3 venv деплоя; не ссылкой:
+    # venv python узнаёт свой venv по пути запуска.
+    python = Path(vpn_roles.ansible_playbook()).read_text().split('\n', 1)[0][2:].strip()
+    (venv / 'python3').write_text(f'#!/bin/sh\nexec {python} "$@"\n')
+    (venv / 'python3').chmod(0o755)
     (fakes / 'ssh').write_text(SSH.replace('PYTHON', sys.executable))
     (fakes / 'ssh').chmod(0o755)
     env = {**os.environ, 'VPN2_ROOT': str(tmp_path / 'root'), 'FAKE_WORK': str(tmp_path), 'PYTHONPATH': str(ROOT / 'infra/vpn2/src'),

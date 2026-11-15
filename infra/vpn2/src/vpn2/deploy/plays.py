@@ -4,6 +4,7 @@
 окружением и stdout/stderr, что дал бы ему Popen; дескрипторы вывода приходят через сокет.
 Клиент (Plays) идёт системным python3 деплоя, процесс плеев - python3 из venv (запуск этого файла).
 """
+import atexit
 import contextlib
 import json
 import os
@@ -123,6 +124,8 @@ def play(sock, script, request, fds, cache, site):
     """В fork: консольный ansible-playbook как отдельный процесс, код - кодом выхода."""
     signal.signal(signal.SIGINT, signal.default_int_handler)
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    # На выходе - только свои atexit плея (Mitogen гасит мультиплексоры): общие остаются процессу плеев.
+    atexit._clear()
     sock.close()
     null = os.open(os.devnull, os.O_RDONLY)
     for fd, target in ((null, 0), *zip(fds, (1, 2))):
@@ -155,6 +158,7 @@ def play(sock, script, request, fds, cache, site):
         import traceback
         traceback.print_exc()
         code = 1
+    atexit._run_exitfuncs()
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(code)

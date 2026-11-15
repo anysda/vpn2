@@ -127,19 +127,19 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
     </section>
 
     <section data-testid="route-board" class="grid gap-3" :style="mobile ? undefined : { gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(min-content,1fr))` }">
-      <div v-for="col in columns" :key="col.tag" data-testid="route-exit" :data-tag="col.tag" class="card flex flex-col gap-2.5">
+      <div v-for="col in columns" :key="col.tag" data-testid="route-exit" :data-tag="col.tag" class="card" :class="mobile ? 'flex flex-col gap-2.5' : 'row-span-3 grid grid-cols-[minmax(min-content,1fr)] grid-rows-subgrid gap-y-2.5'">
         <div data-testid="route-exit-head" class="flex flex-wrap items-start justify-between gap-x-2">
           <div class="min-w-min flex-[1_1_0]"><b class="block font-medium">{{ col.name }}</b><small class="text-xs text-(--t3)">{{ col.sub }}</small></div>
           <span class="flex-none text-2xl font-extralight whitespace-nowrap" :class="col.delay === null ? 'text-(--red-t)' : rtc(col.delay)">{{ col.delay ?? '—' }}<small class="text-xs">мс</small></span>
         </div>
         <div
-          v-for="cell in col.cells" :key="cell.outbound" data-testid="route-cell" :data-outbound="cell.outbound" class="flex flex-col [contain:inline-size] gap-1.5 rounded-xl border border-dashed p-2.5"
+          v-for="cell in col.cells" :key="cell.outbound" data-testid="route-cell" :data-outbound="cell.outbound" class="flex flex-col [contain:inline-size] gap-1.5 rounded-xl border border-dashed p-2.5 [&:nth-child(2):last-child]:row-span-2"
           :class="over === cell.outbound ? 'border-(--line2) bg-(--sunk2)' : 'border-(--line) bg-(--sunk)'"
           @dragover.prevent="over = cell.outbound" @drop.prevent="drop(cell.outbound)">
           <div class="flex justify-between gap-2 text-xs text-(--t3)">
             <span :class="{ 'text-(--orange)': cell.warp }">{{ cell.label }}</span><i class="not-italic" :class="rtc(cell.delay)">{{ cell.delay ?? '—' }} мс</i>
           </div>
-          <div data-testid="route-rules" class="flex max-h-[146px] flex-col gap-1.5 overflow-y-auto max-md:max-h-none">
+          <div data-testid="route-rules" class="flex h-[146px] flex-col gap-1.5 overflow-y-auto max-md:h-auto">
             <div
               v-for="rule in rulesFor(cell.outbound)" :key="rule.id" data-testid="route-rule" :data-id="rule.id" :data-hit="checked?.routeId === rule.id || undefined" :draggable="!mobile" :role="mobile ? 'button' : undefined"
               class="group flex h-8 flex-none cursor-grab items-center gap-2 rounded-lg border bg-(--chip) px-2.5 text-xs"

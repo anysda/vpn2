@@ -919,7 +919,10 @@ for c in sorted(json.load(urllib.request.urlopen(req, timeout=5))['connections']
 EOF
 )
 DOWNLOAD_HOST=speed.cloudflare.com
-DOWNLOAD_BYTES=40000000
+# Загрузка с запасного TCP идёт 500 КиБ/с и живёт дольше возврата канала на hy2
+# (TCP_RETURN_S и подъём QUIC) с запасом 40 с: её нога видна в /connections.
+DOWNLOAD_RATE=500k
+DOWNLOAD_BYTES=$(( 512000 * (TCP_RETURN_S + 40) ))
 
 # Запрос через экзит раз в секунду: время конца запроса и код ответа.
 CURL_LOOP=$(cat <<'EOF'
@@ -999,7 +1002,7 @@ cmd_udp_cut() {
     check "verify «$EXIT_TAG: транспорт hy2, не запасной TCP» при обрыве красная: $verdict" test "${verdict%% *}" = 1
     # Загрузка, начатая на запасном TCP, обязана пережить возврат канала на hy2.
     ssh_node "$ENTRY" 'rm -f /root/download-tcp.out /root/download-hy2.out'
-    download download-tcp 500k
+    download download-tcp $DOWNLOAD_RATE
     log "загрузка $DOWNLOAD_BYTES байт через экзит на запасном TCP: $(date -u +%T)"
   fi
   sleep $(( SECONDS - cut_at < UDP_CUT_HOLD_S ? UDP_CUT_HOLD_S - SECONDS + cut_at : 0 ))

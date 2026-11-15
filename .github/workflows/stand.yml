@@ -3,9 +3,9 @@ name: stand
 # Семь заданий идут параллельно (матрица Ubuntu 24.04 и 26.04).
 # deploy: чистая установка деревом ветки, 99-verify с настоящим трафиком
 #   WireGuard/OpenVPN/IKEv2; дальше на своём стенде одна из двух частей:
-#   again - слепок против эталона и повторный деплой (слепок тот же с допусками
-#   ignore-again.yml); restore - бот с поддельным токеном (панель жива, бот на
-#   паузе) и restore эталонного архива бэкапа.
+#   again - слепок против эталона, повторный деплой (слепок тот же с допусками
+#   ignore-again.yml) и бот с поддельным токеном (панель жива, бот на паузе);
+#   restore - restore эталонного архива бэкапа.
 # upgrade: выпуск UPGRADE_FROM, поставленный по манифесту (на dev диски узлов
 #   после установки живут в кэше, ВМ грузятся с них), обновление деревом ветки, слепок
 #   как у чистой установки с допусками ignore-upgrade.yml. С прошлого выпуска,
@@ -69,7 +69,7 @@ jobs:
         run: python3 .github/reuse.py stand
 
   deploy:
-    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой' || 'бот и restore' }}"
+    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой и бот' || 'restore' }}"
     needs: reuse
     if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
@@ -236,9 +236,9 @@ jobs:
           done
           exit "$rc"
 
-      # Сценарий 5 карточки.
+      # Сценарий 5 карточки: после слепков, токен бота их не трогает.
       - name: бот с поддельным токеном
-        if: matrix.part == 'restore'
+        if: matrix.part == 'again'
         run: sudo infra/tests/ci-stand.sh bot-fake-token
 
       # Сценарий 3 карточки: restore эталонного архива и сверка с эталоном.

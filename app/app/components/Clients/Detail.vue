@@ -36,7 +36,7 @@ async function load() {
     if (my !== version) return
     // Клиента уже нет (удалён здесь, в другой вкладке или другим админом): страница выберет следующего.
     if ((e as { statusCode?: number }).statusCode === 404) emit('gone', props.clientId)
-    else toast.add({ title: errText(e, 'Не удалось загрузить клиента'), color: 'error' })
+    else if (!isSessionGone(e)) toast.add({ title: errText(e, 'Не удалось загрузить клиента'), color: 'error' })
   }
 }
 watch(() => props.clientId, load, { immediate: true })

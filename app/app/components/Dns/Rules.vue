@@ -10,7 +10,7 @@ const q = ref('')
 const typed = useDebounced(q, 250)
 const name = computed(() => typed.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0] ?? '')
 const { data: res, error, refresh: check } = useFetch('/api/dns/check', { key: 'dns-check', query: { name }, server: false, immediate: false, watch: [name] })
-watch(error, e => e && e.statusCode !== 400 && toast.add({ title: errText(e), color: 'error' }))
+watch(error, e => e && e.statusCode !== 400 && !isSessionGone(e) && toast.add({ title: errText(e), color: 'error' }))
 
 // AdGuard пересобирает фильтры в фоне и ещё ~0,5 с отвечает по старым правилам:
 // домен, введённый до или сразу после «Применить», проверяется повторно до конца этого окна.

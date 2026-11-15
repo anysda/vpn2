@@ -59,6 +59,9 @@ export function usePageSub(text?: () => string) {
 
 export { errText }
 
+/** 401 закрытой ручки: о конце сессии уже сказал плагин fetch одним тостом с переходом на /login. */
+export const isSessionGone = (e: unknown) => failedStatus(e) === 401 && errText(e) === SESSION_GONE
+
 /** Тост завершённой операции; `warning` сервера (Telegram не ушёл) - жёлтым со своим текстом. */
 export function doneToast(title: string, warning?: string) {
   return warning ? { title, description: warning, color: 'warning' as const } : { title, color: 'success' as const }
@@ -79,8 +82,7 @@ export function useAct() {
       return true
     }
     catch (e) {
-      // Конец сессии сообщает один тост плагина fetch с переходом на /login.
-      if (failedStatus(e) === 401 && errText(e) === SESSION_GONE) return false
+      if (isSessionGone(e)) return false
       if (typeof fail === 'object') toast.add({ title: fail.title, description: errText(e, '') || undefined, color: 'error' })
       else toast.add({ title: errText(e, fail), color: 'error' })
       return false

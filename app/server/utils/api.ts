@@ -85,7 +85,12 @@ export const FIELD_LABELS: Record<string, string> = {
   totpCode: 'Код',
   expiresAt: 'Срок действия',
   deviceLimit: 'Лимит устройств',
+  bot_token: 'Token',
+  chat_id: 'Chat ID',
+  admin_username: 'Никнейм админа бота',
 }
+// Чего ждёт поле, когда по подписи не понять.
+const FIELD_HINTS: Record<string, string> = { chat_id: 'только цифры' }
 
 /** Тело запроса по схеме zod: код в `statusMessage`, русский текст в `message`. */
 export async function readBodyAs<T>(event: Parameters<typeof readBody>[0], schema: ZodType<T>): Promise<T> {
@@ -99,11 +104,13 @@ export async function readBodyAs<T>(event: Parameters<typeof readBody>[0], schem
   }
   const r = schema.safeParse(body)
   if (r.success) return r.data
-  const key = r.error.issues[0]?.path[0]
+  const issue = r.error.issues[0]
+  const key = issue?.path[0] === undefined ? undefined : String(issue.path[0])
+  const hint = key && (FIELD_HINTS[key] ?? (issue!.code === 'too_big' && issue!.origin === 'string' ? `до ${issue!.maximum} символов` : ''))
   throw createError({
     statusCode: 400,
     statusMessage: 'invalid_body',
-    message: key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${FIELD_LABELS[String(key)] ?? String(key)}»`,
+    message: key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${FIELD_LABELS[key] ?? key}»${hint ? ` - ${hint}` : ''}`,
   })
 }
 

@@ -453,7 +453,7 @@ jobs:
         run: |
           set -o pipefail
           # shellcheck disable=SC2086
-          python -m pytest infra/vpn2/tests -q -n auto --dist loadgroup -rs $COVERAGE | tee /tmp/pytest.log
+          python -m pytest infra/vpn2/tests -q -n auto --dist loadgroup -rs --durations=40 $COVERAGE | tee /tmp/pytest.log
           # Тест без openvpn, wg, Caddy или sudo пропускается: в CI это отказ, а не зелёный прогон.
           ! grep -E 'SKIPPED.*(needs |cannot be made here)' /tmp/pytest.log
 

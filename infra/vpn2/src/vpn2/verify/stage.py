@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 
@@ -573,20 +574,34 @@ def basic(stage):
 
 
 def youtube(stage):
-    """Выключенный YouTube - штатный пропуск; включённый требует A/B-проверку и запасной маршрут."""
+    """Выключенный YouTube - штатный пропуск; включённый требует A/B-проверку и запасной маршрут.
+
+    Пробы видеопотока идут своим потоком, пока проверяется остальное; итог пишет возвращённая функция.
+    """
     route = stage.get('YT_ROUTE', 'off')
     if route != 'zapret':
-        stage.line(f'yt-zapret: пропущен (youtube.route={route})')
-        return
-    stage.check('yt-zapret: A/B-проверка обхода', command, YT_CHECK, allow_unmeasured=True)
-    # Судит свежая проба: прошлый успех таймера не видит поломку после него. Разовый таймаут
-    # CDN сторож поломкой не считает (HITS подряд) - после плохой пробы ещё одна.
-    for _ in range(2):
-        command('systemctl', 'start', 'anysda-yt-failover.service')
-        if not yt_status()[0]:
-            break
-    stage.check('yt-failover: selector и последняя видеопроба', yt_status, allow_unmeasured=True)
-    stage.check('yt-failover: таймер active', service, 'anysda-yt-failover.timer')
+        return lambda: stage.line(f'yt-zapret: пропущен (youtube.route={route})')
+    found = {}
+
+    def probe():
+        found['ab'] = command(YT_CHECK)
+        # Судит свежая проба: прошлый успех таймера не видит поломку после него. Разовый таймаут
+        # CDN сторож поломкой не считает (HITS подряд) - после плохой пробы ещё одна.
+        for _ in range(2):
+            command('systemctl', 'start', 'anysda-yt-failover.service')
+            if not yt_status()[0]:
+                break
+
+    worker = threading.Thread(target=probe, daemon=True)
+    worker.start()
+
+    def record():
+        worker.join()
+        stage.check('yt-zapret: A/B-проверка обхода', lambda: found.get('ab', (1, 'проба не выполнилась')),
+                    allow_unmeasured=True)
+        stage.check('yt-failover: selector и последняя видеопроба', yt_status, allow_unmeasured=True)
+        stage.check('yt-failover: таймер active', service, 'anysda-yt-failover.timer')
+    return record
 
 
 def entry(stage):
@@ -594,6 +609,7 @@ def entry(stage):
                 {'ru', *stage.exits}, stage.get('VERIFY_SCRAPE_TIMEOUT', '30'), stage.get('VERIFY_SCRAPE_INTERVAL', '1'))
     if not stage.exits:
         stage.fail('ssh экзитов: EXIT_TAGS пуст — нет узлов для проверки')
+    videos = youtube(stage)
     curl = ('curl', '-fsS', '--max-time', '5', '-o', '/dev/null')
     stage.checks([
         *((f'ssh {tag} через hy2-mgmt', exit_ssh, tag, stage.env.get('SSH_PROBE_TIMEOUT', '30')) for tag in stage.exits)])
@@ -617,7 +633,6 @@ def entry(stage):
     stage.checks([('tproxy wd: таймер active', service, 'anysda-tproxy-watchdog.timer'),
                   ('networkd: drop-in 60-anysda-foreign.conf существует',
                    lambda: (0 if NETWORKD_DROPIN.is_file() else 1, ''))])
-    youtube(stage)
     stage.checks([
         *((f'{name} active', service, name)
           for name in ('wg-quick@wg0', 'openvpn-server@server', 'strongswan-starter', 'anysda-ikev2-routing')),
@@ -629,6 +644,7 @@ def entry(stage):
         ('ikev2 sync: таймер active', service, 'anysda-ikev2-sync.timer')])
     stage.traffic()
     stage.check('ikev2 sync: статус обновлён менее 120 секунд назад', ikev2_status)
+    videos()
     for tag in stage.exits:
         if stage.env.get(tag.upper().replace('-', '_') + '_HY2_INSECURE') == '1':
             stage.warning(f'{tag}: exits[].hy2_insecure: true — сертификат экзита не проверяется, '

@@ -33,9 +33,6 @@ ENTRY = [
     'tproxy: xfrm0 цепочка и TCP/UDP правила',
     'tproxy wd: таймер active',
     'networkd: drop-in 60-anysda-foreign.conf существует',
-    'yt-zapret: A/B-проверка обхода',
-    'yt-failover: selector и последняя видеопроба',
-    'yt-failover: таймер active',
     'wg-quick@wg0 active',
     'openvpn-server@server active',
     'strongswan-starter active',
@@ -48,6 +45,9 @@ ENTRY = [
     'ikev2 sync: таймер active',
     'трафик: контрольный клиент',
     'ikev2 sync: статус обновлён менее 120 секунд назад',
+    'yt-zapret: A/B-проверка обхода',
+    'yt-failover: selector и последняя видеопроба',
+    'yt-failover: таймер active',
     'аварийка: отправка снимка клиентов enabled и active',
 ]
 EXIT = [
@@ -286,6 +286,6 @@ def test_youtube_failover_fresh_probe(tmp_path, monkeypatch, before, fresh, rc):
         def check(label, probe, *args, **_options):
             results[label] = probe(*args)[0]
 
-    stage.youtube(Fake)
+    stage.youtube(Fake)()
     assert results['yt-failover: selector и последняя видеопроба'] == rc
     assert next(probes, None) is None

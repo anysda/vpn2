@@ -43,7 +43,7 @@ class Deploy:
         self.tmp = Path(tempfile.mkdtemp())
         self.stages = stages.load(SITE)
         self.stage_log, self.verify_warnings, self.deploy_warnings, self.skipped = [], [], [], []
-        self.mutating = self.opened = self.guard_warned = self.closing = False
+        self.mutating = self.opened = self.staged = self.guard_warned = self.closing = self.old_layout = False
         self.children, self.beat, self.beats, self.nodes, self.logins = set(), None, 0, {}, {}
         self.outside = self.pulled = False
         self.lock = threading.Lock()
@@ -172,17 +172,12 @@ class Deploy:
         stop.set()
         thread.join()
 
-    def cleanup(self, nodes):
-        """Выкладка стадии с экзитов: ни пакета, ни манифеста между стадиями."""
-        return self.each([node for node in nodes if node != 'ru'], lambda _node: 'rm -rf /tmp/anysda')
-
     def guard_finish(self, stage, nodes):
         """Сторож снят новым входом; узел, что не пускает, ждёт окно сторожа: он вернёт фаервол, и вход появится."""
         self.stop_beat()
         deadline, left, code = time.time() + GUARD_WINDOW + 30, nodes.split(','), 0
         while True:
-            done = self.each(left, lambda node: f'python3 -I {GUARD}/fwguard.py disarm {stage}'
-                             + ('' if node == 'ru' else '; code=$?; rm -rf /tmp/anysda; exit $code'), show=True)
+            done = self.each(left, lambda _node: f'python3 -I {GUARD}/fwguard.py disarm {stage}', show=True)
             code = code or any(found not in (0, 255) for found in done.values())
             left = [node for node, found in done.items() if found == 255]
             if not left or time.time() >= deadline:
@@ -192,24 +187,36 @@ class Deploy:
             warn(f'после стадии {stage} нода не пускает новые ssh-входы дольше окна сторожа - проверь вход руками')
         return 1 if code or left else 0
 
-    def stage_once(self, stage, nodes, env=None):
-        """Одна стадия на узлах: подготовка, сторож, плей стадии, снятие сторожа."""
+    def bundle(self):
+        """Пакет vpn2 для /tmp/anysda узлов, один на запуск."""
+        path = self.tmp / 'vpn2.tgz'
+        if not path.exists() and subprocess.run(['tar', '-C', INFRA / 'vpn2/src', '--exclude=__pycache__', '-czf', path, 'vpn2']).returncode:
+            raise SystemExit(1)
+        return f'bundle={path}'
+
+    def stage_once(self, stage, nodes, env=None, extra=()):
+        """Одна стадия на узлах: сторож, плей стадии, снятие сторожа. /tmp/anysda выложил выпуск,
+        без выпуска (99-verify) - тот же плей тегом prepare."""
         log(f'[{stage} → {nodes}] starting')
+        self.staged = True
+        tags = stage if self.opened else f'prepare,{stage}'
         guard = stage in GUARDED
         if guard:
             self.guard_beat()
-        code = self.play(PLAYBOOK, SITE, '--tags', f'prepare,{stage}', '--limit', nodes, '-e', f'stage={stage}',
-                         '-e', f'manifest={self.manifest}', '-e', f'guard={guard}', env=env)
+            if any(self.each(nodes.split(','), lambda _node: f'python3 -I /tmp/anysda/fwguard.py arm {stage} {GUARD_WINDOW}').values()):
+                warn(f'[{stage} → {nodes}] сторож фаервола не встал, стадию не запускаю')
+                return self.guard_finish(stage, nodes) or 1
+        code = self.play(PLAYBOOK, SITE, '--tags', tags, '--limit', nodes, '-e', self.bundle(), '-e', f'manifest={self.manifest}',
+                         *extra, env=env)
         if guard:
             code = self.guard_finish(stage, nodes) and 1 or code
-        elif any(self.cleanup(nodes.split(',')).values()):
-            warn(f'[{stage} → {nodes}] не удалось убрать /tmp/anysda')
         return code
 
     def verify(self, nodes):
         """99-verify: 0 - всё измерено, 2 - не всё (установка годна), 1 - отказ."""
         out = Path(tempfile.mkdtemp(dir=self.tmp))
-        code, result = self.stage_once('99-verify', nodes, env={'VPN2_VERIFY_OUT': str(out)}), 0
+        layout = ('-e', 'verify_old_layout=true') if self.old_layout else ()
+        code, result = self.stage_once('99-verify', nodes, env={'VPN2_VERIFY_OUT': str(out)}, extra=layout), 0
         for host in nodes.split(','):
             found = (out / host).read_text().split('\n', 1) if (out / host).is_file() else ['']
             text = found[1].rstrip('\n') if len(found) > 1 else ''
@@ -339,6 +346,8 @@ class Deploy:
                 if stage.name == '35-telegram':
                     os.environ['VPN2_PANEL_FOLLOWS'] = 'true'
                 if stage.name == '99-verify':
+                    # Остатки раскладки v1.1.5 убирает тот же плей за зелёной проверкой узла.
+                    self.old_layout = True
                     verify = self.run_stage(stage.name, group)
                 else:
                     self.run_stage(stage.name, group)
@@ -350,9 +359,6 @@ class Deploy:
             if side and not isinstance(error, Interrupted):
                 side[0].join()
             raise
-        if self.play(SITE, '--tags', 'old-layout', '-e', 'verify_old_layout=true', '--limit', ','.join(self.expand('all')),
-                     stdout=subprocess.DEVNULL):
-            warn('остатки раскладки v1.1.5 не убраны: повтори ./deploy.sh')
         self.release_complete()
         report.summary(self, t0)
         report.announce(self)
@@ -362,9 +368,9 @@ class Deploy:
         if release.main(['--manifest', self.manifest, *args, str(REPO)]):
             raise SystemExit(1)
 
-    def release_start(self, action):
-        """Выпуск открывается до изменений: манифест сверен с деревом, журнал прошлого деплоя закрыт,
-        на каждом узле проверки и снимок. С фазы applying узлы считаются изменёнными."""
+    def release_start(self, action, scope=''):
+        """Выпуск открывается до изменений одним плеем: журнал прошлого деплоя закрыт, /tmp/anysda и apt
+        готовы, на каждом узле проверки и снимок. С фазы applying узлы считаются изменёнными."""
         saved = STATE_DIR / 'release-manifest.json'
         if self.development or action == 'rollback':
             self.manifest = ''
@@ -377,29 +383,34 @@ class Deploy:
             if not (saved.exists() and os.path.samefile(self.manifest, saved)):
                 shutil.copyfile(self.manifest, saved)
                 saved.chmod(0o600)
-        bundle = f'bundle={self.tmp}/vpn2.tgz'
-        if subprocess.run(['tar', '-C', INFRA / 'vpn2/src', '--exclude=__pycache__', '-czf', self.tmp / 'vpn2.tgz', 'vpn2']).returncode:
-            raise SystemExit(1)
         if action == 'rollback':
-            if code := self.service('--tags', 'artifacts', '--limit', 'ru', '-e', bundle, stdout=subprocess.DEVNULL):
+            if code := self.service('--tags', 'artifacts', '--limit', 'ru', '-e', self.bundle(), stdout=subprocess.DEVNULL):
                 raise SystemExit(code)
             return
-        if action != 'recover':
-            with open(self.tmp / 'journal.log', 'w') as journal:
-                failed = self.service('--tags', 'journal', stdout=journal, stderr=subprocess.STDOUT)
-            if failed:
-                found = re.search(r'unfinished deploy on [^"]*\(or \./deploy\.sh rollback\)', (self.tmp / 'journal.log').read_text())
-                die(found[0] if found else 'журнал деплоя на узлах не прочитан: проверь вход по ssh')
-        self.opened = True
-        if self.service('--tags', 'release', '-e', bundle, '-e', f'partial={action not in ("", "recover")}'):
+        self.opened = self.staged = True
+        if self.service('--tags', 'release', '-e', self.bundle(), '-e', f'out={self.tmp}', '-e', f'scope={scope}',
+                        '-e', f'partial={action not in ("", "recover")}', '-e', f'journal={action != "recover"}',
+                        '-e', f'bootstrap={action in ("", "recover", "00-bootstrap")}'):
+            if found := sorted(self.tmp.glob('*.journal')):
+                self.opened = False
+                die(found[0].read_text().strip())
             raise SystemExit(1)
         self.mutating = True
 
     def release_complete(self):
-        if self.mutating:
-            if self.service('--tags', 'complete', '-e', f'bundle={self.tmp}/vpn2.tgz', stdout=subprocess.DEVNULL):
-                die('запись о выпуске не закрыта: повтори ./deploy.sh recover')
-            self.mutating = False
+        """Запись состава и закрытие журнала на каждом узле; пакет ещё лежит в /tmp/anysda."""
+        if not self.mutating:
+            return
+        state = 'complete --role {}' if self.manifest else 'phase --phase complete'
+        left = ['ru', *self.exit_tags()]
+        for _ in range(3):
+            done = self.each(left, lambda node: 'PYTHONPATH=/tmp/anysda python3 -m vpn2.cli state '
+                             + state.format('entry' if node == 'ru' else 'exit'))
+            if not (left := [node for node, code in done.items() if code]):
+                break
+        if left:
+            die('запись о выпуске не закрыта: повтори ./deploy.sh recover')
+        self.mutating = False
 
     def close(self, code):
         """Выход деплоя: кто бы ни прервал, дочерние плеи гаснут, журнал узлов честен."""
@@ -413,6 +424,9 @@ class Deploy:
                   '(or ./deploy.sh rollback)', file=sys.stderr)
         elif code and self.opened:
             self.service('--tags', 'abort', **QUIET)
+        # Пакет и манифест на экзитах живут до конца запуска.
+        if self.staged:
+            self.each([tag for tag in self.exit_tags() if tag not in self.skipped], lambda _node: 'rm -rf /tmp/anysda')
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def warn_insecure_exits(self):

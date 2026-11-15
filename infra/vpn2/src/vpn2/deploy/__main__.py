@@ -21,7 +21,7 @@ def interrupted(code):
 
 
 def dispatch(deploy, argv):
-    action = argv[0] if argv else ''
+    action, scope = (argv[0] if argv else ''), ''
     # Ошибка в аргументах выпуск не открывает: иначе журнал остался бы в applying до recover.
     if action == 'backup':
         return report.backup()
@@ -37,7 +37,7 @@ def dispatch(deploy, argv):
             die('использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)')
         deploy.stage_nodes(action, [])
         # Стадия entry на экзите (и наоборот) - отказ, а не пустой проход с кодом 0.
-        deploy.stage_nodes(action, deploy.expand(argv[1]), refuse_empty=True)
+        scope = deploy.stage_nodes(action, deploy.expand(argv[1]), refuse_empty=True)
     # Автообновления свежей ОС стартуют в первые минуты после загрузки: пауза - до любого apt деплоя.
     if action in ('', 'recover') and os.path.isdir('/run/systemd/system'):
         if code := svc('nftables_preserve_rules'):
@@ -47,7 +47,7 @@ def dispatch(deploy, argv):
             return code
     install_prereqs()
     if action != '99-verify':
-        deploy.release_start(action)
+        deploy.release_start(action, scope)
     if action in ('', 'recover'):
         code = deploy.do_all()
     elif action == 'restore':

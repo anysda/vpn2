@@ -1,15 +1,13 @@
 ---
 # Служебные плеи деплоя вокруг стадий site.yml: их по тегам зовёт infra/deploy.sh.
 #   preflight  вход по ssh на каждый узел, отказ пишется в {{ out }}/<узел>.fail
-#   journal    незакрытый журнал прошлого деплоя - отказ
-#   release    проверки выпуска, артефакты, обязательный снимок, фаза applying
+#   release    журнал прошлого деплоя, выкладка /tmp/anysda, apt, проверки выпуска, снимок, фаза applying
+#   prepare    выкладка /tmp/anysda и apt для стадии без выпуска (99-verify)
 #   abort      снимок снят, но узлы не менялись: журнал закрывается
-#   complete   запись установленного состава, журнал закрыт
 #   secrets    пароли каналов, сертификаты и ключи экзитов для 20-ru-router
-#   prepare    /tmp/anysda, apt, сторож фаервола (guard=true); идёт одним запуском со стадией
 #   artifacts  пакет vpn2 и журнал выпуска в /tmp/anysda (откат панели)
-# Пульс сторожу и его снятие - новыми ssh-входами из vpn2.deploy.run, мимо ansible.
-# Переменные запуска (-e): stage, guard, out, manifest, partial, bundle.
+# Сторож фаервола, пульс, закрытие журнала и уборка /tmp/anysda - новыми ssh-входами из vpn2.deploy.run.
+# Переменные запуска (-e): out, manifest, partial, bundle, journal, bootstrap, scope.
 
 - name: Вход по ssh
   hosts: all
@@ -28,26 +26,6 @@
       delegate_to: localhost
       when: seen is failed
 
-- name: Журнал прошлого деплоя
-  hosts: all
-  any_errors_fatal: true
-  tags: [journal]
-  tasks:
-    - name: Журнал закрыт
-      ansible.builtin.raw: >-
-        f=/var/lib/vpn2-deploy/operation.json; test ! -e $f
-        || grep -qE '"phase": *"(complete|aborted|rolled-back)"' $f || exit 76
-      register: journal
-      changed_when: false
-      failed_when: journal.rc != 0
-      ignore_errors: true
-    - name: Незакрытый деплой
-      ansible.builtin.fail:
-        msg: >-
-          unfinished deploy on {{ inventory_hostname }}: operation journal /var/lib/vpn2-deploy/operation.json
-          is open; inspect services, then run ./deploy.sh recover (or ./deploy.sh rollback)
-      when: journal.rc != 0
-
 - name: Проверки выпуска и артефакты
   hosts: all
   any_errors_fatal: true
@@ -57,23 +35,57 @@
       --panel-image={{ vpn2_env.PANEL_IMAGE | default('') | quote }} --bot-image={{ vpn2_env.TGBOT_IMAGE | default('') | quote }}
       {{ '--offline-images' if 'false' in [vpn2_env.PANEL_IMAGE_PULL | default('true'), vpn2_env.TGBOT_IMAGE_PULL | default('true')] else '' }}
   tasks:
+    - name: Журнал прошлого деплоя закрыт
+      ansible.builtin.raw: >-
+        f=/var/lib/vpn2-deploy/operation.json; test ! -e $f
+        || grep -qE '"phase": *"(complete|aborted|rolled-back)"' $f
+      register: closed
+      changed_when: false
+      failed_when: false
+      tags: [release]
+      when: journal | default(true) | bool
+    - name: Незакрытый деплой
+      ansible.builtin.copy:
+        content: >-
+          unfinished deploy on {{ inventory_hostname }}: operation journal /var/lib/vpn2-deploy/operation.json
+          is open; inspect services, then run ./deploy.sh recover (or ./deploy.sh rollback)
+        dest: "{{ out }}/{{ inventory_hostname }}.journal"
+        mode: "0600"
+      delegate_to: localhost
+      tags: [release]
+      when: closed.rc | default(0) != 0
+    - name: Деплой не открывается
+      ansible.builtin.fail: {msg: "незакрытый журнал деплоя на {{ inventory_hostname }}"}
+      tags: [release]
+      when: closed.rc | default(0) != 0
     - name: Каталог выкладки
       ansible.builtin.file: {path: /tmp/anysda, state: directory, mode: "0700"}
       changed_when: false
-      tags: [release, complete, artifacts]
+      tags: [release, prepare, artifacts]
     - name: Пакет vpn2
       ansible.builtin.unarchive: {src: "{{ bundle }}", dest: /tmp/anysda}
       changed_when: false
-      tags: [release, complete, artifacts]
-    - name: Общие функции
-      ansible.builtin.copy: {src: ../lib/anysda-svc.sh, dest: /tmp/anysda/anysda-svc.sh, mode: "0700"}
+      tags: [release, prepare, artifacts]
+    - name: Общие функции и сторож фаервола
+      ansible.builtin.copy: {src: "{{ item }}", dest: /tmp/anysda/, mode: "0700"}
+      loop: [../lib/anysda-svc.sh, ../vpn2/src/vpn2/fwguard.py]
       changed_when: false
-      tags: [release, complete, artifacts]
+      tags: [release, prepare, artifacts]
     - name: Манифест сборки
       ansible.builtin.copy: {src: "{{ manifest }}", dest: /tmp/anysda/release-manifest.json, mode: "0600"}
       changed_when: false
-      tags: [release, complete, artifacts]
+      tags: [release, prepare, artifacts]
       when: manifest | default('') != ''
+    - name: apt свободен, прежний репозиторий Caddy убран
+      ansible.builtin.shell: |
+        set -euo pipefail
+        rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        HOST_TAG={{ inventory_hostname }}; source /tmp/anysda/anysda-svc.sh
+        apt_prepare{{ '; apt_auto_pause; apt_sshd_first' if bootstrap | default(false) | bool else '' }}
+      args: {executable: /bin/bash}
+      changed_when: false
+      tags: [release, prepare]
+      when: scope | default('') == '' or inventory_hostname in scope.split(',')
     - name: ОС, ресурсы и совместимость
       ansible.builtin.command: python3 -m vpn2.cli state preflight {{ '--partial' if partial | default(false) | bool else '' }}
       changed_when: false
@@ -84,12 +96,6 @@
       changed_when: false
       tags: [release]
       when: manifest | default('') != ''
-    - name: Состав записан, журнал закрыт
-      ansible.builtin.command: >-
-        python3 -m vpn2.cli state
-        {{ 'complete --role ' ~ vpn2_node.role if manifest | default('') != '' else 'phase --phase complete' }}
-      changed_when: false
-      tags: [complete]
 
 # Снимок снимается, когда проверки прошли на всех узлах; applying - когда снимок есть везде.
 - name: Обязательный снимок перед изменениями
@@ -156,31 +162,3 @@
       delegate_to: localhost
       changed_when: false
       no_log: true
-
-- name: Подготовка узла к стадии
-  hosts: all
-  tags: [prepare]
-  tasks:
-    - name: Каталог выкладки
-      ansible.builtin.file: {path: /tmp/anysda, state: directory, mode: "0700"}
-      changed_when: false
-    - name: Общие функции и сторож фаервола
-      ansible.builtin.copy: {src: "{{ item }}", dest: /tmp/anysda/, mode: "0700"}
-      loop: [../lib/anysda-svc.sh, ../vpn2/src/vpn2/fwguard.py]
-      changed_when: false
-    - name: Манифест сборки
-      ansible.builtin.copy: {src: "{{ manifest }}", dest: /tmp/anysda/release-manifest.json, mode: "0600"}
-      changed_when: false
-      when: manifest | default('') != ''
-    - name: apt свободен, прежний репозиторий Caddy убран
-      ansible.builtin.shell: |
-        set -euo pipefail
-        rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-        HOST_TAG={{ stage }}; source /tmp/anysda/anysda-svc.sh
-        apt_prepare{{ '; apt_auto_pause; apt_sshd_first' if stage == '00-bootstrap' else '' }}
-      args: {executable: /bin/bash}
-      changed_when: false
-    - name: Сторож фаервола - откат, если новые ssh-входы пропадут
-      ansible.builtin.command: python3 -I /tmp/anysda/fwguard.py arm {{ stage }} {{ vpn2_env.VPN2_FW_GUARD_WINDOW | default(90, true) }}
-      changed_when: false
-      when: guard | default(false) | bool

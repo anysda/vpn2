@@ -110,9 +110,9 @@ def test_unpublished_commit_is_refused_before_remote_changes(tree):  # noqa: F81
     assert not plays(tree)
 
 
-def test_failed_old_layout_or_complete_never_announces_success(tree):  # noqa: F811
+def test_failed_complete_never_announces_success(tree):  # noqa: F811
     done = subprocess.run([sys.executable, '-B', '-c', RUNNER], capture_output=True, text=True, timeout=120,
-                          env=environ(tree, FAKE_RULES=json.dumps([['--tags complete', 2, 0]])))
+                          env=environ(tree, FAKE_SSH_RULES=json.dumps([['state phase --phase complete', 1]])))
     assert done.returncode == 1 and 'запись о выпуске не закрыта' in done.stderr
     assert 'деплой завершён' not in done.stdout
 

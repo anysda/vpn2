@@ -23,13 +23,16 @@ with open(os.environ['FAKE_PLAYS'], 'a') as out:
     out.write(json.dumps({'args': args, 'follows': os.environ.get('VPN2_PANEL_FOLLOWS'), 'pid': os.getpid(), 't': time.time()}) + '\n')
 extra = dict(argv[i + 1].split('=', 1) for i, a in enumerate(argv) if a == '-e')
 hosts = argv[argv.index('--limit') + 1].split(',') if '--limit' in argv else []
-for host in hosts if 'prepare,99-verify' in args else ():
+for host in hosts if '99-verify --limit' in args else ():
     open(f"{os.environ['VPN2_VERIFY_OUT']}/{host}", 'w').write(f'0\n[{host}] ✓ всё измерено\n')
 for host in hosts if '--tags secrets' in args else ():
     upper = host.upper()
     open(f"{extra['out']}/{host}.env", 'w').write(''.join(f'{upper}_{k}=x\n' for k in ('DIRECT', 'WARP', 'OBFS', 'MGMT', 'CLASH')))
     for kind in ('pem', 'pub', 'reality'):
         open(f"{extra['out']}/{host}.{kind}", 'w').close()
+if os.environ.get('FAKE_OPEN') and '--tags release' in args and 'journal=True' in args:
+    open(f"{extra['out']}/ru.journal", 'w').write('unfinished deploy on ru: operation journal is open\n')
+    sys.exit(2)
 for match, code, pause in json.loads(os.environ.get('FAKE_RULES', '[]')):
     if match in args:
         time.sleep(pause)
@@ -199,21 +202,23 @@ def test_one_stage_runs_only_its_play_on_its_nodes(tree, inproc):
     done = inproc('30-frontend', 'ru')
     assert done.returncode == 0, done.stderr
     calls = [call['args'] for call in plays(tree)]
-    staged = [args for args in calls if 'site.yml' in args]
-    assert len(staged) == 1 and '--tags prepare,30-frontend --limit ru ' in staged[0] and 'guard=True' in staged[0]
-    tags = [args.split('--tags ')[1].split()[0] for args in calls if 'site.yml' not in args]
-    assert tags == ['journal', 'release', 'complete']
-    logins = [(call['host'], call['command'].split()[0]) for call in plays(tree, 'ssh')]
-    assert ('1.2.3.4', 'touch') in logins and logins[-1] == ('1.2.3.4', 'python3')
+    assert [args.split('--tags ')[1].split()[0] for args in calls] == ['release', '30-frontend']
+    assert '--limit ru ' in calls[1] and 'scope=ru ' in calls[0] and 'journal=True' in calls[0] and 'bootstrap=False' in calls[0]
+    # Сторож, пульс, снятие и закрытие журнала - ssh на entry; уборка выкладки - на экзитах в конце.
+    logins = [(call['host'], call['command']) for call in plays(tree, 'ssh')]
+    ru = [command for host, command in logins if host == '1.2.3.4']
+    assert ru[0].startswith('touch') and 'fwguard.py arm 30-frontend' in ru[1]
+    assert 'disarm' in ru[-2] and 'state phase --phase complete' in ru[-1]
+    assert {host for host, command in logins[-2:]} == {'5.6.7.8', '9.10.11.12'} and all('rm -rf' in c for _, c in logins[-2:])
     assert '[deploy] [30-frontend → ru] done' in done.stderr
 
 
 def test_full_deploy_follows_site_yml(tree, inproc):
-    done = inproc(FAKE_RULES=json.dumps([['prepare,19-yt-zapret', 0, 2]]))
+    done = inproc(FAKE_RULES=json.dumps([['--tags 19-yt-zapret ', 0, 2]]))
     assert done.returncode == 0, done.stderr
     calls = plays(tree)
-    staged = [(call['args'].split('--tags prepare,')[1].split()[0], call['args'].split('--limit ')[1].split()[0], call['follows'])
-              for call in calls if '--tags prepare,' in call['args']]
+    staged = [(call['args'].split('--tags ')[1].split()[0], call['args'].split('--limit ')[1].split()[0], call['follows'])
+              for call in calls if 'site.yml' in call['args']]
     # Экзиты идут своей цепочкой рядом со стадиями entry; общие стадии - на всех узлах сразу.
     exits = [item for item in staged if 'ru' not in item[1].split(',')]
     assert exits == [('10-foreign', 'us', None), ('99-verify', 'us', None), ('10-foreign', 'gb', None),
@@ -229,54 +234,59 @@ def test_full_deploy_follows_site_yml(tree, inproc):
     assert at('22-adguard') < staged.index(('23-emergency', 'us,gb', None)) < at('30-frontend')
     # Секреты экзитов тянет цепочка экзитов за 10-foreign, один раз, пока entry ещё в 19-yt-zapret.
     pulled = [call['t'] for call in calls if '--tags secrets' in call['args']]
-    zapret = next(call['t'] for call in calls if 'prepare,19-yt-zapret' in call['args'])
+    zapret = next(call['t'] for call in calls if '--tags 19-yt-zapret ' in call['args'])
     assert len(pulled) == 1 and pulled[0] < zapret + 2
-    assert [call['args'].split('--tags ')[1].split()[0] for call in calls][:3] == ['journal', 'release', 'preflight']
-    assert '--tags old-layout' in calls[-2]['args'] and '--tags complete' in calls[-1]['args']
+    assert [call['args'].split('--tags ')[1].split()[0] for call in calls][:2] == ['release', 'preflight']
+    assert 'bootstrap=True' in calls[0]['args'] and 'scope= ' in calls[0]['args']
+    # Остатки v1.1.5 убирает последняя 99-verify, а не проверки экзитов в 10-foreign.
+    assert '--tags 99-verify --limit ru,us,gb' in calls[-1]['args'] and 'verify_old_layout=true' in calls[-1]['args']
+    assert not [call for call in calls[:-1] if 'verify_old_layout' in call['args']]
+    closing = [call['command'] for call in plays(tree, 'ssh') if 'state phase' in call['command']]
+    assert len(closing) == 3
     assert 'деплой завершён' in done.stdout and re.search(r'│  30-frontend +ru +\d+s +│', done.stdout)
 
 
 def test_recover_skips_the_journal_check(tree, inproc):
-    done = inproc('recover', FAKE_RULES=json.dumps([['--tags journal', 2, 0]]))
+    done = inproc('recover', FAKE_OPEN='1')
     assert done.returncode == 0, done.stderr
-    assert not [call for call in plays(tree) if '--tags journal' in call['args']]
+    assert 'journal=False' in plays(tree)[0]['args']
 
 
 def test_unfinished_deploy_is_refused_without_changes(tree, inproc):
-    done = inproc(FAKE_RULES=json.dumps([['--tags journal', 2, 0]]))
-    assert done.returncode == 1 and 'журнал деплоя на узлах не прочитан' in done.stderr
-    assert [call['args'].split('--tags ')[1].split()[0] for call in plays(tree)] == ['journal']
+    done = inproc(FAKE_OPEN='1')
+    assert done.returncode == 1 and 'unfinished deploy on ru: operation journal is open' in done.stderr
+    assert [call['args'].split('--tags ')[1].split()[0] for call in plays(tree)] == ['release']
 
 
 def test_failed_release_checks_close_the_journal(tree, inproc):
     done = inproc(FAKE_RULES=json.dumps([['--tags release', 2, 0]]))
     assert done.returncode == 1
-    assert [call['args'].split('--tags ')[1].split()[0] for call in plays(tree)] == ['journal', 'release', 'abort']
+    assert [call['args'].split('--tags ')[1].split()[0] for call in plays(tree)] == ['release', 'abort']
 
 
 def test_failed_stage_stops_the_deploy_and_keeps_the_journal(tree, inproc):
-    done = inproc(FAKE_RULES=json.dumps([['prepare,20-ru-router', 2, 0]]))
+    done = inproc(FAKE_RULES=json.dumps([['--tags 20-ru-router ', 2, 0]]))
     assert done.returncode == 1
     assert 'стадия 20-ru-router: одна или несколько нод завершились с ошибкой' in done.stderr
     assert 'deploy interrupted: operation journal retained' in done.stderr
-    assert not [call for call in plays(tree) if 'prepare,21-' in call['args'] or '--tags abort' in call['args']]
+    assert not [call for call in plays(tree) if '--tags 21-' in call['args'] or '--tags abort' in call['args']]
 
 
 def test_failed_exit_track_stops_the_deploy_before_the_stage_that_needs_exits(tree, inproc):
-    done = inproc(FAKE_RULES=json.dumps([['prepare,10-foreign', 2, 1]]))
+    done = inproc(FAKE_RULES=json.dumps([['--tags 10-foreign ', 2, 1]]))
     assert done.returncode == 1
     assert 'стадия 10-foreign: одна или несколько нод завершились с ошибкой' in done.stderr
     args = [call['args'] for call in plays(tree)]
-    assert any('prepare,19-yt-zapret' in line for line in args), 'стадии entry шли рядом с экзитами'
-    assert not [line for line in args if 'prepare,20-' in line or '--tags abort' in line]
+    assert any('--tags 19-yt-zapret ' in line for line in args), 'стадии entry шли рядом с экзитами'
+    assert not [line for line in args if '--tags 20-' in line or '--tags abort' in line]
 
 
 @pytest.mark.parametrize('sig, code', [(signal.SIGTERM, 143), (signal.SIGINT, 130)])
 def test_killed_in_firewall_stage(tree, sig, code):
     """Сигнал посреди стадии с фаерволом: плей стадии и пульс гаснут, журнал узлов остаётся для recover."""
-    proc = orchestrate(tree, wait=False, FAKE_RULES=json.dumps([['prepare,05-mgmt-mesh', 0, 60]]), VPN2_FW_GUARD_WINDOW='30')
+    proc = orchestrate(tree, wait=False, FAKE_RULES=json.dumps([['--tags 05-mgmt-mesh ', 0, 60]]), VPN2_FW_GUARD_WINDOW='30')
     for _ in range(300):
-        if any('prepare,05-mgmt-mesh' in call['args'] for call in plays(tree)):
+        if any('--tags 05-mgmt-mesh ' in call['args'] for call in plays(tree)):
             break
         time.sleep(0.1)
     # Пульс сторожа этой стадии пошёл повторно: круг по всем трём узлам после arm.
@@ -291,7 +301,7 @@ def test_killed_in_firewall_stage(tree, sig, code):
     _out, err = proc.communicate(timeout=30)
     assert proc.returncode == code, err
     assert 'deploy interrupted: operation journal retained' in err
-    staged = next(call for call in plays(tree) if 'prepare,05-mgmt-mesh' in call['args'])
+    staged = next(call for call in plays(tree) if '--tags 05-mgmt-mesh ' in call['args'])
     assert not alive(staged['pid'])
     beats = [call['host'] for call in plays(tree, 'ssh') if call['command'].startswith('touch')]
     assert {'1.2.3.4', '5.6.7.8', '9.10.11.12'} <= set(beats) and len(beats) > 3, 'пульс шёл повторно на все узлы'

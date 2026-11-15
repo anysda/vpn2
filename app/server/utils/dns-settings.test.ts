@@ -114,4 +114,11 @@ describe('dns-settings', () => {
       { name: 'Папа', tg: '@papa', ips: ['10.66.66.4'], filters: 'off', safesearch: 'global', services: null, queries: 0 },
     ])
   })
+
+  it('отказ AdGuard в списке фильтров - русским текстом', () => {
+    expect(s.listError('Couldn\'t fetch filter from URL "https://x.invalid/l.txt": Get "https://x.invalid/l.txt": no addresses for host "x.invalid"'))
+      .toBe('Список не скачался: адрес не найден или недоступен')
+    expect(s.listError('Filter with URL "https://a/l.txt": url already exists')).toBe('Такой список уже добавлен')
+    expect(s.listError('data is HTML, not plain text')).toBe('AdGuard не принял список')
+  })
 })

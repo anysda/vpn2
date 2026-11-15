@@ -97,7 +97,7 @@ test.describe('dns', () => {
       await dlg.getByRole('textbox', { name: 'Название' }).fill(name)
       await dlg.getByRole('textbox', { name: 'Адрес списка' }).fill('https://lists.invalid/x.txt')
       await dlg.getByRole('button', { name: 'Добавить', exact: true }).click()
-      await expect(toast(page, 'Couldn\'t fetch filter')).toBeVisible()
+      await expect(toast(page, 'Список не скачался: адрес не найден или недоступен')).toBeVisible()
       await expect(dlg.getByRole('textbox', { name: 'Название' })).toHaveValue(name)
 
       await dlg.getByRole('textbox', { name: 'Адрес списка' }).fill(`https://lists.example.com/${name}.txt`)

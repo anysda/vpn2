@@ -46,6 +46,11 @@ const Setting = z.union([
   z.object({ anonymize: z.boolean() }),
 ])
 const badSetting = (message: string) => createError({ statusCode: 422, statusMessage: 'bad_setting', message })
+/** Список скачивает сам AdGuard: его отказ - русским текстом. */
+const listCall = (path: string, body: object) => agh(path, { method: 'POST', body, timeout: 60_000 }).catch((e: { statusMessage?: string, message?: string }) => {
+  if (e.statusMessage !== 'agh_rejected') throw e
+  throw createError({ statusCode: 400, statusMessage: 'agh_rejected', message: listError(e.message ?? '') })
+})
 const userRules = (st: { user_rules?: string[] | null }) => (st.user_rules ?? []).join('\n')
 const post = (path: string, body?: Record<string, unknown>) => agh(path, { method: 'POST', body })
 const put = (path: string, body: Record<string, unknown>) => agh(path, { method: 'PUT', body })
@@ -218,14 +223,14 @@ export default {
   /** AdGuard сам скачивает список и отказывает, если не смог. */
   'POST /dns/filters': admin(async (event) => {
     const { name, url, white } = await readBodyAs(event, NewList)
-    await agh('filtering/add_url', { method: 'POST', body: { name, url, whitelist: white }, timeout: 60_000 })
+    await listCall('filtering/add_url', { name, url, whitelist: white })
     return listsView(await filtersConfirmed(st => !!findList(st, url, white), `список «${name}» не появился`))
   }),
   'PATCH /dns/filters': admin(async (event) => {
     const { url, white, enabled } = await readBodyAs(event, List.extend({ enabled: z.boolean() }))
     const f = findList(await filteringStatus(), url, white)
     if (!f) throw createError({ statusCode: 404, statusMessage: 'list_not_found', message: 'Такого списка уже нет в AdGuard' })
-    await agh('filtering/set_url', { method: 'POST', body: { url, whitelist: white, data: { name: f.name, url, enabled } }, timeout: 60_000 })
+    await listCall('filtering/set_url', { url, whitelist: white, data: { name: f.name, url, enabled } })
     return listsView(await filtersConfirmed(st => findList(st, url, white)?.enabled === enabled, `список «${f.name}» ${enabled ? 'не включился' : 'не выключился'}`))
   }),
   'DELETE /dns/filters': admin(async (event) => {

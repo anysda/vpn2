@@ -229,6 +229,13 @@ export function upstreamError(text: string): string {
   return m ? `Строка ${Number(m[1]) + 1}: AdGuard не понял адрес сервера` : 'AdGuard не принял серверы выше'
 }
 
+/** Отказ AdGuard в списке фильтров - по-русски: его текст английский. */
+export function listError(text: string): string {
+  if (/already (exists|added)/i.test(text)) return 'Такой список уже добавлен'
+  if (/couldn't fetch|no addresses|no such host|dial tcp|timeout|status code/i.test(text)) return 'Список не скачался: адрес не найден или недоступен'
+  return 'AdGuard не принял список'
+}
+
 /** Всё, из чего собирается раздел «Настройки», одним заходом. */
 export async function settingsState() {
   const [info, sb, parental, ss, log, stats] = await Promise.all([

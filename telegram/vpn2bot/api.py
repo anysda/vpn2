@@ -7,7 +7,7 @@ import time
 
 import httpx
 from telegram import Bot, InputFile
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TimedOut
 from telegram.request import HTTPXRequest
 
 from . import config
@@ -98,7 +98,31 @@ async def status() -> dict:
 LAST_POLL_OK: float = time.monotonic()
 
 
-class WatchedRequest(HTTPXRequest):
+closing: set[asyncio.Task] = set()
+
+
+class ProxyRequest(HTTPXRequest):
+    """A full pool is replaced: a tunnel through a dead exit dies in TLS, and httpcore never frees its slot."""
+
+    async def do_request(self, *args, **kwargs):
+        try:
+            return await super().do_request(*args, **kwargs)
+        except TimedOut as e:
+            if isinstance(e.__cause__, httpx.PoolTimeout):
+                log.info('пул соединений до Telegram забит мёртвыми туннелями - открываю новый')
+                old, self._client = self._client, self._build_client()
+                task = asyncio.create_task(self._close_later(old))
+                closing.add(task)
+                task.add_done_callback(closing.discard)
+            raise
+
+    async def _close_later(self, client: httpx.AsyncClient) -> None:
+        # Requests still running on the old pool finish first.
+        await asyncio.sleep(self.read_timeout + 60)
+        await client.aclose()
+
+
+class WatchedRequest(ProxyRequest):
     """getUpdates transport: only an ok Bot API answer with an updates list counts as a live poll."""
 
     async def do_request(self, *args, **kwargs):
@@ -114,7 +138,7 @@ class WatchedRequest(HTTPXRequest):
 
 
 # Without a token the bot only answers /health and waits for the panel (see __main__).
-bot = Bot(config.TOKEN, request=HTTPXRequest(connection_pool_size=20, connect_timeout=10.0, read_timeout=20.0,
+bot = Bot(config.TOKEN, request=ProxyRequest(connection_pool_size=20, connect_timeout=10.0, read_timeout=20.0,
                                             pool_timeout=10.0, proxy=config.TG_PROXY),
           get_updates_request=WatchedRequest(connection_pool_size=4, read_timeout=40, proxy=config.TG_PROXY),
           ) if config.TOKEN else None

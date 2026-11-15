@@ -1,8 +1,12 @@
 import asyncio
+from pathlib import Path
+import ssl
+import subprocess
+import tempfile
 import unittest
 
 from aiohttp import web
-from telegram.error import NetworkError
+from telegram.error import NetworkError, TimedOut
 
 from harness import import_bot
 
@@ -65,6 +69,58 @@ class ProxyRoutingTests(unittest.IsolatedAsyncioTestCase):
             await request.do_request('https://api.telegram.org/test/getUpdates', 'POST')
         server.close()
         self.assertEqual(connects, [b'CONNECT api.telegram.org:443 HTTP/1.1'] * 2)
+
+    async def test_polling_recovers_after_tunnels_through_dead_exit(self):
+        """sing-box answers CONNECT at once; through a dead exit TLS then never comes and httpcore keeps the slot."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        cert, key = (str(Path(directory.name) / name) for name in ('cert.pem', 'key.pem'))
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
+                        '-keyout', key, '-out', cert], check=True, capture_output=True)
+        tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        tls.load_cert_chain(cert, key)
+
+        async def telegram(reader, writer):
+            await reader.readuntil(b'\r\n\r\n')
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 24\r\n\r\n{"ok":true,"result":[]}\n')
+            await writer.drain()
+            writer.close()
+
+        async def pipe(reader, writer):
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+            writer.close()
+
+        exit_alive, stalled = False, []
+
+        async def proxy(reader, writer):
+            await reader.readuntil(b'\r\n\r\n')
+            writer.write(b'HTTP/1.1 200 Connection established\r\n\r\n')
+            await writer.drain()
+            if not exit_alive:
+                stalled.append(writer)
+                return
+            upstream = await asyncio.open_connection('127.0.0.1', target.sockets[0].getsockname()[1])
+            await asyncio.gather(pipe(reader, upstream[1]), pipe(upstream[0], writer))
+
+        target = await asyncio.start_server(telegram, '127.0.0.1', 0, ssl=tls)
+        server = await asyncio.start_server(proxy, '127.0.0.1', 0)
+        for s in (target, server):
+            self.addCleanup(s.close)
+        self.addCleanup(lambda: [w.close() for w in stalled])
+        bot = import_bot()
+        self.addAsyncCleanup(bot.api.panel_http.aclose)
+        request = bot.api.WatchedRequest(connection_pool_size=4, connect_timeout=0.3, pool_timeout=0.2, read_timeout=2,
+                                         proxy=f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}',
+                                         httpx_kwargs={'verify': False})
+        self.addAsyncCleanup(request.shutdown)
+        url = f'https://localhost:{target.sockets[0].getsockname()[1]}/bot/getUpdates'
+        for _ in range(6):
+            with self.assertRaises(TimedOut):
+                await request.do_request(url, 'POST')
+        exit_alive = True
+        self.assertEqual(await request.do_request(url, 'POST'), (200, b'{"ok":true,"result":[]}\n'))
 
 
 if __name__ == '__main__':

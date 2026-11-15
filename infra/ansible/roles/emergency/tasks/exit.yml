@@ -127,8 +127,13 @@
     argv: ["{{ emergency_vpn2 }}", tls, --initial, --config, /etc/vpn2/tls/config.json, --wait, "{{ emergency_tls_wait }}"]
   changed_when: false
 
+- name: Таймер TLS включён
+  ansible.builtin.systemd_service: {name: vpn2-tls.timer, enabled: true}
+
 - name: Таймер TLS идёт
-  ansible.builtin.systemd_service: {name: vpn2-tls.timer, enabled: true, state: started}
+  ansible.builtin.command:
+    argv: "{{ emergency_bash + ['systemctl start vpn2-tls.timer'] }}"
+  changed_when: false
 
 # Пара аварийного входа заранее: общая на IP или самоподписанная; при идущей
 # выдаче шаг её не трогает.

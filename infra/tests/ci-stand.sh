@@ -998,6 +998,10 @@ cmd_deploy_again() {
   (( rc == 0 )) || return "$rc"
   ssh_node "$ENTRY" "grep -qF 'ansible: пины те же' /opt/vpn2/ansible-venv.log" \
     || die 'повторный деплой переустановил venv с ansible'
+  local changed
+  changed=$(ssh_node "$ENTRY" "sed 's/\x1b\[[0-9;]*m//g' /root/deploy-again.log" \
+    | awk '/^TASK \[/ { task = $0; sub(/ \*+$/, "", task) } /^changed: / && task { print task; task = "" }' | paste -sd ';')
+  [[ -z "$changed" ]] || die "повторный деплой без правок что-то изменил: $changed"
   cmd_snapshot "$out" snapshot-again
 }
 

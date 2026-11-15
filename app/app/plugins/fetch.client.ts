@@ -59,6 +59,8 @@ export default defineNuxtPlugin((nuxtApp) => {
         void res.then(r => r.ok && unmark())
       }
       if (SIGNS_IN.test(path)) void res.then((r) => { if (r.ok) gone = false })
+      // Смена пароля или 2FA с уже мёртвой сессией - тот же конец сессии.
+      else void res.then((r) => { if (r.status === 401 && r.statusText === GONE) sessionGone() }, () => {})
       return res
     }
     // После конца сессии - без сети до нового входа: старая cookie могла вернуть признак.

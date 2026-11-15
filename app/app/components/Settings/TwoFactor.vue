@@ -54,6 +54,7 @@ function confirmSetup() {
 }
 
 function disableTotp() {
+  if (!disableOpen.value) return
   const c = typedCode(!!pwd.value)
   if (c) return call('disable', { password: pwd.value, code: c }, 'Ошибка', () => finish('2FA выключена'))
 }

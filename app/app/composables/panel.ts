@@ -1,4 +1,4 @@
-import { failedStatus } from '#shared/error-text'
+import { errText, failedStatus, SESSION_GONE } from '#shared/error-text'
 
 /** Повтор `fn` каждые `ms`, пока компонент на экране, и сразу при возврате на вкладку. */
 export function usePoll(fn: () => unknown, ms: number) {
@@ -57,7 +57,7 @@ export function usePageSub(text?: () => string) {
   return sub
 }
 
-export { errText } from '#shared/error-text'
+export { errText }
 
 /** Тост завершённой операции; `warning` сервера (Telegram не ушёл) - жёлтым со своим текстом. */
 export function doneToast(title: string, warning?: string) {
@@ -80,7 +80,7 @@ export function useAct() {
     }
     catch (e) {
       // Конец сессии сообщает один тост плагина fetch с переходом на /login.
-      if (failedStatus(e) === 401) return false
+      if (failedStatus(e) === 401 && errText(e) === SESSION_GONE) return false
       if (typeof fail === 'object') toast.add({ title: fail.title, description: errText(e, '') || undefined, color: 'error' })
       else toast.add({ title: errText(e, fail), color: 'error' })
       return false

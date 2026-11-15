@@ -18,16 +18,15 @@ export function failedStatus(e: unknown): number | undefined {
 
 /**
  * Текст ошибки запроса для тоста и плашки: без ответа - про недоступность панели,
- * 401 - «Сессия завершена», иначе русский текст сервера или `fallback`.
+ * иначе русский текст сервера (401 закрытой ручки - «Сессия завершена») или `fallback`.
  * Ошибка не от запроса (своя проверка страницы) отдаёт свой текст.
  */
 export function errText(e: unknown, fallback = 'Ошибка'): string {
   const x = e as Failure | null
-  const fetchError = x?.name === 'FetchError' ? x : x?.cause?.name === 'FetchError' ? x.cause : null
-  if (!fetchError) return x?.data?.message as string ?? x?.statusMessage ?? x?.message ?? fallback
-  const status = fetchError.response?.status
-  if (status === 401) return SESSION_GONE
-  if (!status) return /TimeoutError|timed? ?out/i.test(String(fetchError.message)) ? table.panel.timeout : table.panel.offline
-  const text = [fetchError.data?.message, fetchError.statusMessage].find(t => typeof t === 'string' && /[а-яё]/i.test(t))
+  const f = x?.cause?.name === 'FetchError' ? x.cause : x
+  // Обрыв связи useFetch заворачивает в NuxtError: в cause - TypeError, признак запроса - текст ofetch «[GET] "…"».
+  if (f?.name !== 'FetchError' && !/^\[[A-Z]+\] "/.test(x?.message ?? '')) return x?.data?.message as string ?? x?.statusMessage ?? x?.message ?? fallback
+  if (!failedStatus(e)) return /TimeoutError|timed? ?out/i.test(`${x?.message} ${x?.cause?.name} ${x?.cause?.message}`) ? table.panel.timeout : table.panel.offline
+  const text = [x?.data?.message, f?.data?.message, x?.statusMessage, f?.statusMessage].find(t => typeof t === 'string' && /[а-яё]/i.test(t))
   return text as string | undefined ?? fallback
 }

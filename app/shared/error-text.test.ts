@@ -133,8 +133,14 @@ describe('errText: текст ошибки запроса для человек�
   it('таймаут - панель не ответила вовремя', () => {
     expect(errText(fetchError(undefined, undefined, '[GET] "/api/x": <no response> The operation was aborted due to timeout'))).toBe('Панель не ответила вовремя')
   })
-  it('401 - один текст о конце сессии, что бы ни прислал сервер', () => {
-    expect(errText(fetchError(401, { message: 'Нужно войти' }))).toBe('Сессия завершена, войдите заново')
+  it('обрыв связи в useFetch (NuxtError с TypeError внутри) - тоже про недоступность', () => {
+    const wrapped = Object.assign(new Error('[GET] "/api/clients": <no response> Failed to fetch'), { name: 'NuxtError', cause: new TypeError('Failed to fetch') })
+    expect(errText(wrapped)).toBe('Панель недоступна, проверьте соединение')
+    expect(failedStatus(wrapped)).toBeUndefined()
+  })
+  it('401: закрытая ручка - текст конца сессии, вход - свой текст', () => {
+    expect(errText(fetchError(401, { message: 'Сессия завершена, войдите заново' }))).toBe('Сессия завершена, войдите заново')
+    expect(errText(fetchError(401, { message: 'Неверный текущий пароль' }))).toBe('Неверный текущий пароль')
     expect(failedStatus(nuxtError(fetchError(401)))).toBe(401)
   })
   it('русский текст сервера - как есть, английский - запасной текст', () => {

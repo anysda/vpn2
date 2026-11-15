@@ -10,8 +10,8 @@ const form = reactive({ ...BLANK })
 watch(open, now => now && Object.assign(form, BLANK))
 
 function submit() {
-  // Второй Enter, пока идёт первый POST, клиента не дублирует.
-  if (busy.value.has('create')) return
+  // Второй Enter, пока идёт первый POST или окно уже закрывается, клиента не дублирует.
+  if (busy.value.has('create') || !open.value) return
   const name = form.name.trim()
   if (!name) return toast.add({ title: 'Укажите имя', color: 'error' })
   const expiresAt = form.expires.trim() ? parseRuDateUtc(form.expires) : null

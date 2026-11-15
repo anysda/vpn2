@@ -54,9 +54,10 @@ function toggle(x: NodeMetric) {
 <template>
   <section data-testid="ov-nodes" class="my-3 grid gap-3" :style="{ gridTemplateColumns: `repeat(auto-fit,minmax(min(100%,${nodes.length > 4 ? 200 : 240}px),1fr))` }">
     <button
-      v-for="x in nodes" :key="x.tag" type="button" class="card text-left" :class="{ lit: nodeHealth(x).kind !== 'ok' && !x.disabled, 'opacity-50': x.disabled }"
+      v-for="x in nodes" :key="x.tag" type="button" class="card cursor-pointer text-left" :class="{ lit: nodeHealth(x).kind !== 'ok' && !x.disabled, 'opacity-50': x.disabled }"
       :aria-label="`${exitName(x.tag)}: подробности`" :data-tag="x.tag" @click="openTag = x.tag">
-      <div class="font-medium">
+      <svg class="i absolute top-4 right-4 text-(--t3)" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" /></svg>
+      <div class="pr-6 font-medium">
         {{ exitName(x.tag) }}<small class="block text-xs font-normal text-(--t3)">{{ subtitle(x) }}</small>
       </div>
       <div class="mt-3 flex items-baseline gap-2">

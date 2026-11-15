@@ -7,6 +7,7 @@
 .clp .seg>a.on b{color:var(--acc-t)}
 .clp .sel{position:relative;display:inline-flex;align-items:center}
 .clp .sel select{appearance:none;height:40px;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px var(--font-sans);cursor:pointer;outline:0}
+[data-kbd] .clp .sel select:focus-visible{outline:2px solid rgba(var(--fg),.45);outline-offset:2px}
 .clp .sel select option{background:var(--card-a)}
 .clp .sel svg{position:absolute;right:13px;pointer-events:none;color:var(--t2)}
 /* список и карточка */
@@ -154,12 +155,18 @@
 .clm .kvr{display:grid;grid-template-columns:150px 1fr 30px;align-items:center;gap:10px;padding:10px 0;border-top:1px solid rgba(var(--fg),.05);font-size:12.5px}
 .clm .kvr:first-of-type{margin-top:12px}
 .clm .kvr>span{color:var(--t3)}
-.clm .kvr code{font:400 12.5px ui-monospace,Menlo,monospace;color:var(--t1);word-break:break-all}
+.clm .kvr code{font:400 12.5px ui-monospace,Menlo,monospace;color:var(--t1);overflow-wrap:anywhere}
 .clm .kvr .r2{display:flex;gap:6px}
 /* IKEv2: строки на общей сетке. Подпись по своей ширине, кнопки справа в одну вертикаль. */
 .clm .kvl{display:grid;grid-template-columns:fit-content(50%) minmax(0,1fr) 66px;column-gap:10px;margin-top:6px}
 .clm .kvl .kvr{grid-column:1/-1;grid-template-columns:subgrid}
 .clm .kvl .r2{justify-content:flex-end}
+/* Телефон: подпись над значением, значение во всю ширину - адрес и логин не рвутся. */
+@media (max-width:720px){
+  .clm .kvl{grid-template-columns:minmax(0,1fr) 66px}
+  .clm .kvl .kvr{row-gap:4px}
+  .clm .kvl .kvr>span:first-child{grid-column:1/-1}
+}
 .clm .sub2{color:var(--t3);font-size:12.5px;margin-top:3px}
 .clm .tog:disabled{opacity:.35}
 .clm .wait{color:var(--t3);font-size:13px;text-align:center;padding:16px 0 4px}

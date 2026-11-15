@@ -30,10 +30,18 @@ function back(router: Router) {
   })
 }
 
+/** Сколько шторок открыто: тосты телефона при них внизу, не над заголовком окна (app.vue). */
+export const useOpenLayers = () => useState('open-layers', () => 0)
+
 /** Открытая шторка - своя запись в истории телефона; «назад» её закрывает. */
 export function useLayer(open: Ref<boolean>) {
   const router = useRouter()
   const mobile = useMobile()
+  const opened = useOpenLayers()
+  const count = (now: boolean) => { opened.value += now ? 1 : -1 }
+  if (open.value) count(true)
+  watch(open, count)
+  onBeforeUnmount(() => { if (open.value) count(false) })
   const layer = `layer-${++layers}`
   // Открыта, а своя запись ещё ждёт очереди: «назад» закрытой в тот же такт соседки - не ей.
   let pending = false

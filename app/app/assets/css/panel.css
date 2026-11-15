@@ -156,6 +156,8 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
 .pill.red{color:var(--red-t);border-color:rgba(var(--red-rgb),.3)}
 .scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent}
 .scroll::-webkit-scrollbar{width:8px}
+/* Нижний край списка гаснет: обрезанная строка видна как продолжение; в конце прокрутки последняя - над затуханием. */
+.fade{padding-bottom:24px;-webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 24px),transparent);mask-image:linear-gradient(180deg,#000 calc(100% - 24px),transparent)}
 .scroll::-webkit-scrollbar-thumb{background:rgba(var(--fg),.12);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
 .xb{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;border:1px solid var(--line);background:none;color:var(--t3);cursor:pointer;transition:transform .16s var(--ease),color .2s,background-color .2s}
 .tog{width:42px;height:24px;border-radius:999px;background:var(--tog);position:relative;cursor:pointer;flex:none;border:0;padding:0;transition:background-color .2s}
@@ -209,7 +211,7 @@ fieldset.fg2{border:0;margin:0;padding:0;min-width:0}
 .ys{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0 0 6px}
 .ys div{display:flex;flex-direction:column;gap:4px;padding-left:14px;border-left:1px solid rgba(var(--fg),.07)}
 .ys div:first-child{padding-left:0;border-left:0}
-.ys span{font-size:11.5px;color:var(--t3)}.ys b{font-weight:400;font-size:17px}
+.ys span{font-size:11.5px;color:var(--t3)}.ys b{font-weight:400;font-size:17px;margin-top:auto}
 #tfa{margin-top:22px}#tfa .sh{padding-top:16px;border-top:1px solid rgba(var(--fg),.08)}#tfa form{display:contents}
 #tfa .mt{margin-top:14px}
 .qrrow{display:flex;gap:18px;align-items:flex-end}
@@ -248,8 +250,9 @@ fieldset.fg2{border:0;margin:0;padding:0;min-width:0}
   .mbar .tabs a:not(.on):hover{color:var(--t2)}
   .mbar .tabs a:active,.mper:active{transform:scale(.96)}
   .wrap>header button,.mbar a{touch-action:manipulation}
-  /* тосты Nuxt UI: сверху, плашка с точкой, как в макете */
-  ol[data-slot="viewport"]{top:calc(14px + env(safe-area-inset-top))}
+  /* тосты Nuxt UI: сверху, плашка с точкой, как в макете; при открытом окне - снизу (app.vue) */
+  body:not(:has(.clm)) ol[data-slot="viewport"]{top:calc(14px + env(safe-area-inset-top))}
+  body:has(.clm) ol[data-slot="viewport"]{bottom:calc(14px + env(safe-area-inset-bottom))}
   ol[data-slot="viewport"]>li{gap:10px;padding:11px 16px;border-radius:16px;background:var(--toast);box-shadow:0 0 0 1px var(--line2),0 12px 30px rgba(0,0,0,calc(.5*var(--shk)))}
   ol[data-slot="viewport"]>li::before{content:"";flex:none;align-self:center;width:7px;height:7px;border-radius:50%;background:var(--green)}
   ol[data-slot="viewport"]>li[class*="outline-error"]::before{background:var(--red)}

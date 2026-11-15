@@ -7,17 +7,17 @@ const mobile = useMobile()
 const period = useState<'day' | 'week'>('ov-period', () => 'day')
 onUnmounted(() => { period.value = 'day' })
 
-const { data: nodeList, refresh: refreshNodes } = useFetch('/api/ops/nodes', { default: () => [], server: false })
-usePoll(refreshNodes, 2000)
+// Опросы держат последний ответ: на перезапуске панели карточки не пропадают.
+const { data: nodeList, refresh: refreshNodes } = usePolledFetch('/api/ops/nodes', 3000, 10_000, [] as NodeMetric[])
 const nodes = computed(() => sortNodes(nodeList.value))
 // Пинг экзита - задержка его прямого выхода в sing-box.
 const { data: outbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
 const pings = computed(() => Object.fromEntries(routeColumns(outbounds.value).map(c => [c.tag, c.delay || null])))
 
-const { data: events, refresh: refreshEvents } = useFetch('/api/events', { query: { limit: 30 }, default: () => [] })
+const { data: events } = usePolledFetch('/api/events', 30_000, 10_000, [] as Api<'/api/events'>, { query: { limit: 30 }, server: true })
 // «Сегодня» ленты - по часам сервера, пока страница не ожила: гидратация сходится и при чужих часах браузера.
 const eventsNow = useState('events-now', () => Date.now())
-usePoll(() => refreshEvents().then(() => { eventsNow.value = Date.now() }), 30_000)
+watch(events, () => { eventsNow.value = Date.now() })
 const LEVEL: Record<EventLevel, string> = { alarm: 'var(--red)', warn: 'var(--amber)', info: 'var(--g2)', ok: 'var(--green)' }
 
 // Выходы: доля экзита в текущем трафике; лидер акцентом, медленные и пропавшие красным.
@@ -30,14 +30,12 @@ const exits = computed(() => {
   return { total, rows: list.map((x, i) => ({ ...x, c: x.bad ? 'var(--red)' : i === 0 ? 'var(--acc)' : GREYS[(i - 1) % 4]!, pct: total ? Math.round(x.v / total * 100) : 0 })) }
 })
 
-const { data: dns, refresh: refreshDns } = useFetch('/api/ops/adguard', { server: false })
-usePoll(refreshDns, 30_000)
+const { data: dns } = usePolledFetch('/api/ops/adguard', 30_000, 10_000, null as Api<'/api/ops/adguard'> | null)
 
 const { data: top } = useFetch('/api/clients/top', { query: { period }, server: false })
 const topRows = computed(() => (top.value?.clients.filter(c => c.total > 0) ?? []).slice(0, mobile.value ? 3 : undefined))
 
-const { data: online, refresh: refreshOnline } = useFetch('/api/ops/clients-online', { server: false })
-usePoll(refreshOnline, 60_000)
+const { data: online } = usePolledFetch('/api/ops/clients-online', 60_000, 10_000, null as Api<'/api/ops/clients-online'> | null)
 const onlineCards = computed(() => {
   const d = online.value
   const share = (v: number) => d?.total ? `${Math.round(v / d.total * 100)}%` : '0%'
@@ -56,9 +54,9 @@ const onlineCards = computed(() => {
       </button>
     </div>
     <section class="grid gap-3 lg:grid-cols-[1.2fr_1.6fr_1fr_1fr]">
-      <div data-testid="ov-events" class="card flex max-h-[290px] flex-col">
+      <div data-testid="ov-events" class="card flex max-h-[290px] flex-col lg:max-h-none">
         <h3>События</h3>
-        <ul v-if="events.length" class="scroll mt-3 flex-1 space-y-3">
+        <ul v-if="events.length" class="scroll fade mt-3 flex-1 space-y-3 lg:[contain:size]">
           <li v-for="e in events" :key="e.id" class="grid grid-cols-[44px_8px_1fr] gap-x-2.5 text-sm">
             <time class="mono text-xs text-(--t3)" :datetime="new Date(e.at).toISOString()">{{ timeOrDdmmMsk(e.at, eventsNow) }}</time>
             <span class="dot mt-1.5" :style="{ background: LEVEL[e.level] }" />
@@ -92,9 +90,9 @@ const onlineCards = computed(() => {
     <OverviewNodes :nodes="nodes" :pings="pings" :refresh="refreshNodes" />
     <section class="grid gap-3 lg:grid-cols-[2fr_1.2fr_1fr]">
       <OverviewActivity />
-      <div data-testid="ov-top" class="card flex max-h-[272px] flex-col">
+      <div data-testid="ov-top" class="card flex max-h-[272px] flex-col lg:max-h-none">
         <h3>Топ клиентов</h3>
-        <div class="scroll mt-2 flex-1">
+        <div class="scroll fade mt-2 flex-1 lg:[contain:size]">
           <NuxtLink v-for="(c, i) in topRows" :key="c.id" :to="{ path: '/clients', query: { id: c.id } }" class="grid grid-cols-[18px_minmax(0,1fr)_auto] gap-x-2 gap-y-1 rounded-lg p-2 text-sm hover:bg-(--chip)">
             <span class="text-xs text-(--t3)">{{ i + 1 }}</span><span class="truncate">{{ c.name }}</span><b class="font-medium">{{ sizeBinRu(c.total) }}</b>
             <span class="col-start-2 h-1 rounded bg-(--line)"><i class="block h-full rounded" :class="i ? 'bg-(--g3)' : 'bg-(--acc)'" :style="{ width: `${Math.max(2, c.total / topRows[0]!.total * 100)}%` }" /></span>

@@ -158,7 +158,7 @@ class Clash:
     """clash-api по сценарию: снимки селекторов по очереди (последний повторяется), пробы ноги hy2 по кругу."""
 
     def __init__(self, snapshots, delays=(None,)):
-        self.snapshots, self.delays, self.probes = list(snapshots), list(delays), []
+        self.snapshots, self.delays, self.probes = list(snapshots), delays, []
 
     def proxies(self, *, timeout):
         assert timeout
@@ -170,7 +170,11 @@ class Clash:
     def delay(self, tag, _url, *, timeout_ms, http_timeout):
         assert timeout_ms and http_timeout
         self.probes.append(tag)
-        ms = self.delays[(len(self.probes) - 1) % len(self.delays)]
+        # Словарь - ответ по ноге (hy2 или tcp), иначе пробы по кругу.
+        if isinstance(self.delays, dict):
+            ms = self.delays[tag.split('-')[1]]
+        else:
+            ms = self.delays[(len(self.probes) - 1) % len(self.delays)]
         return ms, '' if ms else 'таймаут'
 
 
@@ -200,12 +204,30 @@ def test_exit_transport_without_tcp(clash, snapshots, rc, reason):
 
 
 def test_exit_transport_red_when_hy2_leg_silent(clash):
-    # UDP до экзита перекрыт: нога hy2 не ответила ни разу - красная, возврата сторожа не ждём.
-    (rc, reason), spent, probes = clash([TCP])
+    # UDP до экзита перекрыт: нога hy2 молчит всё окно, запасной TCP возит трафик - красная.
+    (rc, reason), spent, probes = clash([TCP], delays={'hy2': None, 'tcp': 40})
     assert rc == 1
-    assert reason == f'{ON_TCP}; hy2 не ответил за 3 круга проб'
-    assert spent < 20
-    assert set(probes) == {'transport-hy2-nl-direct', 'transport-hy2-nl-mgmt'}
+    assert reason == f'{ON_TCP}; hy2 не ответил за 50 с'
+    assert 50 <= spent < 55
+    assert {'transport-hy2-nl-direct', 'transport-hy2-nl-mgmt', 'transport-tcp-nl-direct'} <= set(probes)
+
+
+def test_exit_transport_waits_out_path_outage(clash):
+    # Провал пути на 40 с (стенд Aeza Москва -> экзит): hy2 молчит дольше трёх кругов проб,
+    # потом отвечает, сторож возвращает канал - зелёная.
+    outage = [TCP] * 14 + [HY2]
+    (rc, reason), spent, _ = clash(outage, delays=(None,) * 16 + (41,))
+    assert (rc, reason) == (0, '')
+    assert spent > 20
+
+
+def test_exit_transport_unmeasured_when_exit_egress_dead(clash):
+    # WARP экзита отказал: молчат и hy2, и TCP той же ноги - канал не виноват, не проверено.
+    warp = {'hy2-nl-direct': {'now': 'transport-hy2-nl-direct'}, 'hy2-nl-warp': {'now': 'transport-tcp-nl-warp'}}
+    (rc, reason), spent, _ = clash([warp], delays={'hy2': None, 'tcp': None})
+    assert rc == 2
+    assert reason == 'hy2-nl-warp: выход экзита nl не ответил ни по hy2, ни по запасному TCP за 50 с - канал не различить'
+    assert 50 <= spent < 60
 
 
 def test_exit_transport_waits_for_return_under_loss(clash):

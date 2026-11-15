@@ -38,7 +38,6 @@ IKEV2_STATUS = Path('/etc/anysda/ikev2-status.json')
 SINGBOX_CONFIG = Path('/etc/sing-box/config.json')
 FAILOVER_ENV = Path('/etc/anysda/failover-watchdog.env')
 HY2_PROBE_URL = 'http://www.gstatic.com/generate_204'
-HY2_SILENT = 3
 WARP_STATE = Path('/var/lib/anysda-warp-watchdog/state.json')
 TARGETS_URL = 'http://127.0.0.1:8428/api/v1/targets'
 YT_CHECK = '/usr/local/bin/anysda-yt-check'
@@ -262,11 +261,16 @@ def exit_transport(tag):
 
     На VLESS-TCP трафик идёт, маршруты проходят: без этой проверки verify зелёный при закрытом hy2.
     На пути с потерями сторож уводит канал на TCP и при живом hy2: тогда ждём его возврата
-    (TCP_RETURN_S с запасом). Красная сразу - если ни одна нога hy2 не ответила за HY2_SILENT кругов.
+    (TCP_RETURN_S с запасом). Нога hy2 молчит всё это время - красная, если запасной TCP при этом
+    возит трафик; молчат обе - отказал выход экзита (WARP), а не канал: 2, не проверено.
     """
     selectors = (f'hy2-{tag}-direct', f'hy2-{tag}-warp', f'hy2-{tag}-mgmt')
     wait = tcp_return() + 30
-    deadline, heard, rounds = time.monotonic() + wait, False, 0
+    deadline, heard = time.monotonic() + wait, False
+
+    def answers(api, legs):
+        return any(api.delay(leg, HY2_PROBE_URL, timeout_ms=3000, http_timeout=3.5)[0] for leg in legs)
+
     try:
         api = ClashApi.from_config(SINGBOX_CONFIG)
         while True:
@@ -275,16 +279,16 @@ def exit_transport(tag):
             on_tcp = [name for name in selectors if now[name].startswith('transport-tcp-')]
             if not on_tcp:
                 return 0, ''
-            if not heard:
-                legs = ['transport-hy2-' + now[name][len('transport-tcp-'):] for name in on_tcp]
-                heard = any(api.delay(leg, HY2_PROBE_URL, timeout_ms=3000, http_timeout=3.5)[0] for leg in legs)
-                rounds += 1
-            if not heard and rounds >= HY2_SILENT:
-                return 1, (f'hy2 до экзита {tag} не работает, трафик на запасном TCP (VLESS Reality): '
-                           f'{", ".join(on_tcp)}; hy2 не ответил за {rounds} круга проб')
+            heard = heard or answers(api, ['transport-hy2-' + now[name][len('transport-tcp-'):] for name in on_tcp])
             if time.monotonic() >= deadline:
-                return 1, (f'канал на запасном TCP дольше {wait:.0f} с при живом hy2 до экзита {tag}: '
-                           f'сторож не вернул {", ".join(on_tcp)}')
+                if heard:
+                    return 1, (f'канал на запасном TCP дольше {wait:.0f} с при живом hy2 до экзита {tag}: '
+                               f'сторож не вернул {", ".join(on_tcp)}')
+                if not answers(api, [now[name] for name in on_tcp]):
+                    return 2, (f'{", ".join(on_tcp)}: выход экзита {tag} не ответил ни по hy2, ни по запасному TCP '
+                               f'за {wait:.0f} с - канал не различить')
+                return 1, (f'hy2 до экзита {tag} не работает, трафик на запасном TCP (VLESS Reality): '
+                           f'{", ".join(on_tcp)}; hy2 не ответил за {wait:.0f} с')
             time.sleep(2)
     except (OSError, ValueError, KeyError) as error:
         return 2, f'clash-api sing-box не ответил: {error}'
@@ -592,8 +596,10 @@ def entry(stage):
         stage.fail('ssh экзитов: EXIT_TAGS пуст — нет узлов для проверки')
     curl = ('curl', '-fsS', '--max-time', '5', '-o', '/dev/null')
     stage.checks([
-        *((f'ssh {tag} через hy2-mgmt', exit_ssh, tag, stage.env.get('SSH_PROBE_TIMEOUT', '30')) for tag in stage.exits),
-        *((f'{tag}: транспорт hy2, не запасной TCP', exit_transport, tag) for tag in stage.exits),
+        *((f'ssh {tag} через hy2-mgmt', exit_ssh, tag, stage.env.get('SSH_PROBE_TIMEOUT', '30')) for tag in stage.exits)])
+    for tag in stage.exits:
+        stage.check(f'{tag}: транспорт hy2, не запасной TCP', exit_transport, tag, allow_unmeasured=True)
+    stage.checks([
         ('frontend: Caddy слушает :80', command, 'curl', '-sS', '--max-time', '5', '-o', '/dev/null',
          'http://127.0.0.1:80/'),
         ('frontend: панель отвечает через Caddy по HTTPS', panel),

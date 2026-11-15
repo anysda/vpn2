@@ -156,7 +156,7 @@ def test_help_needs_no_config_lock_or_root(tree):
         done = deploy(tree, *args, VPN2_STATE_DIR='/proc/denied', VPN2_DEPLOY_LOCK='/proc/denied/lock')
         assert done.returncode == 0, done.stderr
         assert done.stdout.startswith('anysda-vpn2 — деплой\n')
-        assert 'Группы:   ru | foreign | all | <конкретный тег экзита>' in done.stdout
+        assert done.stdout == (ROOT / 'infra/vpn2/tests/fixtures/deploy-help.txt').read_text()
 
 
 def test_missing_config_is_refused(tree):

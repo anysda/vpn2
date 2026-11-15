@@ -5,11 +5,13 @@ import { useDb } from '../database/client'
 import { accounts, botOutbox, clients, users } from '../database/schema'
 import { DAY_MS } from '../../shared/msk'
 
-// Тревоги извне: от бота (Telegram отверг сообщение) и от скрипта бэкапа этой ноды.
+// События извне: от бота (Telegram отверг сообщение), скрипта бэкапа и сторожа YouTube этой ноды.
 const BotEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('telegram_rejected'), status: z.number().int().min(100).max(599), recipient: z.enum(['admin', 'client']) }),
   z.object({ type: z.literal('backup_failed'), detail: z.string().trim().max(200).default('') }),
   z.object({ type: z.literal('backup_warning'), detail: z.string().trim().max(200).default('') }),
+  // detail - тот же текст, что сторож отправил боту.
+  z.object({ type: z.literal('youtube_route'), route: z.enum(['youtube-ru', 'foreign-best']), detail: z.string().trim().min(1).max(500) }),
 ])
 
 const Telegram = z.object({
@@ -76,6 +78,11 @@ export default {
         type: 'telegram_rejected', level: 'alarm', object: 'bot', title: 'Telegram не принял сообщение бота',
         detail: `${body.recipient === 'client' ? 'клиенту' : 'админу'} · код ${body.status}`,
       })
+      return { ok: true }
+    }
+    if (body.type === 'youtube_route') {
+      const level = body.route === 'youtube-ru' ? 'ok' : 'warn'
+      await recordEvent({ type: body.type, level, object: 'youtube', title: 'Маршрут YouTube', detail: body.detail })
       return { ok: true }
     }
     await recordEvent({ type: body.type, object: 'backup', detail: body.detail, ...backupEvents[body.type] })

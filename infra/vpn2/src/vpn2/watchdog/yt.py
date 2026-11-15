@@ -42,6 +42,9 @@ NETWORK_MARKERS = ('timed out', 'connection refused', 'connection reset', 'netwo
                    'no route to host', 'name or service not known',
                    'temporary failure in name resolution', 'no address associated with hostname')
 YT_DLP = '/opt/anysda-yt-probe/bin/yt-dlp'
+JOURNAL_DETAIL = 500
+# Панель без этого типа событий (старая версия) отвечает 400: очередь не растёт без предела.
+JOURNAL_QUEUE = 20
 
 
 def api(method, body=None):
@@ -58,6 +61,13 @@ def notify(detail):
         print('YouTube: алерт не доставлен, повтор при следующей проверке', flush=True)
         return False
     return True
+
+
+def journal(change):
+    """Смена маршрута в журнал событий панели; False - повтор при следующей проверке."""
+    event = {'type': 'youtube_route', 'route': change['route'],
+             'detail': bot.clean_detail(change['detail'], JOURNAL_DETAIL)}
+    return bot.panel_event(event, secret_file=BOT_SECRET, opener=OPENER) is not bot.Outcome.FAILED
 
 
 def media_ok(returncode, stats):
@@ -252,8 +262,10 @@ def tick(path, sample):
         event = f'{current} → {target}; {detail}'
         print('YouTube: ' + event, flush=True)
         state['pending'].append(event)
+        state['journal'] = state.get('journal', []) + [{'route': target, 'detail': event}]
         save(path, state)
     state['pending'] = [event for event in state['pending'] if not notify(event)]
+    state['journal'] = [change for change in state.get('journal', [])[-JOURNAL_QUEUE:] if not journal(change)]
     save(path, state)
     if detail.startswith(MEMORY_LIMIT):
         print(f'YouTube: {detail}; не считается провалом YouTube, счётчики и маршрут {target} сохранены',

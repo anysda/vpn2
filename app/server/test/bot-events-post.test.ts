@@ -37,4 +37,18 @@ describe('POST /api/bot/events', () => {
     expect(recordEvent).toHaveBeenCalledTimes(2)
     expect(notifyBackupFailed).not.toHaveBeenCalled()
   })
+
+  it('смена маршрута YouTube сторожем - строка ленты с тем же текстом, что боту', async () => {
+    for (const [route, detail] of [['foreign-best', 'youtube-ru → foreign-best; 4 МиБ за 30 с'], ['youtube-ru', 'foreign-best → youtube-ru; 4 МиБ за 2 с']]) {
+      body.value = { type: 'youtube_route', route, detail }
+      await expect(handler({})).resolves.toEqual({ ok: true })
+    }
+    expect(recordEvent.mock.calls.map(([e]) => [e.level, e.title, e.detail])).toEqual([
+      ['warn', 'Маршрут YouTube', 'youtube-ru → foreign-best; 4 МиБ за 30 с'],
+      ['ok', 'Маршрут YouTube', 'foreign-best → youtube-ru; 4 МиБ за 2 с'],
+    ])
+    body.value = { type: 'youtube_route', route: 'other', detail: 'x' }
+    await expect(handler({})).rejects.toThrow()
+    expect(notifyBackupFailed).not.toHaveBeenCalled()
+  })
 })

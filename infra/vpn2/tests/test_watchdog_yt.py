@@ -181,6 +181,46 @@ class SwitchTests(unittest.TestCase):
                 notify.assert_called_once()
             self.assertEqual(json.loads(path.read_text())['pending'], [])
 
+    def test_route_change_reaches_panel_journal_with_bot_text(self):
+        watch = load()
+        sent = []
+
+        def panel(event, **_kwargs):
+            sent.append(event)
+            return watch.bot.Outcome.FAILED if len(sent) == 1 else watch.bot.Outcome.SENT
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'state.json'
+            path.write_text(json.dumps({'bad': 2, 'good': 0, 'pending': []}))
+            with patch.object(watch, 'api', side_effect=[{'now': 'youtube-ru'}, {}, {'now': 'foreign-best'}]), \
+                    patch.object(watch, 'notify', return_value=True) as notify, \
+                    patch.object(watch.bot, 'panel_event', side_effect=panel), patch('builtins.print'):
+                watch.tick(path, lambda: (False, 'slow'))
+            self.assertEqual(json.loads(path.read_text())['journal'],
+                             [{'route': 'foreign-best', 'detail': 'youtube-ru → foreign-best; slow'}])
+            # Панель не ответила: повтор следующим тиком, без второй смены маршрута и второго алерта боту.
+            with patch.object(watch, 'api', return_value={'now': 'foreign-best'}), \
+                    patch.object(watch, 'notify', return_value=True), \
+                    patch.object(watch.bot, 'panel_event', side_effect=panel), patch('builtins.print'):
+                watch.tick(path, lambda: (False, 'slow'))
+            self.assertEqual(json.loads(path.read_text())['journal'], [])
+        self.assertEqual(notify.call_args.args[0], 'youtube-ru → foreign-best; slow')
+        self.assertEqual(sent, [{'type': 'youtube_route', 'route': 'foreign-best',
+                                 'detail': 'youtube-ru → foreign-best; slow'}] * 2)
+
+    def test_journal_queue_is_bounded_when_panel_refuses(self):
+        watch = load()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'state.json'
+            backlog = [{'route': 'youtube-ru', 'detail': f'старое {i}'} for i in range(50)]
+            path.write_text(json.dumps({'bad': 0, 'good': 0, 'pending': [], 'journal': backlog}))
+            with patch.object(watch, 'api', return_value={'now': 'youtube-ru'}), \
+                    patch.object(watch, 'notify', return_value=True), \
+                    patch.object(watch.bot, 'panel_event', return_value=watch.bot.Outcome.FAILED), \
+                    patch('builtins.print'):
+                watch.tick(path, lambda: (True, 'fast'))
+            self.assertEqual(json.loads(path.read_text())['journal'], backlog[-watch.JOURNAL_QUEUE:])
+
     def assert_failover(self, watch):
         """Три провала подряд, каждый измерен: маршрут сменён ровно на третьем."""
         selector = Selector()

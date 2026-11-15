@@ -3,13 +3,14 @@ name: stand
 # Семь заданий идут параллельно (матрица Ubuntu 24.04 и 26.04).
 # deploy: чистая установка деревом ветки, 99-verify с настоящим трафиком
 #   WireGuard/OpenVPN/IKEv2; дальше на своём стенде одна из двух частей:
-#   again - слепок против эталона, повторный деплой (слепок тот же с допусками
-#   ignore-again.yml) и бот с поддельным токеном (панель жива, бот на паузе);
-#   restore - restore эталонного архива бэкапа.
+#   again - слепок против эталона и повторный деплой (слепок тот же с допусками
+#   ignore-again.yml); restore - restore эталонного архива бэкапа.
 # upgrade: выпуск UPGRADE_FROM, поставленный по манифесту (на dev диски узлов
 #   после установки живут в кэше, ВМ грузятся с них), обновление деревом ветки, слепок
 #   как у чистой установки с допусками ignore-upgrade.yml. С прошлого выпуска,
 #   на ветке выпуска - с 1.1.5.
+# Бот с поддельным токеном (панель жива, бот на паузе) - после обновления, на
+#   ветке выпуска - в again: там короче задание.
 # udp-cut: на своём стенде обрыв UDP entry → экзит.
 # Запускается на dev, на ветке выпуска и вручную, не на каждый PR. Коммит выпуска
 # проверяется на lane/release вместе с checks, dev этот прогон не повторяет.
@@ -69,7 +70,7 @@ jobs:
         run: python3 .github/reuse.py stand
 
   deploy:
-    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой и бот' || 'restore' }}"
+    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой' || 'restore' }}"
     needs: reuse
     if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
@@ -236,9 +237,10 @@ jobs:
           done
           exit "$rc"
 
-      # Сценарий 5 карточки: после слепков, токен бота их не трогает.
+      # Сценарий 5 карточки: после слепков, токен бота их не трогает. Здесь - на
+      # ветке выпуска, иначе в задании обновления, оно там короче.
       - name: бот с поддельным токеном
-        if: matrix.part == 'again'
+        if: ${{ matrix.part == 'again' && github.ref == 'refs/heads/lane/release' }}
         run: sudo infra/tests/ci-stand.sh bot-fake-token
 
       # Сценарий 3 карточки: restore эталонного архива и сверка с эталоном.
@@ -428,6 +430,11 @@ jobs:
               "infra/tests/fixtures/snapshot/ubuntu-${{ matrix.os }}-$node.json.gz" "stand-report/snapshot-$node.json" || rc=1
           done
           exit "$rc"
+
+      # Сценарий 5 карточки на обновлённой ветке; на ветке выпуска - в again.
+      - name: бот с поддельным токеном
+        if: github.ref != 'refs/heads/lane/release'
+        run: sudo infra/tests/ci-stand.sh bot-fake-token
 
       - name: collect
         if: always()

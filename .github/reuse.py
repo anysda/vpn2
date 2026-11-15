@@ -2,6 +2,7 @@
 """Reuse a finished run of the same commit instead of repeating it on dev, main and the release tag.
 
 checks: any earlier push run of the commit that ran the checks green; e2e is reused only if it ran there.
+stand: an earlier push run of the commit (lane/release before dev).
 images: the dev run of the commit; its images are retagged, not rebuilt.
 Prints step outputs; none means "run everything here". Any doubt falls back to a full run.
 """
@@ -33,26 +34,36 @@ def ran(job, step_prefix):
         s['name'].startswith(step_prefix) and s['conclusion'] == 'success' for s in job['steps'])
 
 
-def checks():
-    """Only earlier runs are waited for: two runs of one commit never wait for each other."""
+def earlier_green(workflow, job_prefix, step_prefix):
+    """Green earlier runs of the commit that did the work, with their jobs. Only earlier runs
+    are waited for: two runs of one commit never wait for each other."""
     deadline = time.monotonic() + WAIT
     while True:
-        earlier = [r for r in runs('checks.yml') if r['id'] < RUN]
-        rest = e2e = None
-        for run in (r for r in earlier if r['conclusion'] == 'success'):
-            done = jobs(run)
-            if any(ran(j, 'pytest') for j in done if j['name'].startswith('пакет vpn2')):
-                rest = rest or run
-                if any(ran(j, 'сквозные тесты') for j in done):
-                    e2e = e2e or run
-        if rest or not any(r['status'] != 'completed' for r in earlier) or time.monotonic() > deadline:
+        earlier = [r for r in runs(workflow) if r['id'] < RUN]
+        if all(r['status'] == 'completed' for r in earlier) or time.monotonic() > deadline:
             break
         time.sleep(20)
-    if rest:
-        print(f"::notice title=checks::проверки этого коммита уже прошли в {rest['html_url']}")
+    for run in (r for r in earlier if r['conclusion'] == 'success'):
+        done = jobs(run)
+        if any(ran(j, step_prefix) for j in done if j['name'].startswith(job_prefix)):
+            yield run, done
+
+
+def checks():
+    green = list(earlier_green('checks.yml', 'пакет vpn2', 'pytest'))
+    if green:
+        print(f"::notice title=checks::проверки этого коммита уже прошли в {green[0][0]['html_url']}")
         yield 'rest', 'skip'
-    if e2e:
+    if any(ran(j, 'сквозные тесты') for _, done in green for j in done):
         yield 'e2e', 'skip'
+
+
+def stand():
+    """Push runs only: a manual run may carry a negative control instead of the real check."""
+    for run, _ in earlier_green('stand.yml', 'стенд развёртывание', 'deploy'):
+        print(f"::notice title=stand::стенд этого коммита уже пройден в {run['html_url']}")
+        yield 'run', 'skip'
+        return
 
 
 def images():
@@ -76,7 +87,7 @@ def images():
 
 if __name__ == '__main__':
     try:
-        outputs = list({'checks': checks, 'images': images}[sys.argv[1]]())
+        outputs = list({'checks': checks, 'stand': stand, 'images': images}[sys.argv[1]]())
     except (subprocess.CalledProcessError, KeyError, ValueError) as error:
         print(f'::warning::повтор не проверен, прогон полный: {error}')
         outputs = []

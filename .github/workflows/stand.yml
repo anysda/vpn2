@@ -1,17 +1,19 @@
 name: stand
 
-# Пять заданий идут параллельно (матрица Ubuntu 24.04 и 26.04), прогон - до 15 минут.
+# Семь заданий идут параллельно (матрица Ubuntu 24.04 и 26.04).
 # deploy: чистая установка деревом ветки, 99-verify с настоящим трафиком
-#   WireGuard/OpenVPN/IKEv2, слепок против эталона; затем по порядку повторный
-#   деплой (слепок тот же с допусками ignore-again.yml), бот с поддельным токеном
-#   (панель жива, бот на паузе), restore эталонного архива бэкапа.
+#   WireGuard/OpenVPN/IKEv2; дальше на своём стенде одна из двух частей:
+#   again - слепок против эталона и повторный деплой (слепок тот же с допусками
+#   ignore-again.yml); restore - бот с поддельным токеном (панель жива, бот на
+#   паузе) и restore эталонного архива бэкапа.
 # upgrade: установка выпуска UPGRADE_FROM по манифесту, обновление деревом ветки,
 #   слепок как у чистой установки с допусками ignore-upgrade.yml.
 # udp-cut: на своём стенде обрыв UDP entry → экзит.
-# Запускается на dev и вручную, не на каждый PR.
+# Запускается на dev, на ветке выпуска и вручную, не на каждый PR. Коммит выпуска
+# проверяется на lane/release вместе с checks, dev этот прогон не повторяет.
 on:
   push:
-    branches: [dev]
+    branches: [dev, lane/release]
   workflow_dispatch:
     inputs:
       stop_openvpn:
@@ -41,20 +43,40 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: stand-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  reuse:
+    name: стенд коммита уже пройден
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      run: ${{ steps.reuse.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+      - id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/reuse.py stand
+
   deploy:
-    name: стенд развёртывание Ubuntu ${{ matrix.os }}
+    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой' || 'бот и restore' }}"
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: ['24.04', '26.04']
+        part: [again, restore]
     env:
       STAND_OS: ${{ matrix.os }}
     steps:
@@ -132,24 +154,27 @@ jobs:
 
       # ansible с entry достаёт все узлы стенда.
       - name: ansible ping
+        if: matrix.part == 'again'
         run: sudo infra/tests/ci-stand.sh ansible-ping
 
       # Отрицательный контроль: 99-verify при остановленном OpenVPN обязан упасть.
       - name: verify
-        if: ${{ inputs.stop_openvpn && !cancelled() && steps.up.outcome == 'success' }}
+        if: ${{ matrix.part == 'again' && inputs.stop_openvpn && !cancelled() && steps.up.outcome == 'success' }}
         run: sudo infra/tests/ci-stand.sh verify --stop-openvpn
 
       # Положительный контроль: сверка слепка с эталоном после этого обязана упасть.
       - name: snapshot corrupt
-        if: ${{ inputs.snapshot_corrupt }}
+        if: ${{ matrix.part == 'again' && inputs.snapshot_corrupt }}
         run: sudo infra/tests/ci-stand.sh snapshot-corrupt
 
       # Слепки в stand-report: collect проверяет их на пароль стенда, а
       # артефакт отчёта их отдаёт.
       - name: snapshot
+        if: matrix.part == 'again'
         run: sudo infra/tests/ci-stand.sh snapshot stand-report
 
       - name: venv
+        if: matrix.part == 'again'
         run: |
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q ./infra/vpn2
@@ -157,7 +182,7 @@ jobs:
       # Оба узла сверяются всегда: красный шаг - если разошёлся хоть один
       # или эталона нет.
       - name: snapshot diff
-        if: ${{ inputs.snapshot_reason == '' }}
+        if: ${{ matrix.part == 'again' && inputs.snapshot_reason == '' }}
         run: |
           rc=0
           for node in entry exit; do
@@ -176,7 +201,7 @@ jobs:
       # В репу CI их не коммитит. stand-report принадлежит root, поэтому
       # сжатое кладётся в свой каталог.
       - name: snapshot reference
-        if: ${{ inputs.snapshot_reason != '' }}
+        if: ${{ matrix.part == 'again' && inputs.snapshot_reason != '' }}
         env:
           SNAPSHOT_REASON: ${{ inputs.snapshot_reason }}
         run: |
@@ -187,7 +212,7 @@ jobs:
           done
 
       - uses: actions/upload-artifact@v7
-        if: ${{ inputs.snapshot_reason != '' }}
+        if: ${{ matrix.part == 'again' && inputs.snapshot_reason != '' }}
         with:
           name: snapshot-ubuntu-${{ matrix.os }}
           path: snapshot-ref/
@@ -195,9 +220,11 @@ jobs:
 
       # Сценарий 2 карточки: слепок до и после повторного ./deploy.sh одинаков.
       - name: повторный деплой
+        if: matrix.part == 'again'
         run: sudo infra/tests/ci-stand.sh deploy-again stand-report
 
       - name: "повторный деплой: слепок тот же"
+        if: matrix.part == 'again'
         run: |
           rc=0
           cat infra/tests/fixtures/snapshot/ignore.yml infra/tests/fixtures/snapshot/ignore-again.yml > "$RUNNER_TEMP/ignore-again.yml"
@@ -209,19 +236,20 @@ jobs:
 
       # Сценарий 5 карточки.
       - name: бот с поддельным токеном
+        if: matrix.part == 'restore'
         run: sudo infra/tests/ci-stand.sh bot-fake-token
 
       # Сценарий 3 карточки: restore эталонного архива и сверка с эталоном.
       - name: restore эталонного архива
-        if: ${{ !inputs.backup_fixture }}
+        if: ${{ matrix.part == 'restore' && !inputs.backup_fixture }}
         run: sudo infra/tests/ci-stand.sh restore-check ${{ inputs.restore_foreign && '--foreign-pass' || '' }}
 
       - name: эталонный архив бэкапа
-        if: ${{ inputs.backup_fixture }}
+        if: ${{ matrix.part == 'restore' && inputs.backup_fixture }}
         run: sudo infra/tests/ci-stand.sh backup-fixture backup-fixture && sudo chown -R "$USER" backup-fixture
 
       - uses: actions/upload-artifact@v7
-        if: ${{ inputs.backup_fixture }}
+        if: ${{ matrix.part == 'restore' && inputs.backup_fixture }}
         with:
           name: backup-fixture-ubuntu-${{ matrix.os }}
           path: backup-fixture/
@@ -234,7 +262,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: verify-report-ubuntu-${{ matrix.os }}
+          name: verify-report-${{ matrix.part == 'restore' && 'restore-' || '' }}ubuntu-${{ matrix.os }}
           path: stand-report/
           if-no-files-found: warn
 
@@ -243,7 +271,7 @@ jobs:
         run: sudo infra/tests/ci-stand.sh down
 
       - name: apt cache save
-        if: ${{ always() && steps.apt-cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && matrix.part == 'again' && steps.apt-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: /var/tmp/vpn2-apt-cache
@@ -251,6 +279,8 @@ jobs:
 
   upgrade:
     name: стенд обновление с выпуска Ubuntu ${{ matrix.os }}
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -393,6 +423,8 @@ jobs:
   # sing-box и возвращается на Hysteria2. Стенд только из нужных стадий.
   udp-cut:
     name: стенд обрыв UDP
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

@@ -60,6 +60,9 @@ INTERNET = (('connectivitycheck.gstatic.com', '/generate_204', 204),
             ('www.google.com', '/generate_204', 204),
             ('checkip.amazonaws.com', '/', 200))
 NO_INTERNET = 'внешние адреса недоступны и с самого entry - причина неразличима'
+# Пробы, что обязаны не пройти, ждут ответа коротко: DNS entry по туннелю внутри хоста отвечает
+# за миллисекунды, утечка мимо туннеля на прямой выход - за доли секунды.
+REFUSED_DNS, REFUSED_HTTP = 1.5, 2
 STATUSES = ('Работает', 'Ошибка', 'Не проверено')
 OK, FAIL, UNKNOWN = range(3)
 MARKS = ('✓', '✗', '?')
@@ -121,8 +124,8 @@ def probe_http(ip, host, path='/', timeout=8):
         connection.request('GET', path, headers={'Host': host, 'User-Agent': 'vpn2-verify'})
         response = connection.getresponse()
         response.read(65536)
-        # Соединение держим, пока проверка смотрит в API sing-box.
-        time.sleep(0.8)
+        # Соединение держим, пока проверка смотрит в API sing-box (опрос раз в 50 мс).
+        time.sleep(0.3)
         return response.status
     except (OSError, http.client.HTTPException):
         return None
@@ -130,12 +133,12 @@ def probe_http(ip, host, path='/', timeout=8):
         connection.close()
 
 
-def probe_dns(server, name, port=53):
+def probe_dns(server, name, port=53, timeout=4):
     """Сырой DNS-запрос A: отсортированные адреса ответа ([] без адресов), None - ответа нет."""
     query_id = os.urandom(2)
     question = b''.join(bytes([len(p)]) + p.encode() for p in name.split('.')) + b'\0\0\1\0\1'
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.settimeout(4)
+        sock.settimeout(timeout)
         try:
             sock.connect((server, port))
             sock.send(query_id + b'\1\0\0\1\0\0\0\0\0\0' + question)
@@ -143,7 +146,7 @@ def probe_dns(server, name, port=53):
         except OSError:
             return None
         # UDP-сессию держим: её видно в API sing-box.
-        time.sleep(0.5)
+        time.sleep(0.2)
     if len(reply) < 12 or reply[:2] != query_id:
         return None
     flags, _questions, answers = struct.unpack('!HHH', reply[2:8])
@@ -723,13 +726,15 @@ class Verifier:
                          f'нет ответа или чужой путь: {sorted(leaves) if chain else "нет ответа"}')
 
     def alive(self, protocol, retry=True):
-        """Туннель передаёт данные: DNS entry отвечает через него."""
-        return self.probe(protocol, 'dns', ['10.99.0.1', 'dns.google'], retry=retry)[0] is not None
+        """Туннель передаёт данные: DNS entry отвечает через него. Без retry - доступ обязан не работать."""
+        wait = 4 if retry else REFUSED_DNS
+        return self.probe(protocol, 'dns', ['10.99.0.1', 'dns.google', 53, wait], retry=retry)[0] is not None
 
     def negative(self, protocol):
         protocol.down()
         leaks = []
-        if self.internet and self.probe(protocol, 'http', [self.internet[0], DIRECT + MARKER], retry=False)[0]:
+        if self.internet and self.probe(protocol, 'http', [self.internet[0], DIRECT + MARKER, '/', REFUSED_HTTP],
+                                        retry=False)[0]:
             leaks.append('http')
         if self.alive(protocol, retry=False):
             leaks.append('dns')
@@ -742,7 +747,6 @@ class Verifier:
             self.add('отзыв', protocol, FAIL, 'повторное подключение старого доступа до отзыва не удалось')
             return
         protocol.revoke('a')
-        time.sleep(1)
         live = self.alive(protocol, retry=False)
         again = protocol.admits('a', lambda: self.alive(protocol, retry=False))
         protocol.issue('b')

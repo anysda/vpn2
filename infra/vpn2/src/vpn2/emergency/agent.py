@@ -34,6 +34,7 @@ STABLE = 120         # готовность entry до объявления во
 RETURN = 600         # от объявления возврата до конца аварии
 TRANSITION = 600     # старые учётки после готовности нового лидера
 MARGIN = 5           # запас на доставку голоса
+LOST = 3             # столько проб порта entry подряд без ответа - порт потерян
 FRESH = 300          # допустимое расхождение часов узлов
 MAX_PACKET = 2048
 
@@ -103,7 +104,7 @@ class Exit(Agent):
         self.started = self.entry_seen = clock()
         self.ready_since = None
         self.not_ready = 0
-        self.reach = True
+        self.unreachable = 0
         self.counters = {}
         self.peers = {}
         self.vote = None
@@ -275,7 +276,7 @@ class Exit(Agent):
                 self.state.pop('start', None)
             return
         if self.role:
-            quiet = silence >= MISSED or self.not_ready >= 2 or not self.reach
+            quiet = silence >= MISSED or self.not_ready >= 2 or self.unreachable >= LOST
             if leader.get('deadline') is None:
                 if not quiet and self.ready_since is not None and now - self.ready_since >= STABLE:
                     leader['deadline'] = math.ceil((wall + RETURN) / 60) * 60
@@ -294,7 +295,7 @@ class Exit(Agent):
         self.state['leader'] = {'active': False}
         self.state.pop('start', None)
         self.state.pop('moved', None)
-        self.reach = True
+        self.unreachable = 0
 
     def status(self, now):
         leader = self.leader
@@ -376,8 +377,9 @@ class Exit(Agent):
         if leader['active']:
             if now - self.probe_at >= PERIOD:
                 self.probe_at = now
-                self.reach = readiness.reachable(self.state.get('entry_host') or self.nodes[self.entry][0])
-                if not self.reach:
+                host = self.state.get('entry_host') or self.nodes[self.entry][0]
+                self.unreachable = 0 if readiness.reachable(host) else self.unreachable + 1
+                if self.unreachable >= LOST:
                     self.ready_since = None
             if role and leader['owner'] == self.node:
                 self.serve(now, wall, leader, autonomous, image)

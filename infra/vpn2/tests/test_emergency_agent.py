@@ -327,6 +327,34 @@ class EmergencyAgentTests(unittest.TestCase):
         cluster.run(agent.RETURN + 120)
         self.assertEqual(cluster.active(), ['exit1'])
 
+    def test_lossy_path_to_entry_port_does_not_cancel_return(self):
+        cluster = Cluster(self)
+        self.outage(cluster)
+        probes = iter(range(10 ** 6))
+        lossy = lambda *_, **__: cluster.entry and next(probes) % 7 != 3
+        with patch.object(agent.readiness, 'reachable', lossy):
+            cluster.entry = True
+            cluster.run(agent.STABLE + 60)
+            deadline = cluster.exits['exit1'].leader['deadline']
+            self.assertIsNotNone(deadline)
+            cluster.run(deadline - cluster.wall + 10)
+        self.assertEqual(cluster.active(), [])
+        self.assertFalse(any(text.startswith('Основной VPN снова недоступен') for text in cluster.texts(ADMIN)))
+        self.assertFalse(any(text.startswith('Возврат отменён') for text in cluster.texts(101)))
+
+    def test_return_cancelled_when_entry_port_stays_unreachable(self):
+        cluster = Cluster(self)
+        self.outage(cluster)
+        cluster.entry = True
+        cluster.run(agent.STABLE + 60)
+        self.assertIsNotNone(cluster.exits['exit1'].leader['deadline'])
+        logging.disable(logging.NOTSET)
+        with patch.object(agent.readiness, 'reachable', lambda *_, **__: False), \
+                self.assertLogs('vpn2.emergency.agent', logging.INFO) as journal:
+            cluster.run(agent.MISSED + agent.PERIOD)
+        self.assertRegex('\n'.join(journal.output), r'entry lost again \(port 443 unreachable\)')
+        self.assertIsNone(cluster.exits['exit1'].leader['deadline'])
+
     def test_isolated_exit_leads_alone_after_guard(self):
         cluster = Cluster(self)
         cluster.entry = False

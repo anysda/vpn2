@@ -544,6 +544,7 @@ cmd_up() {
     { snapshot_tool "$ip" && ssh_node "$ip" "cat > $SNAP_DIR/base.json" < "$from/base-$name.json"; } \
       || die "база слепка выпуска не вернулась на $name"
   done
+  [[ -z $from ]] || release_base_tree
   host_stats 'ВМ готовы'
   entry_stats 'ВМ готовы'
 }
@@ -733,6 +734,7 @@ cmd_deploy_release() {
   [[ -f $manifest ]] || die "нет файла манифеста $manifest"
   host_stats 'до деплоя'
   apt_proxy_up --if-down
+  reboot_nodes
   push_tree
   snapshot_base
   push_tree --ref "$tag"
@@ -770,13 +772,54 @@ cmd_release_save() {
   log "выпуск сохранён за $((SECONDS - started)) с: $(du -sh "$RELEASE_DIR" | cut -f1)"
 }
 
+# Исходники в базе слепка выпуска - ветки, с которой кэш снимали. Как в прогоне
+# без кэша, база несёт дерево этой ветки: оно снимается в отдельном корне и
+# заменяет в базе /opt/anysda-vpn2, кроме config.yaml стенда.
+release_base_tree() {
+  local tree=$SNAP_DIR/tree
+  ssh_node "$ENTRY" "rm -rf $tree && mkdir -p $tree/opt/anysda-vpn2"
+  git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - \
+    | ssh_node "$ENTRY" "tar -xzf - -C $tree/opt/anysda-vpn2"
+  snapshot_run "$ENTRY" "--root $tree --out $SNAP_DIR/tree.json"
+  ssh_node "$ENTRY" "python3 - $SNAP_DIR/base.json $SNAP_DIR/tree.json" <<'PY' || die 'база слепка: дерево ветки не подставлено'
+import json, sys
+base, tree = (json.load(open(path)) for path in sys.argv[1:])
+top = '/opt/anysda-vpn2'
+inside = lambda name: name == top or name.startswith(top + '/')
+files = {k: v for k, v in base['files'].items() if not inside(k) or k == top + '/config.yaml'}
+files.update({k: v for k, v in tree['files'].items() if inside(k) and k != top + '/config.yaml'})
+base['files'] = files
+json.dump(base, open(sys.argv[1], 'w'))
+PY
+}
+
+# Узлы перезагружаются и ждутся: база слепка выпуска снимается с уже
+# перезагруженной ОС, как и слепок после обновления на ВМ с дисков выпуска.
+reboot_nodes() {
+  local node name ip waits=() p t0=$SECONDS
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    (
+      boot=$(ssh_node "$ip" 'cat /proc/sys/kernel/random/boot_id')
+      ssh_node "$ip" 'systemctl reboot --no-block' || true
+      until now=$(ssh_node "$ip" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [[ -n $now && $now != "$boot" ]]; do
+        (( SECONDS - t0 < 300 )) || die "ВМ $name не перезагрузилась за 5 мин"
+        sleep 1
+      done
+      ssh_node "$ip" 'systemctl is-system-running --wait >/dev/null' || true
+    ) & waits+=($!)
+  done
+  for p in "${waits[@]}"; do wait "$p" || die 'ВМ стенда не перезагрузились'; done
+  log 'узлы перезагружены'
+}
+
 # Ключ сохранённого выпуска: тег, образ и то, чем стенд его ставит - узлы,
 # заготовка cloud-init, раскладка исходников, config.yaml и инструмент слепка.
 release_key() {
   local tag=${1:?тег выпуска}
   printf '%s-%s-%s\n' "$tag" "$IMAGE_KEY" "$( {
     declare -p NODES NET
-    declare -f seed warm_script push_tree snapshot_base snapshot_tool snapshot_run cmd_deploy_release acme_up
+    declare -f seed warm_script push_tree snapshot_base snapshot_tool snapshot_run cmd_deploy_release acme_up reboot_nodes
     cat "$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml" "$REPO_ROOT/infra/tests/snapshot.py"
   } | sha256sum | cut -c1-16)"
 }

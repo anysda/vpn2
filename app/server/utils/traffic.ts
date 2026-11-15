@@ -1,13 +1,13 @@
-import { and, eq, lt, ne, sql, gte } from 'drizzle-orm'
+import { and, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { useDb } from '../database/client'
 import { collectorState, deviceTrafficHourly, devices } from '../database/schema'
 import { MSK_OFFSET_SEC } from '../../shared/msk'
 
 // Сборщик: каждый прогон прибавляет дельты счётчиков WG, OpenVPN и IKEv2 к devices.rx_total/tx_total
-// и почасовой истории; rx - загрузка клиента, tx - отдача. Прошлый снимок WG/OpenVPN - в памяти
-// (после рестарта первый прогон только базируется), IKEv2 - в базе: счётчик живёт, пока жива IKE_SA.
-const lastSeen = new Map<string, { rx: number, tx: number }>()
+// и почасовой истории; rx - загрузка клиента, tx - отдача. Прошлый снимок каждого протокола - в базе:
+// прирост за время рестарта панели засчитывает первый прогон после него.
+const PROTOCOLS = ['wg', 'openvpn', 'ikev2'] as const
 
 const RECENT_WINDOW_MS = 5 * 60_000
 const recent = new Map<number, Array<{ at: number, bytes: number }>>()
@@ -75,12 +75,13 @@ export const collectTraffic = coalesceRuns(async (): Promise<void> => {
   const rows = await db.select({ id: devices.id, pk: devices.wgPublicKey, ikev2: devices.ikev2Username }).from(devices)
   const byWgKey = new Map(rows.filter(r => r.pk).map(r => [r.pk!, r.id]))
   const byIkev2User = new Map(rows.filter(r => r.ikev2).map(r => [r.ikev2!, r.id]))
-  const [wg, ovpn, ikev2] = await Promise.all([
+  const [wg, openvpn, ikev2] = await Promise.all([
     sample<{ key: string }>('wg', s => ({ deviceId: byWgKey.get(s.key) })),
     sample<{ device_id: number }>('openvpn', s => ({ deviceId: s.device_id })),
     sample<{ username: string, uniqueid: string }>('ikev2', s => ({ deviceId: byIkev2User.get(s.username), uniqueid: s.uniqueid })),
   ])
-  const inMemory = [...wg ?? [], ...ovpn ?? []]
+  const samples = { wg, openvpn, ikev2 }
+  const saved = await db.select().from(collectorState).where(inArray(collectorState.name, [...PROTOCOLS]))
 
   const deltas = new Map<number, Counter>()
   function add(s: Sample, last: Counter) {
@@ -90,25 +91,24 @@ export const collectTraffic = coalesceRuns(async (): Promise<void> => {
     const d = deltas.get(s.deviceId) ?? { rx: 0, tx: 0 }
     deltas.set(s.deviceId, { rx: d.rx + rx, tx: d.tx + tx })
   }
-  for (const s of inMemory) {
-    const last = lastSeen.get(sampleKey(s))
-    if (last) add(s, last)
-  }
-  // Новая IKE_SA засчитывается целиком, исчезнувшие из снимка уходят из него.
-  let ikev2Next: Record<string, [number, number]> | null = null
-  if (ikev2) {
-    const [row] = await db.select().from(collectorState).where(eq(collectorState.name, 'ikev2'))
+  // Первый снимок протокола только базируется. Новый счётчик (пир, сессия, IKE_SA) засчитывается
+  // целиком, исчезнувшие уходят из снимка; протокол без ответа сохраняет прошлый снимок.
+  const snapshots: Array<{ name: string, value: string }> = []
+  for (const name of PROTOCOLS) {
+    const list = samples[name]
+    if (!list) continue
+    const row = saved.find(r => r.name === name)
     const prev: Record<string, [number, number]> | null = row ? JSON.parse(row.value) : null
-    ikev2Next = Object.fromEntries(ikev2.map(s => [sampleKey(s), [s.rx, s.tx]]))
-    for (const s of prev ? ikev2 : []) {
+    for (const s of prev ? list : []) {
       const [rx, tx] = prev![sampleKey(s)] ?? [0, 0]
       add(s, { rx, tx })
     }
+    snapshots.push({ name, value: JSON.stringify(Object.fromEntries(list.map(s => [sampleKey(s), [s.rx, s.tx]]))) })
   }
 
   const now = Date.now()
   const hour = Math.floor(now / 3_600_000) * 3600
-  // Тоталы и снимок IKEv2 одним батчем: сбой между ними засчитал бы интервал дважды или потерял его.
+  // Тоталы и снимки одним батчем: сбой между ними засчитал бы интервал дважды или потерял его.
   const writes: BatchItem<'sqlite'>[] = []
   const hourly = deviceTrafficHourly
   for (const [id, d] of deltas) {
@@ -122,13 +122,11 @@ export const collectTraffic = coalesceRuns(async (): Promise<void> => {
       }),
     )
   }
-  if (ikev2Next) {
-    const value = JSON.stringify(ikev2Next)
-    writes.push(db.insert(collectorState).values({ name: 'ikev2', value }).onConflictDoUpdate({ target: collectorState.name, set: { value } }))
+  for (const { name, value } of snapshots) {
+    writes.push(db.insert(collectorState).values({ name, value }).onConflictDoUpdate({ target: collectorState.name, set: { value } }))
   }
   const [first, ...rest] = writes
   if (first) await db.batch([first, ...rest])
-  for (const s of inMemory) lastSeen.set(sampleKey(s), { rx: s.rx, tx: s.tx })
   for (const [id, d] of deltas) recent.set(id, [...recent.get(id) ?? [], { at: now, bytes: Math.round(d.rx) + Math.round(d.tx) }])
   for (const [id, list] of recent) {
     const fresh = list.filter(e => now - e.at <= RECENT_WINDOW_MS)
@@ -141,7 +139,7 @@ export const collectTraffic = coalesceRuns(async (): Promise<void> => {
     await compactTrafficHistory(Math.floor(now / 1000))
   }
 
-  useLogger().info({ wg: wg?.length ?? 0, ovpn: ovpn?.length ?? 0, ikev2: ikev2?.length ?? null, updated: deltas.size }, 'traffic: collected')
+  useLogger().info({ wg: wg?.length ?? 0, ovpn: openvpn?.length ?? 0, ikev2: ikev2?.length ?? null, updated: deltas.size }, 'traffic: collected')
 })
 
 // «В сети» - от 20 КБ за 5 минут (keepalive и рукопожатия простаивающего устройства ~0,5 КБ),

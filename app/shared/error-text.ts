@@ -24,9 +24,11 @@ export function failedStatus(e: unknown): number | undefined {
 export function errText(e: unknown, fallback = 'Ошибка'): string {
   const x = e as Failure | null
   const f = x?.cause?.name === 'FetchError' ? x.cause : x
-  // Обрыв связи useFetch заворачивает в NuxtError: в cause - TypeError, признак запроса - текст ofetch «[GET] "…"».
-  if (f?.name !== 'FetchError' && !/^\[[A-Z]+\] "/.test(x?.message ?? '')) return x?.data?.message as string ?? x?.statusMessage ?? x?.message ?? fallback
-  if (!failedStatus(e)) return /TimeoutError|timed? ?out/i.test(`${x?.message} ${x?.cause?.name} ${x?.cause?.message}`) ? table.panel.timeout : table.panel.offline
+  // useFetch заворачивает обрыв связи в NuxtError (в cause - TypeError, признак - текст ofetch «[GET] "…"»),
+  // а свой таймаут - в NuxtError с TimeoutError.
+  const timedOut = /TimeoutError|timed? ?out/i.test(`${x?.name} ${x?.message} ${x?.cause?.name} ${x?.cause?.message}`)
+  if (f?.name !== 'FetchError' && !timedOut && !/^\[[A-Z]+\] "/.test(x?.message ?? '')) return x?.data?.message as string ?? x?.statusMessage ?? x?.message ?? fallback
+  if (!failedStatus(e)) return timedOut ? table.panel.timeout : table.panel.offline
   const text = [x?.data?.message, f?.data?.message, x?.statusMessage, f?.statusMessage].find(t => typeof t === 'string' && /[а-яё]/i.test(t))
   return text as string | undefined ?? fallback
 }

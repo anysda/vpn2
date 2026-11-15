@@ -130,6 +130,10 @@ describe('errText: текст ошибки запроса для человек�
     expect(errText(fetchError())).toBe('Панель недоступна, проверьте соединение')
     expect(errText(nuxtError(fetchError()))).toBe('Панель недоступна, проверьте соединение')
   })
+  it('таймаут useFetch (NuxtError с TimeoutError) - панель не ответила вовремя', () => {
+    const timeout = Object.assign(new Error('signal timed out'), { name: 'TimeoutError' })
+    expect(errText(Object.assign(new Error('signal timed out'), { name: 'NuxtError', statusCode: 500, cause: timeout }))).toBe('Панель не ответила вовремя')
+  })
   it('таймаут - панель не ответила вовремя', () => {
     expect(errText(fetchError(undefined, undefined, '[GET] "/api/x": <no response> The operation was aborted due to timeout'))).toBe('Панель не ответила вовремя')
   })

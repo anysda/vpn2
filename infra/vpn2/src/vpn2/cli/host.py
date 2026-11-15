@@ -31,11 +31,12 @@ def _ufw(args):
     if not args.only_rules:
         changed = firewall.ufw_repair_if_lost()
         changed = bool(firewall.ufw_defaults()) or changed
+    shown = firewall.ufw_shown()
     for group in json.loads(args.groups):
         rules = list(group.get('rules', ()))
         if 'dns' in group:
             rules += entryvpn.dns_rules(group['dns']['to'], group['dns']['subnets'])
-        added, deleted = firewall.ufw_reconcile(group['comment'], rules, group.get('aliases', ()))
+        added, deleted = firewall.ufw_reconcile(group['comment'], rules, group.get('aliases', ()), shown=shown)
         for sign, rules in (('+', added), ('-', deleted)):
             for rule in rules:
                 _say(f"ufw {sign} {rule} ({group['comment']})")

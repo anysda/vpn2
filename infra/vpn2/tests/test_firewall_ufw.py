@@ -283,3 +283,14 @@ def test_default_run_sets_c_locale_and_captures():
     assert result.stdout == 'C\nx' and result.returncode == 0
     with pytest.raises(subprocess.TimeoutExpired):
         firewall.run(['sleep', '5'], timeout=0.05)
+
+
+def test_groups_share_one_show_and_a_moved_rule_gets_its_new_owner():
+    ufw = FakeUfw([['allow', '53/udp', 'comment', 'old dns'], ['allow', '22/tcp', 'comment', 'ssh']])
+    shown = firewall.ufw_shown(run=ufw)
+    assert firewall.ufw_reconcile('old dns', [], run=ufw, shown=shown) == ([], ['allow 53/udp'])
+    assert firewall.ufw_reconcile('dns', ['53/udp'], run=ufw, shown=shown) == (['allow 53/udp'], [])
+    assert firewall.ufw_reconcile('ssh', ['22/tcp'], run=ufw, shown=shown) == ([], [])
+    assert [c for c in ufw.calls if c[1:3] == ['show', 'added']] == [['ufw', 'show', 'added']]
+    assert ufw.rules == [['allow', '22/tcp', 'comment', 'ssh'], ['allow', '53/udp', 'comment', 'dns']]
+    assert sorted(shown, key=str) == sorted(firewall.ufw_shown(run=ufw), key=str)

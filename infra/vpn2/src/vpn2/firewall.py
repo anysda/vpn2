@@ -68,21 +68,10 @@ def rule_key(words):
     return tuple(words)
 
 
-def ufw_reconcile(comment, rules, aliases=(), *, run=run):
-    """Bring the rules owned by comment (or an alias) to exactly `rules`.
-
-    Missing rules are added first, then stale own rules are deleted by
-    specification. Foreign rules (other comment) and matching ones are left
-    alone. Returns (added, deleted) as lists of rule strings. Any ufw failure
-    raises FirewallError; if `show added` fails nothing is changed.
-    """
-    desired = [shlex.split('allow ' + rule) for rule in rules]
-    wanted = {rule_key(rule) for rule in desired}
-    owned = {comment, *aliases}
-    shown = _call(run, ['ufw', 'show', 'added'])
-    stale = []
-    present = set()
-    for line in shown.stdout.splitlines():
+def ufw_shown(*, run=run):
+    """Rules of `ufw show added` as [key, owner comment or None, words]."""
+    shown = []
+    for line in _call(run, ['ufw', 'show', 'added']).stdout.splitlines():
         if not line.startswith('ufw '):
             continue
         words = shlex.split(line)[1:]
@@ -91,22 +80,40 @@ def ufw_reconcile(comment, rules, aliases=(), *, run=run):
             index = words.index('comment')
             owner = words[index + 1]
             words = words[:index]
-        key = rule_key(words)
-        present.add(key)
-        if owner in owned and key not in wanted:
-            stale.append(words)
+        shown.append([rule_key(words), owner, words])
+    return shown
+
+
+def ufw_reconcile(comment, rules, aliases=(), *, run=run, shown=None):
+    """Bring the rules owned by comment (or an alias) to exactly `rules`.
+
+    Missing rules are added first, then stale own rules are deleted by
+    specification. Foreign rules (other comment) and matching ones are left
+    alone. Returns (added, deleted) as lists of rule strings. Any ufw failure
+    raises FirewallError; if `show added` fails nothing is changed. `shown`
+    from ufw_shown lets several groups share one `show added`; it is kept current.
+    """
+    desired = [shlex.split('allow ' + rule) for rule in rules]
+    wanted = {rule_key(rule) for rule in desired}
+    owned = {comment, *aliases}
+    if shown is None:
+        shown = ufw_shown(run=run)
+    present = {key for key, _, _ in shown}
+    stale = [entry for entry in shown if entry[1] in owned and entry[0] not in wanted]
     added = []
     for rule in desired:
         key = rule_key(rule)
         if key not in present:
             _call(run, ['ufw', *rule, 'comment', comment])
             present.add(key)
+            shown.append([key, comment, rule])
             added.append(shlex.join(rule))
     deleted = []
-    for rule in stale:
+    for entry in stale:
         # By specification, not number: both address families go, indices stay.
-        _call(run, ['ufw', '--force', 'delete', *rule])
-        deleted.append(shlex.join(rule))
+        _call(run, ['ufw', '--force', 'delete', *entry[2]])
+        shown.remove(entry)
+        deleted.append(shlex.join(entry[2]))
     return added, deleted
 
 

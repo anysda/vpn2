@@ -183,6 +183,15 @@ def test_error_redacts_secrets_and_ignores_other_sites():
     assert tls.safe_error([REFUSED], '192.0.2.1') == 'ACME: connection refused'
 
 
+def test_rate_limit_names_http_code_and_retry_time():
+    error = {'level': 'error', 'logger': 'tls.obtain', 'identifier': '192.0.2.1',
+             'error': 'HTTP 429 urn:ietf:params:acme:error:rateLimited - too many certificates (5) already issued '
+                      'for this exact set of identifiers in the last 168h0m0s, retry after 2026-11-16 00:02:29 UTC: '
+                      'see https://letsencrypt.org/docs/rate-limits/'}
+    assert (tls.safe_error([error], '192.0.2.1')
+            == 'ACME: rateLimited (HTTP 429), повтор после 2026-11-16 00:02:29 UTC')
+
+
 def test_first_failure_queue_survives_unavailable_bot():
     state = {}
     tls.observe({'host': '192.0.2.1'}, state, None, 'ACME: timeout', 100)

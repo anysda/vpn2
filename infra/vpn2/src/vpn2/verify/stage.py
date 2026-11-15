@@ -18,7 +18,7 @@ import tempfile
 import time
 import traceback
 
-from vpn2 import fsutil
+from vpn2 import fsutil, tls
 from vpn2.probe import ClashApi
 from vpn2.watchdog import warp, yt
 
@@ -31,6 +31,8 @@ EMERGENCY_STATE = Path('/var/lib/vpn2-emergency')
 EMERGENCY_HY2 = Path('/etc/vpn2/emergency-hy2.json')
 TLS_CONFIG = Path('/etc/vpn2/tls/config.json')
 TLS_CERT = '/etc/vpn2/tls/ip/fullchain.pem'
+TLS_STATE = Path('/etc/vpn2/tls/state.json')
+PANEL_GATE = Path('/etc/caddy/vpn2-panel.conf')
 NETWORKD_DROPIN = Path('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf')
 IKEV2_STATUS = Path('/etc/anysda/ikev2-status.json')
 SINGBOX_CONFIG = Path('/etc/sing-box/config.json')
@@ -395,6 +397,23 @@ def ip_certificate(config, cert):
     return rc == 0
 
 
+def panel():
+    """Панель, как её видит браузер: HTTPS через Caddy. Закрытую без сертификата называет с причиной
+    из состояния vpn2 tls: ответ :80 и сам Caddy о панели ничего не говорят."""
+    try:
+        host = tls.authority(json.loads(TLS_CONFIG.read_text())['host'])
+    except BROKEN:
+        return 1, f'панель: нет настройки TLS {TLS_CONFIG}'
+    rc, out = command('curl', '-fsS', '-k', '--max-time', '5', '-o', '/dev/null', '--connect-to', '::127.0.0.1:443',
+                      f'https://{host}/api/version')
+    if rc == 0 or tls.read_text(PANEL_GATE) != tls.PANEL_CLOSED:
+        return rc, out
+    state = fsutil.read_json(TLS_STATE, {})
+    acme = state.get('error') if state.get('failed') else None
+    reason = '; '.join(filter(None, (tls.closed_reason(state, time.time()), acme)))
+    return 1, f'панель закрыта снаружи (Caddy отвечает 503): {reason}; откроется сама после выпуска сертификата'
+
+
 def snapshot(venv, state_dir, wait):
     """Снимок клиентов от entry: предел - два периода отправки, первый ждём не дольше wait."""
     return command('setpriv', '--reuid=vpn2-emergency', '--regid=vpn2-emergency', '--init-groups', '--',
@@ -575,7 +594,9 @@ def entry(stage):
     stage.checks([
         *((f'ssh {tag} через hy2-mgmt', exit_ssh, tag, stage.env.get('SSH_PROBE_TIMEOUT', '30')) for tag in stage.exits),
         *((f'{tag}: транспорт hy2, не запасной TCP', exit_transport, tag) for tag in stage.exits),
-        ('frontend: 127.0.0.1:80 отвечает через Caddy', command, *curl, 'http://127.0.0.1:80/'),
+        ('frontend: Caddy слушает :80', command, 'curl', '-sS', '--max-time', '5', '-o', '/dev/null',
+         'http://127.0.0.1:80/'),
+        ('frontend: панель отвечает через Caddy по HTTPS', panel),
         ('vmsingle: 127.0.0.1:8428 healthy', command, *curl, 'http://127.0.0.1:8428/-/healthy'),
         ('tproxy: правило fwmark 0x42 → table 101', grep, ('ip', 'rule', 'list'), r'fwmark 0x42 lookup 101(\s|$)'),
         ('tproxy: local default dev lo в table 101', grep, ('ip', 'route', 'show', 'table', '101'),

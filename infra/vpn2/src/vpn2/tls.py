@@ -181,11 +181,12 @@ def safe_error(records, host):
         raw = str(record.get('error', ''))
         problem = re.search(r'urn:ietf:params:acme:error:([a-zA-Z]+)', raw)
         code = re.search(r'\bHTTP (\d{3})\b', raw)
-        found = ('ACME: ' + problem[1] if problem else
+        retry = re.search(r'retry after (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC)', raw)
+        found = ('ACME: ' + problem[1] + (f' (HTTP {code[1]})' if code else '') if problem else
                  'ACME: HTTP ' + code[1] if code else
                  'ACME: connection refused' if 'connection refused' in raw else
                  'ACME: timeout' if 'timeout' in raw or 'deadline exceeded' in raw else
-                 'ACME: certificate operation failed')
+                 'ACME: certificate operation failed') + (f', повтор после {retry[1]}' if retry else '')
     return found
 
 

@@ -17,6 +17,7 @@ from unittest import mock
 
 import pytest
 
+from vpn2 import tls
 from vpn2.emergency import snapshot
 from vpn2.verify import stage as verify_stage
 
@@ -69,6 +70,8 @@ elif name == 'curl':
     url = sys.argv[-1]
     if fault == url:
         sys.exit(22)
+    if fault == 'panel-closed' and url.startswith('https://'):
+        sys.exit(35)
     if url.endswith('/targets'):
         counter = Path(os.environ['SCRAPE_COUNTER'])
         count = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -284,7 +287,14 @@ def run_verify(fault='', role='ru', youtube='off', extra_env=None):
             hy2_options.write_text(json.dumps({'server_ip': '198.51.100.1', 'port': 18443}))
         config = root / 'router.json'
         config.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
-        paths = {'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency, 'VENV': venv,
+        tls_config, tls_state, gate = root / 'tls.json', root / 'tls-state.json', root / 'vpn2-panel.conf'
+        tls_config.write_text('{"host": "192.0.2.1"}')
+        closed = fault == 'panel-closed'
+        gate.write_text(tls.PANEL_CLOSED if closed else tls.PANEL_OPEN)
+        tls_state.write_text(json.dumps({'failed': True, 'closed': 'сертификат не выпущен',
+                                         'error': 'ACME: rateLimited (HTTP 429), повтор после 2026-11-16 00:02:29 UTC'}
+                                        if closed else {}))
+        paths = {'TLS_CONFIG': tls_config, 'TLS_STATE': tls_state, 'PANEL_GATE': gate, 'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency, 'VENV': venv,
                  'EMERGENCY_HY2': hy2_options, 'STAMPS': stamp.parent, 'EMERGENCY_STATE': snapshots}
         script = root / 'verify.py'
         script.write_text(
@@ -341,7 +351,8 @@ ENTRY_FAULTS = {
                                          'stale-scrape', 'future-scrape', 'missing-scrape', 'invalid-scrape',
                                          'naive-scrape', 'http://127.0.0.1:8428/api/v1/targets',
                                          'curl-partial')},
-    'http://127.0.0.1:80/': 'frontend', 'http://127.0.0.1:8428/-/healthy': 'vmsingle',
+    'http://127.0.0.1:80/': 'frontend: Caddy', 'https://192.0.2.1/api/version': 'frontend: панель',
+    'http://127.0.0.1:8428/-/healthy': 'vmsingle',
     'ssh-error': 'ssh exit', 'ss-error': 'tproxy udp', 'ip-error': 'tproxy:', 'sysctl-error': 'ip_forward',
     'ufw-error': 'ufw', 'sysctl-partial': 'ip_forward', 'ufw-partial': 'ufw', 'ss-partial': 'tproxy udp',
     'ip-partial': 'tproxy:', 'swanctl-partial': 'swanctl',
@@ -354,6 +365,16 @@ def test_individual_entry_failure(fault, label):
     assert result.returncode != 0, result.stdout
     assert failed(result, label), result.stdout
     assert 'verify FAILED:' in result.stdout and 'verify done' not in result.stdout
+
+
+def test_closed_panel_names_reason_even_when_port_80_redirects():
+    """VPN2-976: :80 отвечает редиректом, панель закрыта без сертификата - строка frontend красная с причиной."""
+    result = run_verify('panel-closed')
+    assert result.returncode == 1, result.stdout
+    assert '✓ frontend: Caddy слушает :80' in result.stdout
+    assert failed(result, 'frontend: панель отвечает через Caddy по HTTPS'), result.stdout
+    assert ('панель закрыта снаружи (Caddy отвечает 503): сертификат не выпущен; ACME: rateLimited (HTTP 429), '
+            'повтор после 2026-11-16 00:02:29 UTC') in result.stdout
 
 
 class VerifyTests(unittest.TestCase):

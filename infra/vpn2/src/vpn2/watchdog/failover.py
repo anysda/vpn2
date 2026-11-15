@@ -722,6 +722,12 @@ class Watchdog:
                 return
             target = main
         self.select(TG_GROUP, target, f'{now or "-"}: {why}')
+        # interrupt_exist_connections у tg-best выключен: туннели бота через старый выход висели бы до тайм-аута.
+        try:
+            conns = self.api.connections(timeout=API_TIMEOUT)
+        except Exception:
+            conns = None
+        self.close(conns, lambda chains: TG_GROUP not in chains or target in chains)
 
     def tg_loop(self):
         """Свой поток: тайм-аут Bot API не держит выбор экзита."""

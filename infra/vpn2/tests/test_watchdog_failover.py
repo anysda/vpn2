@@ -328,16 +328,31 @@ class LanesPinsTgTests(Base):
         s.dog.tg()
         self.assertEqual(s.now('tg-best'), 'hy2-aa-direct')
         s.tg_ok = {'hy2-bb-direct', 'hy2-bb-warp'}
+        s.conns = [{'id': 'bot-old', 'chains': ['hy2-aa-direct', 'tg-best']},
+                   {'id': 'user', 'chains': ['hy2-aa-direct', 'lane-01']}]
         for _ in range(fo.DEAD_AFTER):
             s.t += fo.TG_INTERVAL
             s.dog.tg()
         self.assertEqual(s.now('tg-best'), 'hy2-bb-direct')
+        self.assertEqual(s.closed, ['bot-old'], 'туннели бота через старый выход закрыты, чужие нет')
         s.tg_ok = set()
         for _ in range(10):
             s.t += fo.TG_INTERVAL
             s.dog.tg()
         self.assertEqual(s.now('tg-best'), 'hy2-bb-direct', 'молчит везде - стоим')
         self.assertEqual(len(s.said('Bot API не отвечает ни через один экзит')), 1)
+
+    def test_tg_leaves_dead_exit_within_20s(self):
+        s = self.stand()
+        s.dog.tg()
+        s.kill('aa')
+        s.tg_ok = {t for t in s.p if '-bb-' in t}
+        died = s.t
+        while s.now('tg-best') == 'hy2-aa-direct' and s.t - died < 30:
+            s.tick()
+            s.dog.tg()
+        self.assertLessEqual(s.t - died + fo.DEAD_AFTER * (fo.HTTP_TIMEOUT - fo.INTERVAL), 20.0)
+        self.assertEqual(s.now('tg-best'), 'hy2-bb-direct')
 
 
 class Settings(unittest.TestCase):

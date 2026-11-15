@@ -766,6 +766,24 @@ for name, p in sorted(proxies.items()):
 EOF
 )
 
+# Нога канала у живых загрузок через экзит: «начало нога» по строке, как в /connections.
+LEGS_PY=$(cat <<'EOF'
+import json, sys, urllib.request
+env = {}
+for line in open('/etc/anysda/failover-watchdog.env'):
+    key, sep, value = line.strip().partition('=')
+    if sep and not key.startswith('#'):
+        env[key] = value.strip('"\'')
+req = urllib.request.Request(env['CLASH_API'].rstrip('/') + '/connections',
+                             headers={'Authorization': 'Bearer ' + env['CLASH_SECRET']})
+for c in sorted(json.load(urllib.request.urlopen(req, timeout=5))['connections'] or [], key=lambda c: c['start']):
+    if c['metadata'].get('host') == sys.argv[1]:
+        print(c['start'], next((x for x in c['chains'] if x.startswith('transport-')), c['chains'][0]))
+EOF
+)
+DOWNLOAD_HOST=speed.cloudflare.com
+DOWNLOAD_BYTES=40000000
+
 # Запрос через экзит раз в секунду: время конца запроса и код ответа.
 CURL_LOOP=$(cat <<'EOF'
 while [[ ! -e /root/udp-cut.stop ]]; do
@@ -780,6 +798,12 @@ check() {  # <текст> <команда проверки...>; провал к�
   if "${@:2}"; then log "✓ $1"; else log "✗ $1"; rc=1; fi
 }
 transports() { ssh_node "$ENTRY" python3 - <<<"$TRANSPORTS_PY"; }
+legs() { ssh_node "$ENTRY" "python3 - $DOWNLOAD_HOST" <<<"$LEGS_PY"; }
+download() {  # <имя> <байт/с>: загрузка через экзит в фоне, итог «код размер rc» в /root/<имя>.out
+  ssh_node "$ENTRY" "setsid nohup bash -c 'curl -s -o /dev/null --limit-rate $2 -w \"%{http_code} %{size_download}\" \
+    -x socks5h://127.0.0.1:7897 \"https://$DOWNLOAD_HOST/__down?bytes=$DOWNLOAD_BYTES\" > /root/$1.out; \
+    echo \" \$?\" >> /root/$1.out' > /dev/null 2>&1 < /dev/null &"
+}
 on_hy2() { local t; t=$(transports) && [[ -n "$t" ]] && ! grep -q ' tcp$' <<<"$t"; }
 singbox_state() { ssh_node "$ENTRY" 'systemctl show -p NRestarts -p ActiveEnterTimestamp sing-box' | sort | paste -sd ' '; }
 
@@ -835,6 +859,10 @@ cmd_udp_cut() {
     until grep -q ' tcp$' <<<"$(transports)" || (( SECONDS - cut_at >= UDP_CUT_HOLD_S )); do sleep 2; done
     verdict=$(ssh_node "$ENTRY" "/opt/vpn2/venv/bin/python3 -c 'from vpn2.verify import stage; print(*stage.exit_transport(\"$EXIT_TAG\"))'") || true
     check "verify «$EXIT_TAG: транспорт hy2, не запасной TCP» при обрыве красная: $verdict" test "${verdict%% *}" = 1
+    # Загрузка, начатая на запасном TCP, обязана пережить возврат канала на hy2.
+    ssh_node "$ENTRY" 'rm -f /root/download-tcp.out /root/download-hy2.out'
+    download download-tcp 500k
+    log "загрузка $DOWNLOAD_BYTES байт через экзит на запасном TCP: $(date -u +%T)"
   fi
   sleep $(( SECONDS - cut_at < UDP_CUT_HOLD_S ? UDP_CUT_HOLD_S - SECONDS + cut_at : 0 ))
   cut_rules -D
@@ -850,6 +878,21 @@ cmd_udp_cut() {
     fi
     sleep 2
   done
+  local old_leg='' new_leg='' download_out=''
+  if [[ -z "$UDP_CUT_TCP_PORTS" && -n "$back" ]]; then
+    # Новое соединение после возврата - по hy2, живое с обрыва - на TCP.
+    download download-hy2 200k
+    sleep 5
+    local listing
+    listing=$(legs) || true
+    log "загрузки через экзит после возврата: $(paste -sd ',' <<<"$listing" | sed 's/,/, /g')"
+    old_leg=$(awk 'NR == 1 {print $2}' <<<"$listing")
+    new_leg=$(awk 'END {if (NR > 1) print $2}' <<<"$listing")
+    deadline=$((SECONDS + 240))
+    until download_out=$(ssh_node "$ENTRY" 'cat /root/download-tcp.out 2>/dev/null') && [[ $download_out == *' '*' '* ]] \
+        || (( SECONDS >= deadline )); do sleep 2; done
+    ssh_node "$ENTRY" "pkill -f '[_]_down' || true"  # [_]: не совпасть со своей командой
+  fi
   sleep 3
   ssh_node "$ENTRY" 'touch /root/udp-cut.stop'
   t_end=$(ssh_node "$ENTRY" 'date +%s.%N')
@@ -886,6 +929,13 @@ cmd_udp_cut() {
   back_s=$([[ -z "$back" ]] || awk -v a="$t1" -v b="$back" 'BEGIN { printf "%.1f", b - a }')
   check "каналы на hy2 после снятия: ${back_s:-нет за $(( ${tcp_return%.*} + 60 ))} с, в конце: $final" \
     test -n "$back" -a -n "$final" -a "${final/tcp/}" = "$final"
+  if [[ -z "$UDP_CUT_TCP_PORTS" ]]; then
+    check "загрузка с запасного TCP дошла после возврата на hy2: «${download_out:-нет итога}» (ждём 200 $DOWNLOAD_BYTES 0)" \
+      test "$download_out" = "200 $DOWNLOAD_BYTES 0"
+    check "живая загрузка на ноге transport-tcp-$EXIT_TAG-*: «$old_leg»" test "${old_leg#transport-tcp-"$EXIT_TAG"-}" != "$old_leg"
+    check "новая загрузка после возврата на ноге transport-hy2-$EXIT_TAG-*: «$new_leg»" \
+      test "${new_leg#transport-hy2-"$EXIT_TAG"-}" != "$new_leg"
+  fi
   log "обрыв UDP: код $rc"
   return "$rc"
 }

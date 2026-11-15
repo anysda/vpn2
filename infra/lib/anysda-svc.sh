@@ -99,6 +99,7 @@ APT_LOCK_TIMEOUT=1200
 # Метка исчерпанного ожидания живёт час: следующий вызов не ждёт, Lock::Timeout короткий.
 APT_GAVE_UP=${APT_GAVE_UP:-/run/anysda-apt-gave-up}
 APT_GAVE_UP_LOCK_TIMEOUT=60
+APT_UU_PID=${APT_UU_PID:-/run/unattended-upgrades.pid}
 
 apt_gave_up() {
   [[ -n "$(find "$APT_GAVE_UP" -mmin -60 2>/dev/null)" ]]
@@ -166,6 +167,13 @@ apt_auto_pause() {
       systemctl stop "$j" >/dev/null 2>&1 || true
     fi
   done
+  # unattended-upgrade по TERM доводит текущий пакет и выходит, как при выключении машины.
+  # Pid - только процесс этой службы: файл мог остаться от прошлого запуска.
+  local uu
+  uu=$(cat "$APT_UU_PID" 2>/dev/null) || true
+  if [[ "$uu" =~ ^[0-9]+$ ]] && grep -qs apt-daily-upgrade.service "/proc/$uu/cgroup" && kill -TERM "$uu" 2>/dev/null; then
+    svc_say "автообновление останавливается после текущего пакета" >&"$APT_LOG_FD"
+  fi
   while busy=$(for j in "${jobs[@]}"; do ! _unit_running "$j" || printf '%s ' "$j"; done) && [[ -n "$busy" ]]; do
     if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
       svc_say "автообновление так и не закончилось за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"

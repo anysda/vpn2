@@ -63,6 +63,31 @@ apt_auto_pause
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn('waited', result.stdout)
 
+    def test_running_upgrade_is_stopped_after_current_package(self):
+        """Свежая ОС: unattended-upgrade получает TERM, деплой не ждёт всё автообновление."""
+        library = source('infra/lib/anysda-svc.sh')
+        for pid, signalled in (('4242', True), ('4343', False)):
+            with self.subTest(pid=pid), tempfile.TemporaryDirectory() as directory:
+                result = bash(library + f'\necho {pid} > uu.pid\nAPT_UU_PID=uu.pid\n' + '''
+systemctl() {
+  if [[ $1 == show ]]; then
+    if [[ $4 == apt-daily-upgrade.service && $3 == ActiveState && ! -f stopped ]]; then echo activating
+    else echo inactive; fi
+  fi
+  return 0
+}
+# Процесс службы - только 4242; 4343 - pid из старого файла, теперь чужой.
+grep() { if [[ ${!#} == /proc/* ]]; then [[ ${!#} == /proc/4242/cgroup ]]; else command grep "$@"; fi; }
+kill() { echo "kill $*"; touch stopped; }
+sleep() { touch stopped; }
+apt_wait_idle() { :; }
+systemd-run() { :; }
+apt_auto_pause
+''', directory)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual('kill -TERM 4242' in result.stdout, signalled, result.stdout)
+                self.assertEqual('после текущего пакета' in result.stdout, signalled, result.stdout)
+
     def test_second_pause_does_not_mask_again(self):
         """Каждый mask - перечитывание systemd: повторная пауза уже замаскированного его не делает."""
         library = source('infra/lib/anysda-svc.sh')

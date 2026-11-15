@@ -63,6 +63,31 @@ apt_auto_pause
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn('waited', result.stdout)
 
+    def test_second_pause_does_not_mask_again(self):
+        """Каждый mask - перечитывание systemd: повторная пауза уже замаскированного его не делает."""
+        library = source('infra/lib/anysda-svc.sh')
+        with tempfile.TemporaryDirectory() as directory:
+            result = bash(library + '''
+systemctl() {
+  echo "$*" >> calls
+  case $1 in
+    is-enabled) cat "$2.state" 2>/dev/null || echo disabled ;;
+    mask) shift 2; for u; do echo masked-runtime > "$u.state"; done ;;
+    show) echo inactive ;;
+  esac
+  return 0
+}
+apt_wait_idle() { :; }
+systemd-run() { :; }
+apt_auto_pause
+grep -c '^mask' calls > first
+: > calls
+apt_auto_pause
+if grep '^mask' calls; then exit 1; fi
+test "$(cat first)" -ge 1
+''', directory)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -141,6 +141,15 @@ apt_wait_idle() {
 
 _unit_running() { [[ "$(systemctl show -P ActiveState "$1" 2>/dev/null)" == @(activating|active|deactivating) ]]; }
 
+# Каждый mask перечитывает systemd: уже замаскированное не трогаем.
+_mask_runtime() {
+  local unit todo=()
+  for unit; do
+    [[ "$(systemctl is-enabled "$unit" 2>/dev/null)" == masked-runtime ]] || todo+=("$unit")
+  done
+  (( ${#todo[@]} == 0 )) || systemctl mask --runtime "${todo[@]}" >/dev/null 2>&1 || true
+}
+
 # apt_auto_pause: автообновления на паузу маской --runtime; через час её снимает таймер.
 apt_auto_pause() {
   local timers=(apt-daily.timer apt-daily-upgrade.timer)
@@ -149,7 +158,7 @@ apt_auto_pause() {
   local t0=$SECONDS said=-20 j busy
   # Таймеры: стоп до маски, иначе активный уходит в failed.
   systemctl stop "${timers[@]}" >/dev/null 2>&1 || true
-  systemctl mask --runtime "${timers[@]}" >/dev/null 2>&1 || true
+  _mask_runtime "${timers[@]}"
   systemctl reset-failed "${timers[@]}" >/dev/null 2>&1 || true
   # Служба в ExecStartPre ещё ничего не начала - снимаем; идущую дожидаемся.
   for j in "${jobs[@]}"; do
@@ -170,11 +179,12 @@ apt_auto_pause() {
   done
   (( SECONDS - t0 < 5 )) || svc_say "автообновление закончилось через $(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
   # Маска идущей oneshot-службы сократила бы её TimeoutStartSec до 90 с.
-  for j in "${jobs[@]}"; do
-    _unit_running "$j" || systemctl mask --runtime "$j" >/dev/null 2>&1 || true
-  done
+  local idle=()
+  for j in "${jobs[@]}"; do _unit_running "$j" || idle+=("$j"); done
+  _mask_runtime "${idle[@]}"
   apt_wait_idle
-  systemctl mask --runtime --now unattended-upgrades.service >/dev/null 2>&1 || true
+  _mask_runtime unattended-upgrades.service
+  systemctl stop unattended-upgrades.service >/dev/null 2>&1 || true
   systemctl stop anysda-apt-resume.timer >/dev/null 2>&1 || true
   systemd-run --quiet --unit=anysda-apt-resume --on-active=1h \
     /bin/sh -c "systemctl unmask --runtime ${units[*]}

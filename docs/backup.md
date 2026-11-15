@@ -132,7 +132,8 @@ chmod 600 config.yaml
 # 4. в config.yaml: entry.password - root-пароль новой машины, entry.host -
 #    новый IP, если сменился; иначе deploy остановится на входе по SSH.
 #    Временно panel.domain: "" и sso.enabled: false (SSO требует HTTPS):
-#    первый деплой поднимет HTTP и не выпустит новый сертификат до restore
+#    первый деплой откроет панель по IP и не выпустит сертификат на домен
+#    до restore
 ./deploy.sh
 
 # 5. вернуть panel.domain и sso.enabled, восстановить (база после deploy

@@ -1,8 +1,10 @@
 """Части аварийного режима на их границах: снимок и его рассылка, очередь
 Telegram, тексты сообщений, выдача Hysteria2."""
 
+import getpass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import shutil
 import socket
@@ -12,6 +14,7 @@ import tempfile
 import threading
 import types
 import unittest
+from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -321,8 +324,8 @@ class Hy2Tests(Temp):
         self.assertEqual(hy2.live_devices(state), {11, 13})
         self.assertEqual(seen, [('/connections', 'Bearer secret')])
 
-    @unittest.skipUnless(shutil.which('sing-box') and shutil.which('curl'), 'needs sing-box and curl')
-    def test_self_test_passes_on_204_and_fails_on_http_error_through_the_tunnel(self):
+    def real_instance(self):
+        """Hysteria2 server and HTTP target on loopback; returns (port, target base URL)."""
         class Target(BaseHTTPRequestHandler):
             def do_GET(self):  # noqa: N802
                 self.send_response(404 if self.path == '/missing' else 204)
@@ -357,13 +360,51 @@ class Hy2Tests(Temp):
         instance, (port,) = start_on_free_ports(start, 1, socket.SOCK_DGRAM, log.read_text)
         self.addCleanup(instance.wait)
         self.addCleanup(instance.terminate)
+        return port, f'http://127.0.0.1:{target.server_address[1]}'
+
+    def generation(self, port, url):
+        options = {'port': port, 'server_ip': '127.0.0.1', 'binary': shutil.which('sing-box'), 'probe_url': url}
+        (self.directory / 'hy2' / 'generation.json').write_text(json.dumps(
+            {'generation': 1, 'active': True, 'probe_password': 'probe', 'options': options}))
+
+    @unittest.skipUnless(shutil.which('sing-box') and shutil.which('curl'), 'needs sing-box and curl')
+    def test_self_test_passes_on_204_and_fails_on_http_error_through_the_tunnel(self):
+        port, base = self.real_instance()
         for path, expected in (('/generate_204', True), ('/missing', False)):
-            options = {'port': port, 'server_ip': '127.0.0.1', 'binary': shutil.which('sing-box'),
-                       'probe_url': f'http://127.0.0.1:{target.server_address[1]}{path}'}
-            (home / 'generation.json').write_text(json.dumps(
-                {'generation': 1, 'active': True, 'probe_password': 'probe', 'options': options}))
+            self.generation(port, base + path)
             with self.subTest(path=path):
-                self.assertIs(hy2.probe(self.directory), expected)
+                self.assertIs(hy2.probe(self.directory, user=getpass.getuser()), expected)
+
+    @unittest.skipUnless(shutil.which('sing-box') and shutil.which('curl'), 'needs sing-box and curl')
+    def test_self_test_survives_its_socks_port_taken_before_the_client_binds(self):
+        port, base = self.real_instance()
+        self.generation(port, base + '/generate_204')
+        launch, thieves = subprocess.Popen, []
+
+        def steal_then_launch(args, **kwargs):
+            # Another process takes the freshly released port before the first client binds it.
+            if not thieves:
+                listen_port = json.loads(Path(args[-1]).read_text())['inbounds'][0]['listen_port']
+                thief = socket.socket()
+                self.addCleanup(thief.close)
+                thief.bind(('127.0.0.1', listen_port))
+                thief.listen()
+                thieves.append(thief)
+            return launch(args, **kwargs)
+
+        with mock.patch.object(hy2.subprocess, 'Popen', steal_then_launch):
+            self.assertIs(hy2.probe(self.directory, user=getpass.getuser()), True)
+        self.assertEqual(len(thieves), 1)
+
+    def test_listening_counts_only_the_unconnected_socket_of_the_server_user(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as bound:
+            bound.bind(('127.0.0.1', 0))
+            port = bound.getsockname()[1]
+            self.assertTrue(hy2.listening(port, getpass.getuser()))
+            self.assertFalse(hy2.listening(port, 'nobody' if os.getuid() == 0 else 'root'))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            client.connect(('127.0.0.1', 9))
+            self.assertFalse(hy2.listening(client.getsockname()[1], getpass.getuser()))
 
     def test_firewall_isolates_the_service_user_and_gates_the_port(self):
         closed, opened = hy2.firewall_rules(990, 18443, False), hy2.firewall_rules(990, 18443, True)

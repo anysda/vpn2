@@ -29,6 +29,7 @@ STATE = Path('/var/lib/vpn2-emergency')
 OPTIONS = Path('/etc/vpn2/emergency-hy2.json')
 TLS_SOURCE = '/etc/vpn2/tls/ip'
 UNIT = 'vpn2-emergency-hy2.service'
+SERVER_USER = 'vpn2-hy2'
 PROBE_UNIT = 'vpn2-emergency-hy2-probe.service'
 MOUNT = Path('/run/vpn2-emergency-hy2')
 LOG = logging.getLogger(__name__)
@@ -291,18 +292,19 @@ def active_state(directory):
     return state
 
 
-def listening(port):
-    """UDP socket bound to port in this network namespace (IPv4 or IPv6)."""
-    suffix = f':{port:04X}'
+def listening(port, user=SERVER_USER):
+    """Unconnected UDP socket of the server user bound to port (IPv4 or IPv6)."""
+    suffix, uid = f':{port:04X}', str(pwd.getpwnam(user).pw_uid)
     for table in ('/proc/net/udp', '/proc/net/udp6'):
         with contextlib.suppress(OSError):
             for line in Path(table).read_text().splitlines()[1:]:
-                if line.split()[1].endswith(suffix):
+                local, state, owner = (fields := line.split())[1], fields[3], fields[7]
+                if local.endswith(suffix) and state == '07' and owner == uid:
                     return True
     return False
 
 
-def probe(state_dir):
+def probe(state_dir, *, user=SERVER_USER):
     """Authenticate via QUIC and fetch a public URL through the actual instance."""
     directory = Path(state_dir) / 'hy2'
     try:
@@ -310,44 +312,53 @@ def probe(state_dir):
         options = state['options']
         deadline = time.monotonic() + 15
         # A QUIC handshake sent before the server binds backs off for seconds.
-        while not listening(options['port']):
+        while not listening(options['port'], user):
             if time.monotonic() > deadline:
                 return False
             time.sleep(.05)
-        with socket.socket() as reserved:
-            reserved.bind(('127.0.0.1', 0))
-            proxy_port = reserved.getsockname()[1]
-        config = {
-            'log': {'disabled': True},
-            'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': proxy_port}],
-            'outbounds': [{'type': 'hysteria2', 'server': '127.0.0.1',
-                           'server_port': options['port'], 'password': state['probe_password'],
-                           'tls': {'enabled': True, 'server_name': options['server_ip'],
-                                   'certificate_path': str(directory / 'fullchain.pem')}}],
-        }
         with tempfile.TemporaryDirectory(dir=directory, prefix='probe-') as temporary:
-            path = Path(temporary) / 'client.json'
-            atomic(path, config)
-            process = subprocess.Popen([options['binary'], 'run', '-c', str(path)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            try:
-                while process.poll() is None and time.monotonic() < deadline:
-                    response = subprocess.run([
-                        'curl', '--silent', '--fail', '--noproxy', '', '--max-time', '3',
-                        '--socks5-hostname', f'127.0.0.1:{proxy_port}', options['probe_url'],
-                    ], capture_output=True, timeout=4)
-                    if response.returncode == 0:
-                        return True
-                    time.sleep(.1)
-            finally:
-                process.terminate()
-                try:
-                    process.wait(5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+            # The socks port is free only when picked: a client that exits on its own
+            # (the port was taken meanwhile) is retried on a new one.
+            for _attempt in range(3):
+                if through_client(options, state, directory, Path(temporary) / 'client.json', deadline):
+                    return True
+                if time.monotonic() >= deadline:
+                    break
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
         return False
+    return False
+
+
+def through_client(options, state, directory, path, deadline):
+    with socket.socket() as reserved:
+        reserved.bind(('127.0.0.1', 0))
+        proxy_port = reserved.getsockname()[1]
+    atomic(path, {
+        'log': {'disabled': True},
+        'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': proxy_port}],
+        'outbounds': [{'type': 'hysteria2', 'server': '127.0.0.1',
+                       'server_port': options['port'], 'password': state['probe_password'],
+                       'tls': {'enabled': True, 'server_name': options['server_ip'],
+                               'certificate_path': str(directory / 'fullchain.pem')}}],
+    })
+    process = subprocess.Popen([options['binary'], 'run', '-c', str(path)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        while process.poll() is None and time.monotonic() < deadline:
+            response = subprocess.run([
+                'curl', '--silent', '--fail', '--noproxy', '', '--max-time', '3',
+                '--socks5-hostname', f'127.0.0.1:{proxy_port}', options['probe_url'],
+            ], capture_output=True, timeout=4)
+            if response.returncode == 0:
+                return True
+            time.sleep(.1)
+    finally:
+        process.terminate()
+        try:
+            process.wait(5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
     return False
 
 
@@ -425,7 +436,7 @@ def connections(state_dir, generation, *, clock=time.time):
 
 def firewall(active):
     options = settings()
-    uid = pwd.getpwnam('vpn2-hy2').pw_uid
+    uid = pwd.getpwnam(SERVER_USER).pw_uid
     # add + delete in one transaction: the table is replaced whether it existed or not.
     reset = 'add table inet vpn2_emergency_hy2\ndelete table inet vpn2_emergency_hy2\n'
     command(['nft', '-f', '-'], input=(reset + firewall_rules(uid, options['port'], active)).encode())

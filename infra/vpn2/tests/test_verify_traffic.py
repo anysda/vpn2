@@ -126,7 +126,7 @@ class LingeringConnectionTests(unittest.TestCase):
             leaves = []
             for tag in ('se', 'fi'):
                 vt.subprocess.Popen = lambda *_a, _leaf=f'hy2-{tag}-direct', **_k: Process(_leaf)
-                result, seen = vt.in_namespace(source, 'http', [dest[0], tag], dest, deadline=2)
+                result, seen = vt.in_namespace(vt.NETS[0], source, 'http', [dest[0], tag], dest, deadline=2)
                 self.assertEqual(result, 404)
                 leaves.append(sorted(leaf for leaf, _rule in seen))
         finally:
@@ -212,6 +212,37 @@ class CleanupLinkDownTests(unittest.TestCase):
         self.assertIn(('run', 'ip', 'link', 'del', vt.HOST_IF), calls)
 
 
+class ParallelProtocolsTests(unittest.TestCase):
+    """Протоколы проверяются одновременно, строки отчёта - в порядке WireGuard, OpenVPN, IKEv2."""
+
+    def test_protocols_overlap_and_rows_keep_order(self):
+        delays = {'WireGuard': 0.3, 'OpenVPN': 0.2, 'IKEv2': 0.1}
+        running, overlap = set(), []
+
+        def kind(name):
+            return lambda net: types.SimpleNamespace(name=name, net=net, cleanup=lambda: None)
+
+        def check(verifier, protocol):
+            running.add(protocol.name)
+            overlap.append(len(running))
+            vt.time.sleep(delays[protocol.name])
+            verifier.report.add('подключение', protocol.name, vt.OK, protocol.net.name)
+            running.discard(protocol.name)
+
+        verifier = types.SimpleNamespace()
+        with mock.patch.multiple(vt, cleanup=mock.Mock(), leftovers=lambda: [], WORK=Path(tempfile.mkdtemp()),
+                                 WireGuard=kind('WireGuard'), OpenVPN=kind('OpenVPN'), IKEv2=kind('IKEv2'),
+                                 Verifier=lambda *_a: verifier), \
+                mock.patch.object(vt.Net, 'up', lambda _self: None), \
+                mock.patch.object(vt, 'checked', lambda own, protocol: check(own, protocol)):
+            report = vt.Report('ru', io.StringIO())
+            vt.verify(report, ['nl'])
+        self.assertEqual(max(overlap), 3)
+        self.assertEqual([(row['component'], row['reason']) for row in report.rows[:3]],
+                         [('WireGuard', 'vpn2-verify'), ('OpenVPN', 'vpn2-verify-1'), ('IKEv2', 'vpn2-verify-2')])
+        self.assertEqual(report.out.getvalue().splitlines()[0], '[ru] ✓ WireGuard: подключение — vpn2-verify')
+
+
 class FreeAddressesTests(unittest.TestCase):
     def test_latin1_comment_is_read_as_wg_reads_it(self):
         """Байт latin-1 после `#` в wg0.conf (wg его берёт) не роняет подбор адреса, LANG=C."""
@@ -226,7 +257,7 @@ class FreeAddressesTests(unittest.TestCase):
                 return types.SimpleNamespace(stdout='51820' if 'listen-port' in args else '')
 
             with mock.patch.multiple(vt, WG_CONF=conf, run=run):
-                free = vt.WireGuard().free
+                free = vt.WireGuard(vt.NETS[0]).free
         # /29: хосты .1-.6, .1 - сам wg0, .6 - пир wg0.conf (живой wg не показывает ни одного).
         self.assertEqual(free, ['10.66.66.5', '10.66.66.4'])
 

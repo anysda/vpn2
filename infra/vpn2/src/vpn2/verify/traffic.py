@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Проверка настоящего трафика entry временным клиентом в отдельном netns.
 
-Клиент живёт в netns vpn2-verify и соединён с хостом парой veth: наружу у него
-есть только туннель. Реквизиты временные и вне базы панели:
+Клиент каждого протокола живёт в своём netns vpn2-verify* и соединён с хостом
+парой veth: наружу у него есть только туннель; протоколы проверяются параллельно. Реквизиты временные и вне базы панели:
 - WireGuard: пир `wg set`;
 - OpenVPN: сертификат на сутки от CA без записи в index, ключ только в /run;
 - IKEv2: conn и EAP-секрет в своём файле conf.d/vpn2-verify.conf.
@@ -17,10 +17,13 @@ entry - «Не проверено», не «Ошибка».
 Код: 0 - всё работает, 1 - есть «Ошибка», 2 - есть «Не проверено».
 """
 import argparse
+import concurrent.futures
 import contextlib
+import copy
 import datetime
 import fcntl
 import http.client
+import io
 import ipaddress
 import json
 import os
@@ -33,15 +36,13 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
 
 NS = 'vpn2-verify'
 HOST_IF = 'vp2verify'
-NS_IF = 'vp2verify-c'
-HOST_IP = '169.254.253.1'
-NS_IP = '169.254.253.2'
 MARKER = '.vpn2-verify.invalid'
 WORK = Path('/run/anysda-verify')
 SWAN_FILE = Path('/etc/swanctl/conf.d/vpn2-verify.conf')
@@ -75,8 +76,44 @@ def run(*args, data=None, check=True, timeout=30):
     return result
 
 
-def ns(*args, **kwargs):
-    return run('ip', 'netns', 'exec', NS, *args, **kwargs)
+class Net:
+    """netns клиента и пара veth до хоста, /30 на протокол; первая - прежние имена и адреса."""
+
+    def __init__(self, index):
+        self.name = NS + (f'-{index}' if index else '')
+        self.host_if = HOST_IF + (str(index) if index else '')
+        self.ns_if = self.host_if + '-c'
+        self.host_ip, self.ns_ip = (f'169.254.253.{4 * index + n}' for n in (1, 2))
+
+    def run(self, *args, **kwargs):
+        return run('ip', 'netns', 'exec', self.name, *args, **kwargs)
+
+    def up(self):
+        run('ip', 'netns', 'add', self.name)
+        run('ip', 'link', 'add', self.host_if, 'type', 'veth', 'peer', 'name', self.ns_if)
+        run('ip', 'link', 'set', self.ns_if, 'netns', self.name)
+        run('ip', 'address', 'add', self.host_ip + '/30', 'dev', self.host_if)
+        run('ip', 'link', 'set', self.host_if, 'up')
+        self.run('ip', 'link', 'set', 'lo', 'up')
+        self.run('ip', 'address', 'add', self.ns_ip + '/30', 'dev', self.ns_if)
+        self.run('ip', 'link', 'set', self.ns_if, 'up')
+        # Из netns наружу только туннель и транспорт до entry: утечка мимо туннеля невозможна.
+        for rule in (['-o', 'lo'], ['-o', 'vpn'], ['-d', self.host_ip],
+                     ['-m', 'policy', '--dir', 'out', '--pol', 'ipsec']):
+            self.run('iptables', '-w', '-A', 'OUTPUT', *rule, '-j', 'ACCEPT')
+        self.run('iptables', '-w', '-P', 'OUTPUT', 'DROP')
+
+    def source(self):
+        """Адрес клиента внутри туннеля: им запрос подписан в API sing-box."""
+        route = self.run('ip', '-j', 'route', 'get', '192.0.2.1', check=False)
+        try:
+            src = json.loads(route.stdout)[0].get('prefsrc')
+        except (ValueError, IndexError):
+            return None
+        return src if src and src != self.ns_ip else None
+
+
+NETS = [Net(index) for index in range(3)]
 
 
 def applied():
@@ -91,10 +128,11 @@ def applied():
 class Report:
     """Строки отчёта: проверка, компонент, результат, причина, время."""
 
-    def __init__(self, tag):
+    def __init__(self, tag, out=None):
         self.tag = tag
         self.rows = []
         self.blurred = False
+        self.out = out
 
     def add(self, check, component, status, reason):
         # Попытки исчерпаны под применениями панели: сбой не доказан, но и успеха нет.
@@ -105,9 +143,14 @@ class Report:
                           'time': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')})
         label = f'{component}: {check}'
         if status == UNKNOWN:
-            print(f'[{self.tag}] ? {label} — не проверено: {reason}', flush=True)
+            print(f'[{self.tag}] ? {label} — не проверено: {reason}', file=self.out, flush=True)
         else:
-            print(f'[{self.tag}] {MARKS[status]} {label} — {reason}', flush=True)
+            print(f'[{self.tag}] {MARKS[status]} {label} — {reason}', file=self.out, flush=True)
+
+    def merge(self, part):
+        """Строки протокола, проверенного своим потоком, - подряд, в порядке протоколов."""
+        self.rows += part.rows
+        print(part.out.getvalue(), end='', file=self.out, flush=True)
 
     def code(self):
         results = {row['result'] for row in self.rows}
@@ -193,14 +236,14 @@ def resolve(name):
         return None
 
 
-def in_namespace(source, kind, args, dest=None, deadline=12):
+def in_namespace(net, source, kind, args, dest=None, deadline=12):
     """Проба в netns и соединения клиента из API sing-box: [(выход, правило)].
 
     Соединения, открытые до пробы, в счёт не идут: закрытое соединение прошлой
     пробы к тому же адресу ещё висит в /connections и подменило бы выход.
     """
     before = {item.get('id') for item in connections()} if source else set()
-    process = subprocess.Popen(['ip', 'netns', 'exec', NS, sys.executable, '-I', str(Path(__file__).absolute()),
+    process = subprocess.Popen(['ip', 'netns', 'exec', net.name, sys.executable, '-I', str(Path(__file__).absolute()),
                                 'probe', kind, json.dumps(args)],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     seen = {}
@@ -226,31 +269,6 @@ def in_namespace(source, kind, args, dest=None, deadline=12):
         return json.loads(out), list(seen.values())
     except ValueError:
         return None, list(seen.values())
-
-
-def namespace_up():
-    run('ip', 'netns', 'add', NS)
-    run('ip', 'link', 'add', HOST_IF, 'type', 'veth', 'peer', 'name', NS_IF)
-    run('ip', 'link', 'set', NS_IF, 'netns', NS)
-    run('ip', 'address', 'add', HOST_IP + '/30', 'dev', HOST_IF)
-    run('ip', 'link', 'set', HOST_IF, 'up')
-    ns('ip', 'link', 'set', 'lo', 'up')
-    ns('ip', 'address', 'add', NS_IP + '/30', 'dev', NS_IF)
-    ns('ip', 'link', 'set', NS_IF, 'up')
-    # Из netns наружу только туннель и транспорт до entry: утечка мимо туннеля невозможна.
-    for rule in (['-o', 'lo'], ['-o', 'vpn'], ['-d', HOST_IP], ['-m', 'policy', '--dir', 'out', '--pol', 'ipsec']):
-        ns('iptables', '-w', '-A', 'OUTPUT', *rule, '-j', 'ACCEPT')
-    ns('iptables', '-w', '-P', 'OUTPUT', 'DROP')
-
-
-def source():
-    """Адрес клиента внутри туннеля: им запрос подписан в API sing-box."""
-    route = ns('ip', '-j', 'route', 'get', '192.0.2.1', check=False)
-    try:
-        src = json.loads(route.stdout)[0].get('prefsrc')
-    except (ValueError, IndexError):
-        return None
-    return src if src and src != NS_IP else None
 
 
 class Protocol:
@@ -286,7 +304,8 @@ class WireGuard(Protocol):
     name = 'WireGuard'
     proto = 'udp'
 
-    def __init__(self):
+    def __init__(self, net):
+        self.net = net
         self.port = int(run('wg', 'show', 'wg0', 'listen-port').stdout)
         self.server = run('wg', 'show', 'wg0', 'public-key').stdout.strip()
         self.peers = {}
@@ -314,23 +333,23 @@ class WireGuard(Protocol):
     def connect(self, identity):
         peer = self.peers[identity]
         self.down()
-        ns('ip', 'link', 'add', 'vpn', 'type', 'wireguard')
+        self.net.run('ip', 'link', 'add', 'vpn', 'type', 'wireguard')
         # Ключ через stdin: профиль AppArmor для wg не даёт читать файлы вне /etc/wireguard.
-        ns('wg', 'set', 'vpn', 'private-key', '/dev/stdin', 'peer', self.server, 'endpoint', f'{HOST_IP}:{self.port}',
+        self.net.run('wg', 'set', 'vpn', 'private-key', '/dev/stdin', 'peer', self.server, 'endpoint', f'{self.net.host_ip}:{self.port}',
            'allowed-ips', '0.0.0.0/0', 'persistent-keepalive', '1', data=peer['key'] + '\n')
-        ns('ip', 'address', 'add', peer['address'] + '/32', 'dev', 'vpn')
-        ns('ip', 'link', 'set', 'vpn', 'up')
-        ns('ip', 'route', 'replace', 'default', 'dev', 'vpn')
+        self.net.run('ip', 'address', 'add', peer['address'] + '/32', 'dev', 'vpn')
+        self.net.run('ip', 'link', 'set', 'vpn', 'up')
+        self.net.run('ip', 'route', 'replace', 'default', 'dev', 'vpn')
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            shake = ns('wg', 'show', 'vpn', 'latest-handshakes', check=False).stdout.split()
+            shake = self.net.run('wg', 'show', 'vpn', 'latest-handshakes', check=False).stdout.split()
             if len(shake) == 2 and shake[1] != '0':
                 return True
             time.sleep(0.3)
         return False
 
     def down(self):
-        ns('ip', 'link', 'del', 'vpn', check=False)
+        self.net.run('ip', 'link', 'del', 'vpn', check=False)
 
     def revoke(self, identity):
         peer = self.peers[identity]
@@ -350,7 +369,8 @@ class WireGuard(Protocol):
 class OpenVPN(Protocol):
     name = 'OpenVPN'
 
-    def __init__(self):
+    def __init__(self, net):
+        self.net = net
         conf = Path('/etc/openvpn/server/server.conf').read_text()
         self.port = int(re.search(r'^port\s+(\d+)', conf, re.M)[1])
         self.proto = 'tcp' if re.search(r'^proto\s+tcp', conf, re.M) else 'udp'
@@ -378,15 +398,15 @@ class OpenVPN(Protocol):
     def connect(self, identity):
         self.down()
         self.process = subprocess.Popen(
-            ['ip', 'netns', 'exec', NS, 'openvpn', '--config', str(WORK / f'ovpn-{identity}.conf'),
-             '--proto', 'udp' if self.proto == 'udp' else 'tcp-client', '--remote', HOST_IP, str(self.port)],
+            ['ip', 'netns', 'exec', self.net.name, 'openvpn', '--config', str(WORK / f'ovpn-{identity}.conf'),
+             '--proto', 'udp' if self.proto == 'udp' else 'tcp-client', '--remote', self.net.host_ip, str(self.port)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline and self.process.poll() is None:
-            info = ns('ip', '-j', '-4', 'address', 'show', 'dev', 'vpn', check=False)
+            info = self.net.run('ip', '-j', '-4', 'address', 'show', 'dev', 'vpn', check=False)
             with contextlib.suppress(ValueError, IndexError):
                 if info.returncode == 0 and json.loads(info.stdout)[0].get('addr_info'):
-                    ns('ip', 'route', 'replace', 'default', 'dev', 'vpn')
+                    self.net.run('ip', 'route', 'replace', 'default', 'dev', 'vpn')
                     return True
             time.sleep(0.3)
         return False
@@ -418,7 +438,8 @@ class IKEv2(Protocol):
     name = 'IKEv2'
     proto = 'udp'
 
-    def __init__(self):
+    def __init__(self, net):
+        self.net = net
         self.server_id = Path('/etc/anysda/ikev2-server-host').read_text().strip()
         if not re.fullmatch(r'[A-Za-z0-9.:-]+', self.server_id):
             raise ValueError('идентификатор сервера IKEv2')
@@ -457,7 +478,7 @@ class IKEv2(Protocol):
             '  load = random nonce aes sha1 sha2 hmac gmp md4 openssl pem pkcs1 pkcs8 x509 pubkey constraints '
             'revocation kernel-netlink socket-default vici eap-identity eap-mschapv2\n}\n')
         self.process = subprocess.Popen(
-            ['ip', 'netns', 'exec', NS, 'unshare', '-m', 'sh', '-c',
+            ['ip', 'netns', 'exec', self.net.name, 'unshare', '-m', 'sh', '-c',
              'mount --bind "$0" /run && mount --bind /run/strongswan.conf /etc/strongswan.conf '
              '&& exec /usr/lib/ipsec/charon', str(self.run_dir)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -470,7 +491,7 @@ class IKEv2(Protocol):
     def connect(self, identity):
         self.down()
         self.start_charon()
-        ns('ip', 'route', 'replace', 'default', 'via', HOST_IP)
+        self.net.run('ip', 'route', 'replace', 'default', 'via', self.net.host_ip)
         # AppArmor пускает swanctl только в /etc/swanctl: клиентский каталог подставляется
         # туда bind-монтированием в своём mount-namespace, серверный не меняется.
         client = WORK / 'swanctl'
@@ -479,7 +500,7 @@ class IKEv2(Protocol):
         secret = self.secrets[identity]
         conf = client / 'swanctl.conf'
         conf.write_text(
-            f'connections {{\n  vpn {{\n    version = 2\n    remote_addrs = {HOST_IP}\n'
+            f'connections {{\n  vpn {{\n    version = 2\n    remote_addrs = {self.net.host_ip}\n'
             '    vips = 0.0.0.0\n    encap = yes\n    proposals = aes256gcm16-prfsha384-ecp384\n'
             f'    local {{\n      auth = eap-mschapv2\n      id = "{secret["id"]}"\n'
             f'      eap_id = "{secret["id"]}"\n    }}\n'
@@ -493,7 +514,7 @@ class IKEv2(Protocol):
             '--uri "$1"', str(client), self.vici())
         result = run('swanctl', '--initiate', '--child', 'vpn', '--uri', self.vici(), '--timeout', '15',
                      check=False, timeout=25)
-        return result.returncode == 0 and source() is not None
+        return result.returncode == 0 and self.net.source() is not None
 
     def down(self):
         if self.process is not None and self.process.poll() is None:
@@ -582,8 +603,8 @@ def stale_peers():
 
 def leftovers():
     return [name for name, present in (
-        ('netns', NS in run('ip', 'netns', 'list', check=False).stdout.split()),
-        ('veth', run('ip', 'link', 'show', HOST_IF, check=False).returncode == 0),
+        ('netns', bool({net.name for net in NETS} & set(run('ip', 'netns', 'list', check=False).stdout.split()))),
+        ('veth', any(run('ip', 'link', 'show', net.host_if, check=False).returncode == 0 for net in NETS)),
         ('conn IKEv2', SWAN_FILE.exists()),
         ('ccd OpenVPN', any(CCD.glob('vpn2-verify-*'))),
         ('пир WireGuard', bool(stale_peers())),
@@ -596,14 +617,14 @@ def cleanup(protocols=()):
     for protocol in protocols:
         with contextlib.suppress(OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             protocol.cleanup()
-    for pid in run('ip', 'netns', 'pids', NS, check=False).stdout.split():
-        with contextlib.suppress(ProcessLookupError, ValueError):
-            os.kill(int(pid), signal.SIGKILL)
-    # Ссылка опускается до удаления: иначе networkd-dispatcher пишет ошибку в журнал.
-    if run('ip', 'link', 'set', HOST_IF, 'down', check=False).returncode == 0:
-        time.sleep(1)
-    run('ip', 'netns', 'del', NS, check=False)
-    run('ip', 'link', 'del', HOST_IF, check=False)
+    for net in NETS:
+        for pid in run('ip', 'netns', 'pids', net.name, check=False).stdout.split():
+            with contextlib.suppress(ProcessLookupError, ValueError):
+                os.kill(int(pid), signal.SIGKILL)
+    # Ссылка опускается за секунду до удаления, иначе networkd-dispatcher пишет ошибку в журнал;
+    # секунда идёт, пока убирается остальное.
+    down = [run('ip', 'link', 'set', net.host_if, 'down', check=False).returncode == 0 for net in NETS]
+    settle = time.monotonic() + 1
     for path in CCD.glob('vpn2-verify-*'):
         path.unlink(missing_ok=True)
     if SWAN_FILE.exists():
@@ -612,6 +633,11 @@ def cleanup(protocols=()):
     manual_markers((), add=False)
     for key in stale_peers():
         run('wg', 'set', 'wg0', 'peer', key, 'remove', check=False)
+    if any(down):
+        time.sleep(max(0.0, settle - time.monotonic()))
+    for net in NETS:
+        run('ip', 'netns', 'del', net.name, check=False)
+        run('ip', 'link', 'del', net.host_if, check=False)
     shutil.rmtree(WORK, ignore_errors=True)
 
 
@@ -621,9 +647,15 @@ class Verifier:
         self.exits = exits
         self.markers = manual_markers([*exits, DIRECT], add=True)
         # Эталон с самого entry: недоступный и отсюда адрес не годится в пробу пути.
-        self.internet = [ip for host, path, status in INTERNET
-                         if (ip := resolve(host)) and probe_http(ip, host, path, timeout=5) == status]
-        self.dns_reference = {server: probe_dns(server, 'dns.google') for server in ('10.99.0.1', '127.0.0.2')}
+        def reachable(host, path, status):
+            return ip if (ip := resolve(host)) and probe_http(ip, host, path, timeout=5) == status else None
+
+        servers = ('10.99.0.1', '127.0.0.2')
+        with concurrent.futures.ThreadPoolExecutor(len(INTERNET) + len(servers)) as pool:
+            internet = [pool.submit(reachable, *item) for item in INTERNET]
+            dns = {server: pool.submit(probe_dns, server, 'dns.google') for server in servers}
+            self.internet = [ip for future in internet if (ip := future.result())]
+            self.dns_reference = {server: future.result() for server, future in dns.items()}
         # Действующий доступ: кто подключён, отметка службы управления до подключения, удалось ли оно.
         self.link = self.stamp = None
         self.linked = False
@@ -658,7 +690,7 @@ class Verifier:
 
         Без следа панели неудача пробы остаётся неудачей.
         """
-        result, seen = in_namespace(source(), kind, args, dest)
+        result, seen = in_namespace(protocol.net, protocol.net.source(), kind, args, dest)
         if result is not None or not retry:
             return result, seen
         self.report.blurred = False
@@ -666,7 +698,7 @@ class Verifier:
             if not self.moved(protocol):
                 break
             self.attach(protocol)
-            result, seen = in_namespace(source(), kind, args, dest)
+            result, seen = in_namespace(protocol.net, protocol.net.source(), kind, args, dest)
             if result is not None:
                 return result, seen
         else:
@@ -674,7 +706,7 @@ class Verifier:
             return result, seen
         if protocol.ensure():
             time.sleep(2)
-            result, seen = in_namespace(source(), kind, args, dest)
+            result, seen = in_namespace(protocol.net, protocol.net.source(), kind, args, dest)
         return result, seen
 
     def route(self, protocol, marker, expected):
@@ -760,7 +792,7 @@ class Verifier:
 
     def protocol(self, protocol):
         protocol.issue('a')
-        if not self.connect(protocol, 'a') or not source():
+        if not self.connect(protocol, 'a') or not protocol.net.source():
             self.add('подключение', protocol, FAIL, f'клиент не подключился к {protocol.proto}/{protocol.port}')
             self.add('маршруты, DNS, отзыв', protocol, UNKNOWN, 'нет подключения')
             return
@@ -771,21 +803,36 @@ class Verifier:
         self.revocation(protocol)
 
 
+def checked(verifier, protocol):
+    try:
+        verifier.protocol(protocol)
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+        verifier.report.add('исполнение', protocol.name, FAIL, f'проверка прервана: {error}')
+    finally:
+        with contextlib.suppress(OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            protocol.cleanup()
+
+
 def verify(report, exits):
     protocols = []
     try:
         cleanup()
         WORK.mkdir(mode=0o700, parents=True, exist_ok=True)
-        namespace_up()
-        protocols = [WireGuard(), OpenVPN(), IKEv2()]
+        for net in NETS:
+            net.up()
+        protocols = [kind(net) for kind, net in zip((WireGuard, OpenVPN, IKEv2), NETS)]
         verifier = Verifier(report, exits)
+        # Протоколы независимы - у каждого свой netns, доступ и строки отчёта; идут параллельно.
+        parts, workers = [], []
         for protocol in protocols:
-            try:
-                verifier.protocol(protocol)
-            except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
-                report.add('исполнение', protocol.name, FAIL, f'проверка прервана: {error}')
-            finally:
-                protocol.cleanup()
+            own = copy.copy(verifier)
+            own.report = Report(report.tag, io.StringIO())
+            parts.append(own.report)
+            workers.append(threading.Thread(target=checked, args=(own, protocol), daemon=True))
+            workers[-1].start()
+        for worker, part in zip(workers, parts):
+            worker.join()
+            report.merge(part)
     finally:
         cleanup(protocols)
         rest = leftovers()

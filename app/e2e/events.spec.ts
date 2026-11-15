@@ -22,7 +22,8 @@ test.describe('events', () => {
   }
 
   async function lastId(api: APIRequestContext) {
-    return (await feed(api))[0]?.id ?? 0
+    // Не первая строка ленты: серия неудачных входов поднимается ко времени последней попытки.
+    return Math.max(0, ...(await feed(api)).map(r => r.id))
   }
 
   test.describe('журнал событий', () => {
@@ -142,10 +143,12 @@ test.describe('events', () => {
       }
 
       const security = ['login_failed', 'sso_changed', 'telegram_changed']
-      const rows = await since(api, mark, r => security.includes(r.type))
+      // Неудачи с адреса за 10 минут - одна строка: её могла открыть попытка из прошлого теста.
+      const attempt = (r: FeedRow) => r.type === 'login_failed' && r.detail.startsWith(`логин «${login}» · `)
+      const rows = (await feed(api)).filter(r => attempt(r) || (r.id > mark && security.includes(r.type))).reverse()
       const ssoDetail = `вход через Authentik ${sso.enabled ? 'включён' : 'выключен'} · ${ACTOR}`
       expect(rows.map(r => [r.type, r.level, r.title, r.detail])).toEqual([
-        ['login_failed', 'alarm', 'Неудачный вход в панель', expect.stringMatching(new RegExp(`^логин «${login}» · \\S+$`))],
+        ['login_failed', 'alarm', expect.stringMatching(/^(Неудачный вход в панель|\d+ неудачн\S+ вход\S* за \d+ (с|мин))$/), expect.stringMatching(new RegExp(`^логин «${login}» · \\S+$`))],
         ['sso_changed', 'alarm', 'Изменены настройки SSO', ssoDetail],
         ['telegram_changed', 'alarm', 'Изменены настройки Telegram', `ник админа · ${ACTOR}`],
         // Возврат прежних настроек — тоже изменение.

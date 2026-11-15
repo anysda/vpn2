@@ -66,7 +66,7 @@ async function recordFailedLogin(path: string, request: Request | undefined, sta
   }
   else if (path === '/two-factor/verify-totp') reason = 'неверный код 2FA'
   else return
-  await recordEvent({ type: 'login_failed', level: 'alarm', title: 'Неудачный вход в панель', detail: joinDetail(reason, ip) })
+  await journalFailedLogin(ip, reason)
 }
 
 /** Запрос со страницы этой же панели: Origin (или Referer) того же хоста. */

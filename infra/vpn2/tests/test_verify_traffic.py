@@ -231,5 +231,23 @@ class FreeAddressesTests(unittest.TestCase):
         self.assertEqual(free, ['10.66.66.5', '10.66.66.4'])
 
 
+
+class WireGuardRevokeTests(unittest.TestCase):
+    """VPN2-942: отозванный WireGuard доказывается отсутствием пира, без 10 с ожидания рукопожатия."""
+
+    def admits(self, peers):
+        wg = vt.WireGuard.__new__(vt.WireGuard)
+        wg.peers = {'a': {'public': 'PUB', 'revoked': True}}
+        wg.connect = mock.Mock(side_effect=AssertionError('второй connect после отзыва'))
+        with mock.patch.object(vt, 'run', lambda *_a, **_k: types.SimpleNamespace(stdout=peers)):
+            return wg.admits('a', lambda: True)
+
+    def test_removed_peer_is_refused_without_connect(self):
+        self.assertFalse(self.admits('OTHER\n'))
+
+    def test_peer_left_on_server_turns_revocation_red(self):
+        self.assertTrue(self.admits('OTHER\nPUB\n'))
+
+
 if __name__ == '__main__':
     unittest.main()

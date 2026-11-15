@@ -259,6 +259,10 @@ class Protocol:
     def lost(self, _identity, _linked):
         return False
 
+    def admits(self, identity, alive):
+        """Отозванный доступ снова пускает: подключение и данные через него."""
+        return self.connect(identity) and alive()
+
     def cleanup(self):
         self.down()
 
@@ -329,6 +333,10 @@ class WireGuard(Protocol):
         peer = self.peers[identity]
         peer['revoked'] = True
         run('wg', 'set', 'wg0', 'peer', peer['public'], 'remove')
+
+    def admits(self, identity, _alive):
+        """Без пира на сервере рукопожатия нет: его отсутствие и доказывает отказ, ждать 10 с незачем."""
+        return self.peers[identity]['public'] in run('wg', 'show', 'wg0', 'peers').stdout.split()
 
     def lost(self, identity, _linked):
         """Пира проверки на сервере нет, хотя он не отозван: его снял чужой syncconf."""
@@ -736,7 +744,7 @@ class Verifier:
         protocol.revoke('a')
         time.sleep(1)
         live = self.alive(protocol, retry=False)
-        again = protocol.connect('a') and self.alive(protocol, retry=False)
+        again = protocol.admits('a', lambda: self.alive(protocol, retry=False))
         protocol.issue('b')
         fresh = self.connect(protocol, 'b') and self.alive(protocol)
         if not live and not again and fresh:

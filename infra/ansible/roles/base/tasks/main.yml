@@ -66,31 +66,36 @@
 
 # Чужой apt (unattended-upgrades первого часа жизни VPS) держит замок dpkg:
 # его ждём до 20 минут, сбой зеркала повторяем.
-- name: Пакеты одним заходом apt
+- name: Списки пакетов apt
   ansible.builtin.apt:
-    name: "{{ base_packages }}"
-    state: present
     update_cache: true
     cache_valid_time: 3600
     lock_timeout: 1200
-  environment:
-    NEEDRESTART_MODE: a
-  register: base_apt
-  until: base_apt is succeeded
+  register: base_lists
+  until: base_lists is succeeded
   retries: 3
   delay: 10
 
 # Корневые сертификаты образа VPS бывают старше архива: TLS до реестра и ACME на свежем наборе.
-- name: Свежие корневые сертификаты
+# Свежая версия ставится тем же заходом apt, что и пакеты: второй заход - ещё один needrestart.
+- name: Свежая версия корневых сертификатов
+  ansible.builtin.command:
+    argv: [apt-cache, policy, ca-certificates]
+  register: base_ca
+  changed_when: false
+
+- name: Пакеты одним заходом apt
   ansible.builtin.apt:
-    name: ca-certificates
-    state: latest
-    only_upgrade: true
+    name: >-
+      {{ base_packages | map('regex_replace', '^ca-certificates$', 'ca-certificates' ~ base_ca_version) | list }}
+    state: present
     lock_timeout: 1200
+  vars:
+    base_ca_version: "{{ base_ca.stdout | regex_search('Candidate: ([^ (]+)\\n', '\\1') | default([''], true) | first | regex_replace('^(.+)$', '=\\1') }}"
   environment:
     NEEDRESTART_MODE: a
-  register: base_ca
-  until: base_ca is succeeded
+  register: base_apt
+  until: base_apt is succeeded
   retries: 3
   delay: 10
 

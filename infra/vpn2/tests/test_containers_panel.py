@@ -58,3 +58,22 @@ class SsoMissingSecretTests(unittest.TestCase):
                     self.assertEqual(env['NUXT_PUBLIC_SSO_ENABLED'], 'false')
                     self.assertEqual(env['NUXT_PUBLIC_SSO_AUTO_REDIRECT'], 'false')
                     self.assertEqual(env['NUXT_SSO_PASSWORD_LOGIN'], 'true')
+
+
+class TlsTimerTests(unittest.TestCase):
+    def calls(self, enabled):
+        done = []
+
+        def run(argv, **_options):
+            done.append(argv[1])
+            return mock.Mock(returncode=0 if enabled or argv[1] != 'is-enabled' else 1)
+        with mock.patch.object(panel.subprocess, 'run', run):
+            panel.start_tls_timer()
+        return done
+
+    def test_enabled_timer_is_only_started(self):
+        # enable перечитывает systemd: на холостом деплое его нет.
+        self.assertEqual(self.calls(enabled=True), ['is-enabled', 'start'])
+
+    def test_new_timer_is_enabled_then_started(self):
+        self.assertEqual(self.calls(enabled=False), ['is-enabled', 'enable', 'start'])

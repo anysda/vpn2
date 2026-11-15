@@ -128,9 +128,7 @@
   changed_when: false
 
 - name: Таймер TLS идёт
-  ansible.builtin.command:
-    argv: [systemctl, enable, --now, vpn2-tls.timer]
-  changed_when: false
+  ansible.builtin.systemd_service: {name: vpn2-tls.timer, enabled: true, state: started}
 
 # Пара аварийного входа заранее: общая на IP или самоподписанная; при идущей
 # выдаче шаг её не трогает.

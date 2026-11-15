@@ -493,8 +493,7 @@ def stage(environ, docker, tx, image):
                     environ.get('TLS_INITIAL_WAIT') or '60'], check=True)
     if subprocess.run(['systemctl', 'start', 'vpn2-tls.service'], check=False).returncode:
         say('vpn2-tls.service завершилась с ошибкой, подробности: journalctl -u vpn2-tls')
-    subprocess.run(['systemctl', 'enable', '--now', 'vpn2-tls.timer'], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    start_tls_timer()
     summary(environ, admin_user, facts['sso_enabled'])
     return changed
 
@@ -522,3 +521,10 @@ def run(environ, docker):
     finally:
         for number, handler in previous.items():
             signal.signal(number, handler)
+
+
+def start_tls_timer():
+    """Таймер срока сертификата идёт; enable перечитывает systemd и на уже включённом таймере."""
+    if subprocess.run(['systemctl', 'is-enabled', '--quiet', 'vpn2-tls.timer'], check=False).returncode:
+        subprocess.run(['systemctl', 'enable', 'vpn2-tls.timer'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['systemctl', 'start', 'vpn2-tls.timer'], check=True)

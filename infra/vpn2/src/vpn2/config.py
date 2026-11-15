@@ -87,6 +87,8 @@ def _plain_forms(text):
 
     Пробелы и табуляция вокруг значения и комментарий после него снимаются; простое значение из
     знаков разметки (`@p`, `%p`, `a: b`, `- p`) берётся в одинарные кавычки. Число строк прежнее.
+    Значение с `[ { | > ! & *` в начале или с текстом после кавычки YAML прочёл бы разметкой:
+    отказ с ключом и строкой, как в v1.1.5.
     """
     lines = text.split('\n')
     for index, line in enumerate(lines):
@@ -94,9 +96,14 @@ def _plain_forms(text):
         if not found or found.group(2) not in KEY_NAMES:
             continue
         head, name, value = found.group(1), found.group(2), found.group(3).strip()
-        if not value or value[0] in '"\'#|>':
+        where = f'строка {index + 1}; заключите значение в кавычки'
+        if value[:1] in tuple('[{|>!&*'):
+            raise ConfigError(_key_at(text, index, len(line)), f'значение начинается с «{value[0]}», {where}')
+        if not value or value[0] in '"\'#':
             closed = QUOTED.match(value)
-            if closed and closed.group(2).lstrip()[:1] in ('', '#'):
+            if closed and closed.group(2).lstrip()[:1] not in ('', '#'):
+                raise ConfigError(_key_at(text, index, len(line)), f'текст после закрывающей кавычки, {where} целиком')
+            if closed:
                 value = closed.group(1)
             lines[index] = f'{head}{name}: {value}'.rstrip()
             continue
@@ -126,10 +133,10 @@ def _scalar(node, key):
     value, plain = node.value, node.style is None
     shape = re.sub(r'^exits\[\d+\]', 'exits[]', key)
     boolean = shape in BOOLEANS
+    if plain and not boolean and value.lower() in STRICT_STR_WORDS | {'null', '~'}:
+        raise ConfigError(key, f'ожидается строка, строка {node.start_mark.line + 1}; заключите значение в кавычки')
     if plain and value.lower() in ('null', '~'):
-        raise ConfigError(key, 'ожидается скаляр; сложный YAML не поддерживается')
-    if plain and not boolean and value.lower() in STRICT_STR_WORDS:
-        raise ConfigError(key, 'ожидается строка; заключите значение в кавычки')
+        raise ConfigError(key, 'ожидается true или false')
     if '\0' in value:
         raise ConfigError(key, 'нулевой байт недопустим в env')
     if boolean and value.lower() not in BOOL_WORDS:

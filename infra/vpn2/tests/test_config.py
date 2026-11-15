@@ -96,3 +96,15 @@ def test_load_reads_file():
         path.write_text(EXITS_PLAIN, encoding='utf-8')
         assert config.load(str(path)).entry.host == '1.2.3.4'
 
+
+
+@pytest.mark.parametrize('value', ['"a"b', "'a'b", '!a', '&a', '*a', '[a', '{a', '|a', '>a', '~', 'null', 'True'])
+def test_markup_value_refused_with_key_line_and_quote_hint(value):
+    """VPN2-933: пароль хостера с разметкой YAML - отказ по-русски, с ключом и строкой; в кавычках читается."""
+    text = 'entry:\n  host: 192.0.2.1\n  password: {}\nexits:\n  - tag: nl\n    host: 192.0.2.2\n    password: x\n'
+    with pytest.raises(config.ConfigError) as caught:
+        config.loads(text.format(value))
+    assert caught.value.key == 'entry.password'
+    assert 'строка 3' in caught.value.reason and 'заключите значение в кавычки' in caught.value.reason
+    quoted = "'" + value.replace("'", "''") + "'"
+    assert config.loads(text.format(quoted)).entry.password == value

@@ -75,9 +75,12 @@ STATE=/var/lib/anysda-vpn2/state
 OLD_STATE=/opt/anysda-vpn2/infra/state
 DEPLOY_LOCK_WAIT="flock -w 70 /run/lock/anysda-vpn2-deploy.lock true"
 DEPLOY_LOCK_WAIT+=" && { [ ! -e $OLD_STATE/deploy.lock ] || flock -w 70 $OLD_STATE/deploy.lock true; }"
-# Ожидание выпуска сертификата впустую: на адрес 198.18.x ACME не выпустит.
-# Стадии берут его из окружения ssh-сессии (pam_env, /etc/environment).
-TLS_INITIAL_WAIT=0
+# Let's Encrypt на адрес 198.18.x не выпустит: сертификаты выдаёт тестовый ACME (pebble) на мосту,
+# без проверки вызова. Стадии берут адрес и корень из окружения ssh-сессии (pam_env, /etc/environment).
+PEBBLE_URL=https://github.com/letsencrypt/pebble/releases/download/v2.10.1/pebble-linux-amd64.tar.gz
+PEBBLE_SHA256=4f2fcb5bca8c85c9cf73ad140fccfc0d2be40bd81ab99879c79b7b8a0b4f70ed
+ACME_URL=https://$NET.1:14000/dir
+ACME_ROOT=/etc/vpn2-ci/acme.pem
 # Пакеты ВМ идут через кэширующий прокси apt на хосте (apt-cacher-ng на мосту):
 # установка на ВМ та же - apt-get update/install с чистой Ubuntu, но пакеты
 # берутся из кэша раннера, а не с зеркал на каждом прогоне. Каталог кэша
@@ -159,6 +162,31 @@ net_up() {
     || iptables -w -t nat -A POSTROUTING -s "$NET.0/24" -o "$wan" -j MASQUERADE
   iptables -w -C FORWARD -i "$BRIDGE" -j ACCEPT 2>/dev/null || iptables -w -I FORWARD 1 -i "$BRIDGE" -j ACCEPT
   iptables -w -C FORWARD -o "$BRIDGE" -j ACCEPT 2>/dev/null || iptables -w -I FORWARD 1 -o "$BRIDGE" -j ACCEPT
+}
+
+# Тестовый ACME на мосту: сертификат его HTTPS - корень доверия Caddy узлов (trusted_roots).
+acme_up() {
+  local dir=$STAND_DIR/acme
+  mkdir -p "$dir"
+  if [[ ! -x "$dir/pebble" ]]; then
+    curl -fsSL --retry 3 -o "$dir/pebble.tgz" "$PEBBLE_URL"
+    sha256sum -c <<<"$PEBBLE_SHA256  $dir/pebble.tgz" >/dev/null || die 'pebble: контрольная сумма не совпала'
+    tar -xzf "$dir/pebble.tgz" -C "$dir"
+    install -m 755 "$dir/pebble-linux-amd64/linux/amd64/pebble" "$dir/pebble"
+  fi
+  [[ -f "$STAND_DIR/acme.pem" ]] || openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 7 \
+    -subj /CN=vpn2-ci-acme -addext "subjectAltName=IP:$NET.1" -keyout "$dir/acme.key" -out "$STAND_DIR/acme.pem" 2>/dev/null
+  cat > "$dir/pebble.json" <<EOF
+{"pebble": {"listenAddress": "$NET.1:14000", "managementListenAddress": "127.0.0.1:15000",
+  "certificate": "$STAND_DIR/acme.pem", "privateKey": "$dir/acme.key", "httpPort": 80, "tlsPort": 443,
+  "ocspResponderURL": "", "externalAccountBindingRequired": false,
+  "profiles": {"default": {"description": "default", "validityPeriod": 7776000},
+               "shortlived": {"description": "shortlived", "validityPeriod": 576000}}}}
+EOF
+  pgrep -f "$dir/pebble -config" >/dev/null && return
+  PEBBLE_VA_ALWAYS_VALID=1 PEBBLE_VA_NOSLEEP=1 PEBBLE_WFE_NONCEREJECT=0 \
+    setsid nohup "$dir/pebble" -config "$dir/pebble.json" > "$dir/pebble.log" 2>&1 < /dev/null &
+  log "тестовый ACME: $ACME_URL"
 }
 
 # Прогрев ВМ сразу после загрузки, пока раннер собирает панель и деплой
@@ -271,7 +299,11 @@ write_files:
   - path: /etc/environment
     append: true
     content: |
-      TLS_INITIAL_WAIT=$TLS_INITIAL_WAIT
+      TLS_ACME_URL=$ACME_URL
+      TLS_ACME_ROOT=$ACME_ROOT
+  - path: $ACME_ROOT
+    content: |
+$(sed 's/^/      /' "$STAND_DIR/acme.pem")
   - path: /etc/systemd/system/anysda-failover-watchdog.service.d/10-vpn2-ci.conf
     content: |
       [Service]
@@ -460,6 +492,7 @@ cmd_up() {
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")
   net_up
   apt_proxy_up
+  acme_up
   local node name ip cpus mem mac tap vhost=''
   # Сеть ВМ в ядре хоста (vhost-net), а не в потоке qemu: меньше CPU раннера
   # на образ панели, пакеты и трафик 99-verify.
@@ -1004,10 +1037,12 @@ cmd_snapshot_corrupt() {
 panel_api() {
   local method=$1 path=$2 body=${3:-}
   local base=http://127.0.0.1:51821 jar=/run/vpn2-panel.jar
-  local hdr="-H 'Origin: $base' -H 'Content-Type: application/json'"
+  # Origin со схемой панели: с сертификатом она ждёт https (session.cookie.secure).
+  local hdr="-H \"Origin: \$o\" -H 'Content-Type: application/json'"
   local login="curl -fsS -c $jar $hdr -d \"\$(printf '{\"username\":\"anysda\",\"password\":\"%s\"}' \"\$(cat /etc/anysda/admin-password.txt)\")\" $base/api/auth/sign-in/username >/dev/null"
   local req="curl -fsS -b $jar -X $method $hdr ${body:+-d '$body'} $base$path"
-  ssh_node "$ENTRY" "[ -f $jar ] || { $login; }; $req"
+  ssh_node "$ENTRY" "o=\$(sed -n 's/^true\$/https/p' /etc/vpn2/tls/panel/secure 2>/dev/null); o=\${o:-http}://127.0.0.1:51821
+    [ -f $jar ] || { $login; }; $req"
 }
 
 # Сценарий 5: боту через панель - поддельный токен. Telegram отвечает

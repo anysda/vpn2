@@ -13,7 +13,7 @@ it('перебор пароля: попытки с адреса за 10 мину
   const db = drizzle(createClient({ url: ':memory:' }), { schema })
   await migrate(db, { migrationsFolder: fileURLToPath(new URL('../database/migrations', import.meta.url)) })
   state.db = db
-  const { journalFailedLogin } = await import('./bot')
+  const { journalFailedLogin } = await import('./failed-login')
   const rows = async () => (await db.select().from(schema.events).orderBy(schema.events.id)).map(r => [r.title, r.detail])
   const start = Date.UTC(2026, 10, 15, 12)
   vi.useFakeTimers({ now: start })

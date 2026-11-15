@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import errorText from '../../../shared/error-text.json' with { type: 'json' }
-import { journalFailedLogin } from '../../utils/bot'
+import { journalFailedLogin } from '../../utils/failed-login'
 
 // Вход, сессии, 2FA и лимит попыток ведёт better-auth (utils/auth.ts). Здесь: адрес клиента
 // (X-Forwarded-For только от Caddy этой ноды), открытые ручки с проверкой Origin, запись неудач

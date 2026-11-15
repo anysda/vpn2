@@ -100,9 +100,10 @@ def warm(infra):
     loader = DataLoader()
     for path in [infra / 'deploy.yml', infra / 'site.yml', *sorted(infra.glob('roles/*/*/*.yml'))]:
         # Битый или пропавший файл здесь не ошибка: о нём скажет сам плей.
-        if (path.parent == infra or path.parent.name in ('tasks', 'handlers', 'defaults', 'vars', 'meta')) and path.is_file():
+        # Доверие шаблонам - как у ansible при разборе плейбуков и ролей: кэш его не различает.
+        if (path.parent == infra or path.parent.name in ('tasks', 'handlers', 'defaults', 'vars')) and path.is_file():
             with contextlib.suppress(AnsibleError):
-                loader.load_from_file(str(path))
+                loader.load_from_file(str(path), trusted_as_template=True)
     cache, init = loader._FILE_CACHE, DataLoader.__init__
 
     def shared(self):
@@ -112,15 +113,19 @@ def warm(infra):
     return cache
 
 
-def only_tagged(cache, site, args):
-    """Плеи site.yml, чей тег не назван в --tags, ansible пропустил бы целиком (тегов задач в ролях нет):
-    их роли не разбираются вовсе."""
-    if '--tags' in args and str(site) in cache:
-        wanted = set(args[args.index('--tags') + 1].split(','))
-        cache[str(site)] = [found for found in cache[str(site)] if wanted & set(found.get('tags', ()))]
+def only_tagged(cache, args):
+    """Плей с тегом, не названным в --tags, ansible пропустил бы целиком (у задач тегов нет, test_stages):
+    плейбуки из аргументов идут без таких плеев, их роли не разбираются, пустых шапок нет."""
+    if '--tags' not in args:
+        return
+    wanted = set(args[args.index('--tags') + 1].split(','))
+    for name in args:
+        if isinstance(cache.get(name), list):
+            # Плейбук совсем без плеев ansible отвергает: такой остаётся как есть.
+            cache[name] = [found for found in cache[name] if 'tags' not in found or wanted & set(found['tags'])] or cache[name]
 
 
-def play(sock, script, request, fds, cache, site):
+def play(sock, script, request, fds, cache):
     """В fork: консольный ansible-playbook как отдельный процесс, код - кодом выхода."""
     signal.signal(signal.SIGINT, signal.default_int_handler)
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -135,7 +140,7 @@ def play(sock, script, request, fds, cache, site):
     os.environ.clear()
     os.environ.update(request['env'])
     sys.argv = [script, *request['args']]
-    only_tagged(cache, site, request['args'])
+    only_tagged(cache, request['args'])
     code = 0
     try:
         if 'ansible.cli' in sys.modules:
@@ -170,8 +175,7 @@ def serve(fd, script):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     sock = socket.socket(fileno=fd)
-    infra = Path(os.environ['ANSIBLE_CONFIG']).parent
-    cache = warm(infra)
+    cache = warm(Path(os.environ['ANSIBLE_CONFIG']).parent)
     plays = {}  # pidfd -> (id, pid)
 
     def say(**reply):
@@ -195,7 +199,7 @@ def serve(fd, script):
             if pid == 0:
                 for other in plays:
                     os.close(other)
-                play(sock, script, request, fds, cache, infra / 'site.yml')
+                play(sock, script, request, fds, cache)
             for passed in fds:
                 os.close(passed)
             plays[os.pidfd_open(pid)] = request['id'], pid

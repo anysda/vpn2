@@ -42,6 +42,26 @@ def test_parser_reads_site_like_yaml():
     assert {key for play in plays for key in play} == {'name', 'hosts', 'tags', 'roles', 'serial'}
 
 
+def test_tasks_take_tags_only_from_their_play():
+    """Плей с тегом вне --tags процесс плеев не разбирает (plays.only_tagged): тег у задачи сделал бы это неверным."""
+    tagged = []
+
+    def walk(items, where):
+        for item in items or ():
+            if isinstance(item, dict):
+                tagged.extend([where] if 'tags' in item else [])
+                for key in ('block', 'rescue', 'always'):
+                    walk(item.get(key), where)
+    for path in sorted((ROOT / 'infra/ansible/roles').glob('*/*/*.yml')):
+        if path.parent.name in ('tasks', 'handlers'):
+            walk(yaml.safe_load(path.read_text(encoding='utf-8')), path.relative_to(ROOT))
+    for name in ('deploy.yml', 'site.yml'):
+        for play in yaml.safe_load((ROOT / 'infra/ansible' / name).read_text(encoding='utf-8')):
+            if 'tags' in play:
+                walk(play.get('tasks'), f'{name}: {play["name"]}')
+    assert not tagged
+
+
 def test_one_play_file_only():
     assert not (ROOT / 'infra/ansible/plays').exists()
 

@@ -2,7 +2,6 @@
 import { ru } from '@nuxt/ui/locale'
 
 const mobile = useMobile()
-const layers = useOpenLayers()
 // Chromium считает фокус <select> после клика мышью видимым: рамку выбора рисуем только после Tab (clients.css).
 onMounted(() => {
   const root = document.documentElement
@@ -17,7 +16,7 @@ useHead({
 </script>
 
 <template>
-  <UApp :locale="ru" :toaster="{ position: mobile ? (layers ? 'bottom-center' : 'top-center') : 'bottom-right' }">
+  <UApp :locale="ru" :toaster="{ position: mobile ? 'top-center' : 'bottom-right' }">
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>

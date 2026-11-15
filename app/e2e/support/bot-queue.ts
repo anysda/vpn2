@@ -1,10 +1,7 @@
 import type { Page } from '@playwright/test'
-import { expect, hydrated } from './fixtures'
+import { expect, hydrated, pollBell } from './fixtures'
 import { openHome } from './clients'
 import type { BotDelivery } from '../../shared/bot-delivery'
-
-// Колокольчик опрашивает раз в 15 с (VPN2-938); возврат на вкладку опрашивает сразу.
-const poll = (p: Page) => p.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
 
 export async function checkBotQueue(page: Page, checkLayout?: () => Promise<void>) {
   let rows: BotDelivery[] = []
@@ -20,12 +17,12 @@ export async function checkBotQueue(page: Page, checkLayout?: () => Promise<void
     id: `queue-${i}`, label: `Уведомление ${i + 1}`, status: 'queued', remaining: 5, created: Date.now(),
   }))
   rows = queued(1)
-  await poll(page)
+  await pollBell(page)
   await expect(toasts).toHaveCount(1)
   await expect(toasts).toContainText('Бот недоступен, 1 уведомление в очереди')
   await checkLayout?.()
   rows = queued(5)
-  await poll(page)
+  await pollBell(page)
   await expect(page.getByRole('button', { name: 'Уведомления: 5', exact: true })).toBeVisible()
   // Очередь не доставлена: тост должен погаснуть сам за несколько секунд.
   await page.mouse.move(0, 0)
@@ -35,7 +32,7 @@ export async function checkBotQueue(page: Page, checkLayout?: () => Promise<void
   await page.keyboard.press('Escape')
   console.log('Бот недоступен, 5 уведомлений в очереди — в «Уведомлениях»; тост погас сам')
   rows = queued(7)
-  await poll(page)
+  await pollBell(page)
   await expect(page.getByRole('button', { name: 'Уведомления: 7', exact: true })).toBeVisible()
   await expect(toasts, 'изменение счётчика не повторяет тост').toHaveCount(0)
   await page.reload()
@@ -43,10 +40,10 @@ export async function checkBotQueue(page: Page, checkLayout?: () => Promise<void
   await expect(page.getByRole('button', { name: 'Уведомления: 7', exact: true })).toBeVisible()
   await expect(toasts, 'перезагрузка сохраняет сессию вкладки').toHaveCount(0)
   rows = rows.map(row => ({ ...row, status: 'accepted', remaining: 0 }))
-  await poll(page)
+  await pollBell(page)
   await expect(page.getByRole('button', { name: /^Уведомления:/ })).toHaveCount(0)
   rows = queued(5)
-  await poll(page)
+  await pollBell(page)
   await expect(page.getByRole('button', { name: 'Уведомления: 5', exact: true })).toBeVisible()
   await expect(toasts, 'новая очередь в той же сессии не повторяет тост').toHaveCount(0)
   console.log('Счётчик изменён, страница перезагружена, очередь заполнена снова — тостов: 0')
@@ -63,7 +60,7 @@ export async function checkBotQueue(page: Page, checkLayout?: () => Promise<void
     await newToasts.getByRole('button', { name: /Close|Закрыть/ }).click()
     await expect(newToasts).toHaveCount(0)
     rows = queued(7)
-    await poll(tab)
+    await pollBell(tab)
     await expect(tab.getByRole('button', { name: 'Уведомления: 7', exact: true })).toBeVisible()
     await expect(newToasts, 'закрытый вручную тост не возвращается').toHaveCount(0)
     await tab.reload()

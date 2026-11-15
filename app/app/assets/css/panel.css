@@ -251,8 +251,10 @@ fieldset.fg2{border:0;margin:0;padding:0;min-width:0}
   .mbar .tabs a:active,.mper:active{transform:scale(.96)}
   .wrap>header button,.mbar a{touch-action:manipulation}
   /* тосты Nuxt UI: сверху, плашка с точкой, как в макете; при открытом окне - снизу (app.vue) */
-  body:not(:has(.clm)) ol[data-slot="viewport"]{top:calc(14px + env(safe-area-inset-top))}
-  body:has(.clm) ol[data-slot="viewport"]{bottom:calc(14px + env(safe-area-inset-bottom))}
+  ol[data-slot="viewport"]{top:calc(14px + env(safe-area-inset-top))}
+  /* Окно открыто: всплывашка под его шапкой (окно с 22px, шапка 64px) и пропускает касания к кнопкам окна. */
+  body:has([role="dialog"]) ol[data-slot="viewport"]{top:calc(96px + env(safe-area-inset-top))}
+  body:has([role="dialog"]) ol[data-slot="viewport"],body:has([role="dialog"]) ol[data-slot="viewport"] *{pointer-events:none!important}
   ol[data-slot="viewport"]>li{gap:10px;padding:11px 16px;border-radius:16px;background:var(--toast);box-shadow:0 0 0 1px var(--line2),0 12px 30px rgba(0,0,0,calc(.5*var(--shk)))}
   ol[data-slot="viewport"]>li::before{content:"";flex:none;align-self:center;width:7px;height:7px;border-radius:50%;background:var(--green)}
   ol[data-slot="viewport"]>li[class*="outline-error"]::before{background:var(--red)}

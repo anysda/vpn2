@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, hydrated, toast, uniq, loginApi, test } from './support/fixtures'
+import { expect, hydrated, toast, uniq, loginApi, test, viaBell } from './support/fixtures'
 import { openHome } from './support/clients'
 import { container, inside } from './support/openvpn-ca'
 import { checkBotQueue } from './support/bot-queue'
@@ -182,13 +182,14 @@ test.describe('bot-delivery-ui', () => {
     await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: failed
       ? [{ id: 'failed-toast', label: 'Рассылка', status: 'failed', remaining: 0 }]
       : [] }))
+    // Ответ первого опроса мог прийти ещё внутри openHome: ждать его, подписавшись заранее.
+    const first = page.waitForResponse('**/api/admin/bot-deliveries')
     await openHome(page)
-    await page.waitForResponse('**/api/admin/bot-deliveries')
+    await first
     failed = true
     const title = 'Рассылка: доставка не удалась. Повторов не будет.'
     const errorToast = toast(page, title)
-    // Колокольчик опрашивает раз в 15 с (VPN2-938).
-    await expect(errorToast).toBeVisible({ timeout: 20_000 })
+    await viaBell(page, () => expect(errorToast).toBeVisible({ timeout: 1000 }))
     await page.mouse.move(0, 0)
     await expect(errorToast, 'окончательная ошибка тоже не висит вечно').toHaveCount(0)
     await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
@@ -268,7 +269,7 @@ test.describe('bot-delivery-ui', () => {
       const created = await page.request.post('/api/clients', { data: { name } })
       expect(created.ok()).toBe(true)
       clientId = (await created.json()).id
-      await expect(toast(page, 'Бот недоступен, 1 уведомление в очереди')).toBeVisible({ timeout: 20_000 })
+      await viaBell(page, () => expect(toast(page, 'Бот недоступен, 1 уведомление в очереди')).toBeVisible({ timeout: 1000 }))
       await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
       await expect(page.getByRole('dialog').getByText('Бот недоступен, 1 уведомление в очереди', { exact: true })).toBeVisible()
       await page.keyboard.press('Escape')
@@ -281,7 +282,7 @@ test.describe('bot-delivery-ui', () => {
     `, clientId)
       const changed = await page.request.patch(`/api/clients/${clientId}`, { data: { deviceLimit: 4 } })
       expect(changed.ok()).toBe(true)
-      await expect(page.getByRole('button', { name: 'Уведомления: 2', exact: true })).toBeVisible({ timeout: 20_000 })
+      await viaBell(page, () => expect(page.getByRole('button', { name: 'Уведомления: 2', exact: true })).toBeVisible({ timeout: 1000 }))
       await page.getByRole('button', { name: 'Уведомления: 2', exact: true }).click()
       await expect(page.getByRole('dialog').getByText('Бот недоступен, 2 уведомления в очереди', { exact: true })).toBeVisible()
       await page.keyboard.press('Escape')
@@ -337,7 +338,7 @@ test.describe('bot-delivery-ui', () => {
       const pending = (await (await page.request.get('/api/admin/bot-deliveries')).json())
         .find((row: { status: string }) => row.status === 'queued')
       due(pending.id, true)
-      await expect(toast(page, `Уведомление клиенту «${name}»: доставка не удалась. Повторов не будет.`)).toBeVisible()
+      await viaBell(page, () => expect(toast(page, `Уведомление клиенту «${name}»: доставка не удалась. Повторов не будет.`)).toBeVisible({ timeout: 1000 }))
       await page.reload()
       await page.getByRole('button', { name: /^Уведомления:/ }).click()
       // После перезагрузки тоста нет: строка - в списке «Уведомлений», со временем под текстом.

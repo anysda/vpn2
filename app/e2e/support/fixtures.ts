@@ -167,3 +167,14 @@ export async function hydrated(page: Page) {
 export function toast(page: Page, title: string | RegExp) {
   return page.getByRole('region', { includeHidden: true }).locator('ol > li').filter({ hasText: title }).first()
 }
+
+/** Опрос колокольчика сейчас: сам он ходит раз в 15 с, возврат на вкладку опрашивает сразу. */
+export const pollBell = (page: Page) => page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+
+/** `check` по данным колокольчика: опрос на каждой попытке, сервер мог дописать доставку позже. */
+export function viaBell(page: Page, check: () => Promise<unknown>) {
+  return expect(async () => {
+    await pollBell(page)
+    await check()
+  }).toPass({ intervals: [500], timeout: 10_000 })
+}

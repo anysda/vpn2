@@ -7,7 +7,13 @@ import type { AccessOperation } from '../../shared/access-operation'
 import { mskDate } from '../../shared/msk'
 import { plural } from '../../shared/plural'
 
-export const NameSchema = z.string().trim().min(1).max(64)
+// Невидимые и меняющие направление письма: имя из них выглядит пустым, перевёрнутым или чужим.
+const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g
+const visible = (s: string) => s.replace(INVISIBLE, '')
+export const NameSchema = z.string()
+  .refine(s => visible(s).trim() || visible(s) === s, 'Укажите имя')
+  .transform(visible)
+  .pipe(z.string().trim().min(1).max(64))
 const Limits = {
   expiresAt: z.iso.datetime().nullable().optional(),
   // null - безлимит.

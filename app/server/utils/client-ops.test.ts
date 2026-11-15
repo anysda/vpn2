@@ -40,6 +40,13 @@ it('смена экзита, имени и лимита - событие «бы�
   ])
 })
 
+it('имя, совпадающее с чужим после снятия невидимых символов, - 409', async () => {
+  const { ClientCreate, createClient, updateClient } = await import('./client-ops')
+  await expect(createClient(ClientCreate.parse({ name: 'Анна К​​' }), '@admin')).rejects.toMatchObject({ statusCode: 409, statusMessage: 'client_exists' })
+  const boris = await createClient(ClientCreate.parse({ name: 'Борис' }), '@admin')
+  await expect(updateClient(boris.id, ClientCreate.parse({ name: '⁠Анна К' }), '@admin')).rejects.toMatchObject({ statusCode: 409 })
+})
+
 it('сбой записи настроек роутеру - ошибка 502, событие записано', async () => {
   const { updateClient } = await import('./client-ops')
   state.sync.mockRejectedValueOnce(new Error('control down'))

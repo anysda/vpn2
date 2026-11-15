@@ -73,6 +73,17 @@ describe('имя из пробелов в маршрутах бота', () => {
     expect(calls.createClient).toHaveBeenCalledWith({ name: 'Иван' }, 'bot')
   })
 
+  it('невидимые символы в имени снимаются, имя только из них - «Укажите имя»', async () => {
+    const handler = await createClientRoute()
+    for (const name of ['​​​', '‮', ' ﻿⁠ ']) {
+      expect(await failure(handler({ body: { name } }))).toEqual({ ...emptyName, message: 'Укажите имя' })
+    }
+    expect(calls.createClient).not.toHaveBeenCalled()
+    await handler({ body: { name: 'aui-​​' } })
+    await handler({ body: { name: '‮Иван‬' } })
+    expect(calls.createClient.mock.calls.map(([body]) => body)).toEqual([{ name: 'aui-' }, { name: 'Иван' }])
+  })
+
   it('переименование клиента отвечает как на пустое имя', async () => {
     const handler = await patchClientRoute()
     expect(await failure(handler({ params: { id: '3' }, body: { name: '' } }))).toEqual(emptyName)

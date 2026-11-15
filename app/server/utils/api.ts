@@ -107,11 +107,10 @@ export async function readBodyAs<T>(event: Parameters<typeof readBody>[0], schem
   const issue = r.error.issues[0]
   const key = issue?.path[0] === undefined ? undefined : String(issue.path[0])
   const hint = key && (FIELD_HINTS[key] ?? (issue!.code === 'too_big' && issue!.origin === 'string' ? `до ${issue!.maximum} символов` : ''))
-  throw createError({
-    statusCode: 400,
-    statusMessage: 'invalid_body',
-    message: key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${FIELD_LABELS[key] ?? key}»${hint ? ` - ${hint}` : ''}`,
-  })
+  // Свой текст (refine схемы) - готовая фраза для человека, остальные - общая по полю.
+  const message = issue?.code === 'custom' ? issue.message
+    : key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${FIELD_LABELS[key] ?? key}»${hint ? ` - ${hint}` : ''}`
+  throw createError({ statusCode: 400, statusMessage: 'invalid_body', message })
 }
 
 /** Очередь: следующий вызов начинается после конца предыдущего, ошибка не рвёт цепочку. */

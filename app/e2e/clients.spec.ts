@@ -856,10 +856,14 @@ test.describe('client-prefs', () => {
           expect(Object.keys(prefs).sort()).toEqual(scenario.expected.filter(Boolean).sort())
           const changed = scenario.expected.filter((tag, i) => tag !== initial[i]).length
           expect(logs).toHaveLength(changed)
+          const journal = async () => (await db.select().from(schema.events).orderBy(schema.events.id)).map(row => [row.title, row.detail])
+          const unpinned = scenario.expected.flatMap((tag, i) => tag ? [] : [[`Закрепление снято · client-${i}`, `экзит ${initial[i]!.toUpperCase()} удалён`]])
+          expect(await journal()).toEqual(unpinned)
           // Рестарт с прежним bootstrap-env не переносит уже перенесённых клиентов повторно.
           await load().syncClientPrefsFile()
           expect((await db.select().from(schema.clients).orderBy(schema.clients.id)).map(row => row.preferredExit)).toEqual(actual)
           expect(logs).toHaveLength(changed)
+          expect(await journal()).toEqual(unpinned)
         }
         finally {
           client.close()

@@ -32,7 +32,7 @@ async function reconcileExits(): Promise<void> {
     if (saved?.value === value) return []
     // Пока карты в базе нет, её засевает NUXT_NODE_HOSTS.
     const previous: Record<string, string> = saved ? JSON.parse(saved.value) : exitHosts(String(cfg.previousNodeHosts || ''))
-    const rows = await tx.select({ id: clients.id, oldTag: clients.preferredExit }).from(clients).where(isNotNull(clients.preferredExit))
+    const rows = await tx.select({ id: clients.id, name: clients.name, oldTag: clients.preferredExit }).from(clients).where(isNotNull(clients.preferredExit))
     const changed = []
     for (const row of rows) {
       const oldTag = row.oldTag!
@@ -41,14 +41,18 @@ async function reconcileExits(): Promise<void> {
       const newTag = matches.length === 1 ? matches[0]! : Object.hasOwn(current, oldTag) ? oldTag : null
       if (newTag === oldTag) continue
       await tx.update(clients).set({ preferredExit: newTag, updatedAt: new Date() }).where(eq(clients.id, row.id))
-      changed.push({ clientId: row.id, oldTag, newTag })
+      changed.push({ clientId: row.id, name: row.name, oldTag, newTag })
     }
     await tx.insert(collectorState).values({ name: EXIT_MAP_STATE, value })
       .onConflictDoUpdate({ target: collectorState.name, set: { value } })
     return changed
   })
-  for (const change of changes) {
+  for (const { name, ...change } of changes) {
     useLogger().info(change, `client exit preference: ${change.oldTag} → ${change.newTag ?? 'авто (экзит удалён или адрес неоднозначен)'}`)
+    if (change.newTag) continue
+    const detail = `экзит ${change.oldTag.toUpperCase()} удалён`
+    await recordEvent({ type: 'client_exit_unpinned', level: 'warn', object: `client:${change.clientId}`, title: `Закрепление снято · ${name}`, detail })
+    await notifyWarning(notifyBot('system_alert', { subject: 'Закрепление снято', detail: `${name} · ${detail}` }, `Закрепление снято · ${name}`))
   }
 }
 

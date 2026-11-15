@@ -324,3 +324,19 @@ def test_entry_pulse_waits_for_exits_once_they_have_seen_entry(ports, touched):
     deploy.fresh = lambda node, _command, **_options: calls.append(node) or (1 if node != 'ru' else 0)
     deploy.pulse(['ru', 'us', 'gb'])
     assert calls.count('ru') == 1 and not deploy.outside
+
+
+@pytest.mark.parametrize('codes, failed, tries', [
+    ({'us': [255, 0]}, {}, {'ru': 1, 'us': 2}),
+    ({'us': [1]}, {'us': 1}, {'ru': 1, 'us': 1}),
+    ({'us': [255] * 3}, {'us': 255}, {'ru': 1, 'us': 3}),
+])
+def test_guard_arm_retries_only_failed_logins(monkeypatch, codes, failed, tries):
+    """Сорванный вход (255) повторяется только на своём узле; сторож, что упал сам, не повторяется."""
+    from vpn2.deploy import run
+    monkeypatch.setattr(run, 'ARM_PAUSE', 0)
+    deploy, calls = run.Deploy.__new__(run.Deploy), []
+    answers = {node: iter(found) for node, found in codes.items()}
+    deploy.fresh = lambda node, _command, **_options: calls.append(node) or next(answers.get(node, iter([0])))
+    assert deploy.guard_arm('10-foreign', 'ru,us') == failed
+    assert {node: calls.count(node) for node in tries} == tries

@@ -25,6 +25,8 @@ GUARDED = {'00-bootstrap', '05-mgmt-mesh', '10-foreign', '19-yt-zapret', '20-ru-
 GUARD_WINDOW = int(os.environ.get('VPN2_FW_GUARD_WINDOW') or 90)
 # Шесть пульсов на окно сторожа хватает и на пути с потерями.
 BEAT_EVERY = max(5, GUARD_WINDOW // 6)
+# Попытки поставить сторожа, когда новый вход на узел не прошёл, и пауза между ними, с.
+ARM_TRIES, ARM_PAUSE = 3, 5
 GUARD = '/run/vpn2-fw-guard'
 QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 # Экзитная часть стадии идёт рядом со следующими стадиями entry, которым экзиты не нужны, до названной:
@@ -110,10 +112,11 @@ class Deploy:
         try:
             done = subprocess.run(['sshpass', '-e', *ssh] if password else [*ssh[:1], '-o', 'BatchMode=yes', *ssh[1:]],
                                   env={**os.environ, 'SSHPASS': password}, stdin=subprocess.DEVNULL, text=True,
-                                  stdout=subprocess.PIPE if show else subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                                  stdout=subprocess.PIPE if show else subprocess.DEVNULL, stderr=subprocess.PIPE if show else subprocess.DEVNULL,
+                                  timeout=30)
         except subprocess.TimeoutExpired:
             return 255
-        print(done.stdout or '', end='', flush=True)
+        print(done.stdout or '', done.stderr or '', sep='', end='', flush=True)
         return done.returncode
 
     def each(self, nodes, command, **options):
@@ -162,6 +165,19 @@ class Deploy:
         stop.set()
         thread.join()
 
+    def guard_arm(self, stage, nodes):
+        """Сторож на узлах стадии; коды узлов, где не встал. Вход, что не прошёл (255), повторяется:
+        стадия ещё ничего не меняла, а новый ssh-вход изредка срывается и на исправной сети."""
+        left = nodes.split(',')
+        for attempt in range(ARM_TRIES):
+            armed = self.each(left, lambda _node: f'python3 -I /tmp/anysda/fwguard.py arm {stage} {GUARD_WINDOW} 2>&1', show=True)
+            failed = {node: code for node, code in armed.items() if code}
+            if not failed or set(failed.values()) != {255} or attempt == ARM_TRIES - 1:
+                return failed
+            left = list(failed)
+            warn(f'[{stage} → {",".join(left)}] вход для сторожа не прошёл, повторяю')
+            time.sleep(ARM_PAUSE)
+
     def guard_finish(self, stage, nodes):
         """Сторож снят новым входом; узел, что не пускает, ждёт окно сторожа: он вернёт фаервол, и вход появится."""
         self.stop_beat()
@@ -193,9 +209,7 @@ class Deploy:
         guard = stage in GUARDED
         if guard:
             self.guard_beat()
-            armed = self.each(nodes.split(','), lambda _node: f'python3 -I /tmp/anysda/fwguard.py arm {stage} {GUARD_WINDOW} 2>&1',
-                              show=True)
-            if failed := {node: code for node, code in armed.items() if code}:
+            if failed := self.guard_arm(stage, nodes):
                 warn(f'[{stage} → {nodes}] сторож фаервола не встал ({failed}), стадию не запускаю')
                 return self.guard_finish(stage, nodes) or 1
         code = self.play(PLAYBOOK, SITE, '--tags', tags, '--limit', nodes, '-e', self.bundle(), '-e', f'manifest={self.manifest}',

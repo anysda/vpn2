@@ -89,6 +89,8 @@ ACME_ROOT=/etc/vpn2-ci/acme.pem
 APT_CACHE=${STAND_APT_CACHE:-/var/tmp/vpn2-apt-cache}
 APT_PROXY=http://$NET.1:3142
 # Сторож возвращает канал на hy2 после стольких секунд живого hy2 (в продукте 60).
+# Стенд обрыва пишет его в env-файл сторожа до деплоя, как правят руками: деплой
+# строку переносит, по ней же ждёт проверка транспорта в verify.
 TCP_RETURN_S=20
 
 log() { printf '[stand] %s\n' "$*"; }
@@ -305,10 +307,6 @@ write_files:
   - path: $ACME_ROOT
     content: |
 $(sed 's/^/      /' "$STAND_DIR/acme.pem")
-  - path: /etc/systemd/system/anysda-failover-watchdog.service.d/10-vpn2-ci.conf
-    content: |
-      [Service]
-      Environment=TCP_RETURN_S=$TCP_RETURN_S
   - path: /usr/local/sbin/vpn2-ci-warm
     permissions: '0755'
     content: |
@@ -738,6 +736,7 @@ cmd_deploy_udp() {
   apt_proxy_up --if-down
   log "деплой начат на $(entry_uptime) с от загрузки entry"
   push_tree
+  ssh_node "$ENTRY" "install -d -m 0755 /etc/anysda && printf 'TCP_RETURN_S=%s\n' $TCP_RETURN_S > /etc/anysda/failover-watchdog.env"
   local stage started=$SECONDS
   for stage in "${UDP_STAGES[@]}"; do
     close_entry_mux
@@ -867,7 +866,8 @@ cmd_udp_cut() {
   else log 'у entry нет глобального IPv6: обрыв только по IPv4'; fi
 
   local tcp_return=$TCP_RETURN_S deadline
-  ssh_node "$ENTRY" "systemctl show -p Environment anysda-failover-watchdog | grep -qw 'TCP_RETURN_S=$tcp_return'" \
+  # Значение у живого процесса: EnvironmentFile= перебивает Environment= юнита.
+  ssh_node "$ENTRY" "tr '\\0' '\\n' < /proc/\$(systemctl show -p MainPID --value anysda-failover-watchdog)/environ | grep -qx 'TCP_RETURN_S=$tcp_return'" \
     || die "сторож без TCP_RETURN_S=$tcp_return стенда"
   deadline=$((SECONDS + 120))
   until on_hy2; do

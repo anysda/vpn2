@@ -87,7 +87,8 @@ export default {
     // Активные устройства экзита: разные клиентские VPN-адреса в текущих соединениях через узел.
     const devicesByNode = new Map<string, Set<string>>()
     for (const c of conns?.connections ?? []) {
-      const node = exitNodeOf(c.chains[0])
+      // При запасном TCP первой в цепочке идёт нога канала transport-*, выход - за ней.
+      const node = exitNodeOf(c.chains.find(name => !name.startsWith('transport-')))
       const ip = c.metadata?.sourceIP
       if (!node || !ip || !/^10\.6[678]\./.test(ip)) continue
       devicesByNode.set(node, (devicesByNode.get(node) ?? new Set()).add(ip))

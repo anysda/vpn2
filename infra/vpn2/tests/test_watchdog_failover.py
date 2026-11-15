@@ -33,7 +33,7 @@ class Stand:
                 for leg in legs if tcp else ():
                     p[leg] = {'type': 'Direct'}
                 if tcp:
-                    selector(f'hy2-{n}-mgmt' if k == 'mgmt' else f'transport-{n}-{k}', legs)
+                    selector(f'hy2-{n}-{k}', legs)
         for name in ['foreign-best', 'tg-best'] + [f'lane-{i:02d}' for i in range(1, lanes + 1)]:
             selector(name, exits)
         for e in exits:
@@ -78,7 +78,7 @@ class Stand:
     def answers(self, tag):
         if tag in self.down:
             return False
-        channel = self.p.get(f'transport-{tag[4:]}') if tag.startswith('hy2-') else None
+        channel = self.p[tag] if tag.startswith('hy2-') and self.p[tag]['type'] == 'Selector' else None
         return channel is None or channel['now'] not in self.down
 
     def tick(self, seconds=fo.INTERVAL):
@@ -90,7 +90,7 @@ class Stand:
             self.t += fo.INTERVAL
 
     def kill(self, node, on=True):
-        tags = {t for t in self.p if t.split('-')[-2:-1] == [node] and not t.startswith(('pin-', 'transport-' + node))}
+        tags = {t for t in self.p if t.split('-')[-2:-1] == [node] and not t.startswith('pin-')}
         self.down = self.down | tags if on else self.down - tags
 
     def cut_udp(self, node, on=True):
@@ -240,7 +240,7 @@ class TcpReserveTests(Base):
         s = self.stand()
         s.cut_udp('aa')
         s.tick(30)
-        self.assertEqual(s.now('transport-aa-direct'), 'transport-tcp-aa-direct')
+        self.assertEqual(s.now('hy2-aa-direct'), 'transport-tcp-aa-direct')
         self.assertEqual(s.now('hy2-aa-mgmt'), 'transport-tcp-aa-mgmt', 'mgmt идёт за direct')
         self.assertEqual(s.now(), 'hy2-aa-direct', 'экзит не меняем: узел жив по TCP')
         self.assertFalse(s.said('в штрафной'))
@@ -249,13 +249,48 @@ class TcpReserveTests(Base):
                                      'по TCP, sing-box не перезапускаю')])
         s.cut_udp('aa', on=False)
         s.tick(fo.TCP_RETURN - 10)
-        self.assertEqual(s.now('transport-aa-direct'), 'transport-tcp-aa-direct')
+        self.assertEqual(s.now('hy2-aa-direct'), 'transport-tcp-aa-direct')
         s.tick(20)
-        self.assertEqual(s.now('transport-aa-direct'), 'transport-hy2-aa-direct')
+        self.assertEqual(s.now('hy2-aa-direct'), 'transport-hy2-aa-direct')
         self.assertEqual(s.now('hy2-aa-mgmt'), 'transport-hy2-aa-mgmt')
         self.assertEqual(s.events[-1], ('UDP до экзита aa снова работает',
                                         f'Hysteria2 жив {fo.TCP_RETURN:.0f} с подряд, каналы вернулись с TCP'))
         self.assertEqual(s.restarts, [])
+
+    def test_live_connections_survive_return_to_hy2_and_dead_leg_is_cut(self):
+        s = self.stand()
+        lane = ['hy2-aa-direct', 'lane-01']
+        s.conns = [{'id': 'stalled', 'chains': ['transport-hy2-aa-direct', *lane]},
+                   {'id': 'other-exit', 'chains': ['transport-hy2-bb-direct', 'hy2-bb-direct', 'lane-02']}]
+        s.cut_udp('aa')
+        s.tick(30)
+        self.assertEqual(s.now('hy2-aa-direct'), 'transport-tcp-aa-direct')
+        self.assertEqual(s.closed, ['stalled'], 'с мёртвого hy2 соединения закрыты сразу, чужой экзит не тронут')
+        self.assertTrue(s.said('закрыто 1 соединений на мёртвых ногах канала (transport-hy2-aa-direct, '))
+        s.conns = [{'id': 'download', 'chains': ['transport-tcp-aa-direct', *lane]}]
+        s.cut_udp('aa', on=False)
+        s.tick(fo.TCP_RETURN + 10)
+        self.assertEqual(s.now('hy2-aa-direct'), 'transport-hy2-aa-direct')
+        self.assertEqual(s.closed, ['stalled'], 'живой TCP при возврате на hy2 соединения не теряет')
+
+    def test_leg_is_probed_through_its_wire(self):
+        s = self.stand()
+        s.p['wire-hy2-aa-direct'] = {'type': 'Hysteria2'}
+        s.tick()
+        health, probed = s.dog.health, []
+        self.assertEqual(health.alias, {'transport-hy2-aa-direct': 'wire-hy2-aa-direct'})
+
+        class Api:
+            @staticmethod
+            def delay(tag, *_a, **_k):
+                probed.append(tag)
+                health.want.discard('transport-hy2-aa-direct')
+                return 30, ''
+
+        health.api, health.want, health.threads = Api(), {'transport-hy2-aa-direct'}, {'transport-hy2-aa-direct': None}
+        health.miss['transport-hy2-aa-direct'] = 1
+        health._loop('transport-hy2-aa-direct')
+        self.assertEqual((probed, health.miss['transport-hy2-aa-direct']), (['wire-hy2-aa-direct'], 0))
 
     def test_flapping_udp_does_not_bounce_channel(self):
         s = self.stand()

@@ -103,8 +103,11 @@ class LingeringConnectionTests(unittest.TestCase):
             def poll(self):
                 self.polls += 1
                 if self.polls == 2:
-                    # Проба открыла своё соединение, пока процесс жив.
-                    listed.append({'id': self.leaf, 'chains': [self.leaf], 'rule': 'rule_set', 'rulePayload': '',
+                    # Проба открыла своё соединение, пока процесс жив; fi - на запасном TCP,
+                    # первой в цепочке идёт нога канала.
+                    leg = [f'transport-tcp-{self.leaf[4:]}'] if self.leaf == 'hy2-fi-direct' else []
+                    listed.append({'id': self.leaf, 'chains': [*leg, self.leaf, f'pin-{self.leaf}'],
+                                   'rule': 'rule_set', 'rulePayload': '',
                                    'metadata': {'sourceIP': source, 'destinationIP': dest[0],
                                                 'destinationPort': '80'}})
                 return None if self.polls < 4 else 0

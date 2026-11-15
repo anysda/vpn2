@@ -147,10 +147,10 @@ def test_check_result_and_code(tmp_path, rc, output, unmeasured, result, reason,
     assert json.loads((tmp_path / 'rows.jsonl').read_text().splitlines()[0])['time']
 
 
-HY2 = {'transport-nl-direct': {'now': 'transport-hy2-nl-direct'}, 'hy2-nl-mgmt': {'now': 'transport-hy2-nl-mgmt'}}
-TCP = {'transport-nl-direct': {'now': 'transport-tcp-nl-direct'}, 'transport-nl-warp': {'now': 'transport-hy2-nl-warp'},
+HY2 = {'hy2-nl-direct': {'now': 'transport-hy2-nl-direct'}, 'hy2-nl-mgmt': {'now': 'transport-hy2-nl-mgmt'}}
+TCP = {'hy2-nl-direct': {'now': 'transport-tcp-nl-direct'}, 'hy2-nl-warp': {'now': 'transport-hy2-nl-warp'},
        'hy2-nl-mgmt': {'now': 'transport-tcp-nl-mgmt'}}
-ON_TCP = 'hy2 до экзита nl не работает, трафик на запасном TCP (VLESS Reality): transport-nl-direct, hy2-nl-mgmt'
+ON_TCP = 'hy2 до экзита nl не работает, трафик на запасном TCP (VLESS Reality): hy2-nl-direct, hy2-nl-mgmt'
 
 
 class Clash:

@@ -50,15 +50,20 @@
 {%-   set speed = {'up_mbps': down | int, 'down_mbps': up | int} if up and down else {} -%}
 {%-   set reality = router_reality.get(tag, {}) -%}
 {%-   set tcp = 'PUB' in reality -%}
-{#-   Trojan + h2mux внутри Hysteria2: потоки изолированы, провод тот же. -#}
+{#-   Trojan + h2mux внутри Hysteria2: потоки изолированы, провод тот же. С запасным TCP у каждого
+      провода (wire-*) свой trojan, а selector hy2-<узел>-<вид> выбирает между ними: при смене
+      провода живые соединения дорабатывают в своих сессиях h2mux, новые идут по выбранному. -#}
 {%-   for kind, inner in [('direct', 10443), ('warp', 10444)] -%}
-{%-     set ns.out = ns.out + [{'type': 'trojan', 'tag': 'hy2-' ~ tag ~ '-' ~ kind, 'server': '127.0.0.1',
-          'server_port': inner, 'password': pwd[kind],
-          'detour': ('transport-' if tcp else 'transport-hy2-') ~ tag ~ '-' ~ kind,
-          'multiplex': {'enabled': true, 'protocol': 'h2mux', 'max_connections': 4}}] -%}
+{%-     for wire in (['hy2', 'tcp'] if tcp else ['hy2']) -%}
+{%-       set ns.out = ns.out + [{'type': 'trojan', 'tag': ('transport-' ~ wire if tcp else 'hy2') ~ '-' ~ tag ~ '-' ~ kind,
+            'server': '127.0.0.1', 'server_port': inner, 'password': pwd[kind],
+            'detour': ('wire-' if tcp else 'transport-') ~ wire ~ '-' ~ tag ~ '-' ~ kind,
+            'multiplex': {'enabled': true, 'protocol': 'h2mux', 'max_connections': 4}}] -%}
+{%-     endfor -%}
 {%-   endfor -%}
 {%-   for kind in ['direct', 'warp', 'mgmt'] -%}
-{%-     set hy2_tag = 'hy2-' ~ tag ~ '-mgmt' if kind == 'mgmt' and not tcp else 'transport-hy2-' ~ tag ~ '-' ~ kind -%}
+{%-     set wire = 'wire-' if tcp and kind != 'mgmt' else 'transport-' -%}
+{%-     set hy2_tag = 'hy2-' ~ tag ~ '-mgmt' if kind == 'mgmt' and not tcp else wire ~ 'hy2-' ~ tag ~ '-' ~ kind -%}
 {%-     set ns.out = ns.out + [({'type': 'hysteria2', 'tag': hy2_tag, 'server': domain, 'server_port': ports[kind],
           'password': pwd[kind], 'obfs': obfs, 'tls': tls}
           | combine(speed if kind != 'mgmt' else {}, hop.get(kind, {})))] -%}
@@ -66,16 +71,16 @@
 {#-   Запасной канал VLESS + Reality по TCP; между ним и hy2 выбирает failover-watchdog. -#}
 {%-   if tcp -%}
 {%-     for kind in ['direct', 'warp', 'mgmt'] -%}
-{%-       set selector = 'hy2-' ~ tag ~ '-mgmt' if kind == 'mgmt' else 'transport-' ~ tag ~ '-' ~ kind -%}
 {%-       set ns.out = ns.out + [
-            {'type': 'vless', 'tag': 'transport-tcp-' ~ tag ~ '-' ~ kind, 'server': domain,
-             'server_port': reality.PORT | int, 'uuid': ('vpn2-reality:' ~ pwd[kind]) | to_uuid(namespace=router_uuid_ns),
+            {'type': 'vless', 'tag': ('transport-' if kind == 'mgmt' else 'wire-') ~ 'tcp-' ~ tag ~ '-' ~ kind,
+             'server': domain, 'server_port': reality.PORT | int,
+             'uuid': ('vpn2-reality:' ~ pwd[kind]) | to_uuid(namespace=router_uuid_ns),
              'tls': {'enabled': true, 'server_name': reality.SNI,
                      'utls': {'enabled': true, 'fingerprint': 'chrome'},
                      'reality': {'enabled': true, 'public_key': reality.PUB, 'short_id': reality.SID | default('')}}},
-            {'type': 'selector', 'tag': selector, 'default': 'transport-hy2-' ~ tag ~ '-' ~ kind,
+            {'type': 'selector', 'tag': 'hy2-' ~ tag ~ '-' ~ kind, 'default': 'transport-hy2-' ~ tag ~ '-' ~ kind,
              'outbounds': ['transport-hy2-' ~ tag ~ '-' ~ kind, 'transport-tcp-' ~ tag ~ '-' ~ kind],
-             'interrupt_exist_connections': true}] -%}
+             'interrupt_exist_connections': false}] -%}
 {%-     endfor -%}
 {%-   endif -%}
 {#-   Скрейп node_exporter экзита: SOCKS mon-<tag>, порт из последнего октета MGMT_IP. -#}

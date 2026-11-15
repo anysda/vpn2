@@ -208,7 +208,8 @@ def in_namespace(source, kind, args, dest=None, deadline=12):
             meta = item.get('metadata', {})
             if item.get('id') not in before and meta.get('sourceIP') == source and (dest is None or (
                     dest[0] in (None, meta.get('destinationIP')) and str(meta.get('destinationPort')) == str(dest[1]))):
-                chains = item.get('chains') or ['']
+                # Выход - первый в цепочке после ноги канала transport-* (она есть при запасном TCP).
+                chains = [c for c in item.get('chains') or [] if not c.startswith('transport-')] or ['']
                 seen[item.get('id')] = (chains[0], item.get('rule', '') + ' ' + item.get('rulePayload', ''))
 
     while process.poll() is None and time.monotonic() < stop:

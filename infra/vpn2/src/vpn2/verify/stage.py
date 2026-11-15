@@ -262,7 +262,7 @@ def exit_transport(tag):
     На пути с потерями сторож уводит канал на TCP и при живом hy2: тогда ждём его возврата
     (TCP_RETURN_S с запасом). Красная сразу - если ни одна нога hy2 не ответила за HY2_SILENT кругов.
     """
-    selectors = (f'transport-{tag}-direct', f'transport-{tag}-warp', f'hy2-{tag}-mgmt')
+    selectors = (f'hy2-{tag}-direct', f'hy2-{tag}-warp', f'hy2-{tag}-mgmt')
     wait = tcp_return() + 30
     deadline, heard, rounds = time.monotonic() + wait, False, 0
     try:

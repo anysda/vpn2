@@ -81,8 +81,8 @@ def log(text):
 
 
 def node_of(tag):
-    """Узел из тега hy2-<узел>-<вид>."""
-    parts = tag.split('-')
+    """Узел из тега hy2-<узел>-<вид> или ноги канала transport-<провод>-<узел>-<вид>."""
+    parts = tag.removeprefix('transport-').split('-')
     return parts[1] if len(parts) >= 3 else tag
 
 
@@ -94,7 +94,7 @@ class Health:
     """Итоги проб: поток на тег, промахи подряд, последняя задержка, с какого времени жив."""
 
     def __init__(self, api):
-        self.api, self.want, self.threads = api, set(), {}
+        self.api, self.want, self.threads, self.alias = api, set(), {}, {}
         self.reset()
 
     def reset(self):
@@ -141,7 +141,8 @@ class Health:
     def _loop(self, tag):
         while tag in self.want:
             start = clock()
-            delay, why = self.api.delay(tag, PROBE_URL, timeout_ms=TIMEOUT_MS, http_timeout=HTTP_TIMEOUT)
+            delay, why = self.api.delay(self.alias.get(tag, tag), PROBE_URL, timeout_ms=TIMEOUT_MS,
+                                        http_timeout=HTTP_TIMEOUT)
             # Отказ соединения - не ответил сам clash-api, о выходе это ничего не говорит.
             if why != 'отказ соединения':
                 self.record(tag, delay, why)
@@ -288,10 +289,13 @@ class Watchdog:
         exits = {t for p in groups for t in p.get('all') or [] if t.startswith('hy2-')}
         legs = {n for n in proxies if n.startswith(('transport-hy2-', 'transport-tcp-'))
                 and not n.endswith('-mgmt')}
+        # Нога с запасным TCP - trojan поверх провода wire-*: о канале говорит провод, зависший
+        # trojan виден по выходу (stuck), как и без ноги.
+        self.health.alias = {leg: wire for leg in legs if (wire := 'wire-' + leg[len('transport-'):]) in proxies}
         self.health.watch(exits | legs)
         if not self.members or not self.health.settled(exits | legs):
             return
-        self.transports()
+        self.transports(conns)
         self.read_disabled()
         self.up = {t: self.health.delay[t] for t in exits if self.exit_alive(t)}
         enabled = {t: d for t, d in self.up.items() if node_of(t) not in self.disabled}
@@ -362,13 +366,14 @@ class Watchdog:
 
     # --- каналы hy2/TCP ---
 
-    def transports(self):
+    def transports(self, conns):
         """hy2 мёртв, TCP жив - канал на TCP; hy2 жив TCP_RETURN подряд или TCP мёртв - обратно.
 
         TCP, живой меньше HY2_RISE (после аварии канала или перезапуска sing-box),
         ещё не повод уходить с hy2: QUIC поднимается дольше. mgmt идёт за direct узла.
+        Соединения прежней ноги дорабатывают на ней; ушли с мёртвой - закрываются сразу.
         """
-        h, want = self.health, {}
+        h, want, dead = self.health, {}, set()
         for selector, (hy2, tcp, node, kind) in self.pairs.items():
             if kind == 'mgmt':
                 continue
@@ -380,9 +385,15 @@ class Watchdog:
         on_tcp = {v[2]: want[s] == v[1] for s, v in self.pairs.items() if v[3] == 'direct'}
         for selector, (hy2, tcp, node, kind) in self.pairs.items():
             target = want.get(selector) or (tcp if on_tcp.get(node) else hy2)
-            if self.proxies[selector].get('now') != target:
+            left = self.proxies[selector].get('now')
+            if left != target:
+                if h.dead(left.removesuffix('-mgmt') + '-direct' if kind == 'mgmt' else left):
+                    dead.add(left)
                 self.select(selector, target)
                 h.forgive(hy2[len('transport-'):])
+        closed = self.close(conns, lambda chains: chains[0] not in dead) if dead else 0
+        if closed:
+            log(f'закрыто {closed} соединений на мёртвых ногах канала ({", ".join(sorted(dead))})')
         # Про UDP узла говорит direct: warp уходит на TCP и от шума выхода WARP.
         for node, tcp_now in sorted(on_tcp.items()):
             if tcp_now and node not in self.tcp_nodes:
@@ -541,7 +552,7 @@ class Watchdog:
             if p.get('now') != want:
                 self.select(name, want, why or 'выход снова доступен')
                 # Долгие соединения, открытые через запасной, иначе часами шли бы мимо выбранного экзита.
-                if not why and self.close(conns, lambda chains: name not in chains or chains[0] == base):
+                if not why and self.close(conns, lambda chains: name not in chains or base in chains):
                     log(f'{name}: закрыты соединения с запасного выхода')
 
     # --- дорожки ---

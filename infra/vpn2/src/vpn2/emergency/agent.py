@@ -283,7 +283,9 @@ class Exit(Agent):
                              time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(leader['deadline'])))
             elif quiet:
                 leader['deadline'] = None
-                LOG.info('entry lost again: emergency end cancelled')
+                why = ('silent' if silence >= MISSED else 'not ready' if self.not_ready >= 2
+                       else f'port {readiness.ENTRY_PORT} unreachable')
+                LOG.info('entry lost again (%s): emergency end cancelled', why)
         if leader.get('deadline') is not None and wall >= leader['deadline']:
             self.finish()
 

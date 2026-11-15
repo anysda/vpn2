@@ -313,7 +313,11 @@ class EmergencyAgentTests(unittest.TestCase):
         cluster.run(agent.STABLE + 60)
         self.assertIsNotNone(cluster.exits['exit1'].leader['deadline'])
         cluster.ready = False
-        cluster.run(agent.MISSED)
+        logging.disable(logging.NOTSET)
+        with self.assertLogs('vpn2.emergency.agent', logging.INFO) as journal:
+            cluster.run(agent.MISSED)
+        self.assertRegex('\n'.join(journal.output), r'entry lost again \((not ready|port 443 unreachable)\): '
+                                                     r'emergency end cancelled')
         self.assertIsNone(cluster.exits['exit1'].leader['deadline'])
         self.assertTrue(cluster.texts(ADMIN)[-1].startswith('Основной VPN снова недоступен. Завершение аварийного '
                                                             'режима отменено'))

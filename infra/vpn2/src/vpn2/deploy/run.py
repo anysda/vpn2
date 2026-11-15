@@ -193,8 +193,10 @@ class Deploy:
         guard = stage in GUARDED
         if guard:
             self.guard_beat()
-            if any(self.each(nodes.split(','), lambda _node: f'python3 -I /tmp/anysda/fwguard.py arm {stage} {GUARD_WINDOW}').values()):
-                warn(f'[{stage} → {nodes}] сторож фаервола не встал, стадию не запускаю')
+            armed = self.each(nodes.split(','), lambda _node: f'python3 -I /tmp/anysda/fwguard.py arm {stage} {GUARD_WINDOW} 2>&1',
+                              show=True)
+            if failed := {node: code for node, code in armed.items() if code}:
+                warn(f'[{stage} → {nodes}] сторож фаервола не встал ({failed}), стадию не запускаю')
                 return self.guard_finish(stage, nodes) or 1
         code = self.play(PLAYBOOK, SITE, '--tags', tags, '--limit', nodes, '-e', self.bundle(), '-e', f'manifest={self.manifest}',
                          *extra, env=env)

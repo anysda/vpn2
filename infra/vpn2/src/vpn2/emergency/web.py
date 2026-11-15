@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
 import logging
+import math
 import mimetypes
 from pathlib import Path
 import secrets
@@ -407,6 +408,7 @@ def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
 
     class Server(ThreadingHTTPServer):
         slots = threading.BoundedSemaphore(16)
+        drops, drops_lock = {}, threading.Lock()
 
         def process_request(self, request, client_address):
             if not self.slots.acquire(blocking=False):
@@ -426,10 +428,19 @@ def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
 
         def handle_error(self, request, client_address):
             failure = sys.exc_info()[1]
-            # Отвергнутый сертификат, сканер или обрыв - одна строка без трассы.
+            # Отвергнутый сертификат, сканер или обрыв - строка без трассы, с адреса не чаще раза в минуту.
             if isinstance(failure, (ssl.SSLError, ConnectionError, TimeoutError)):
-                LOG.info('emergency panel: connection from %s dropped: %s', client_address[0],
-                         getattr(failure, 'reason', None) or type(failure).__name__)
+                address, now = client_address[0], time.monotonic()
+                with self.drops_lock:
+                    last, skipped = self.drops.get(address, (-math.inf, 0))
+                    if now - last < 60:
+                        self.drops[address] = (last, skipped + 1)
+                        return
+                    self.drops = {a: d for a, d in self.drops.items() if now - d[0] < 60}
+                    self.drops[address] = (now, 0)
+                LOG.info('emergency panel: connection from %s dropped: %s%s', address,
+                         getattr(failure, 'reason', None) or type(failure).__name__,
+                         f' (+{skipped} more since the previous line)' if skipped else '')
                 return
             super().handle_error(request, client_address)
 

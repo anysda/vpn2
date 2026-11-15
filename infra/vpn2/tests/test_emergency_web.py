@@ -346,6 +346,45 @@ class EmergencyWebTests(unittest.TestCase):
         # The panel keeps serving.
         self.assertEqual(self.request('/instructions')[0], 200)
 
+    def test_handshake_failures_log_once_a_minute_per_address(self):
+        self.start()
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        log = logging.getLogger('vpn2.emergency.web')
+        log.addHandler(handler)
+        self.addCleanup(log.removeHandler, handler)
+        level = log.level
+        log.setLevel(logging.INFO)
+        self.addCleanup(log.setLevel, level)
+
+        def plain_http(count):
+            # A scanner speaking plain HTTP to the TLS port: WRONG_VERSION_NUMBER.
+            for _ in range(count):
+                with socket.create_connection(('127.0.0.1', self.server.server_port), timeout=5) as raw:
+                    raw.sendall(b'GET / HTTP/1.0\r\n\r\n')
+                    raw.recv(1024)
+
+        def drops():
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                last, skipped = getattr(self.server, 'drops', {}).get('127.0.0.1', (0, 0))
+                if len(records) + skipped >= expected:
+                    return last, skipped
+                time.sleep(.01)
+            return getattr(self.server, 'drops', {}).get('127.0.0.1', (0, 0))
+
+        plain_http(5)
+        expected = 5
+        last, skipped = drops()
+        self.assertEqual((len(records), skipped), (1, 4))
+        self.server.drops['127.0.0.1'] = (last - 61, skipped)
+        plain_http(1)
+        expected = 2
+        drops()
+        self.assertEqual(len(records), 2)
+        self.assertTrue(records[1].getMessage().endswith(' (+4 more since the previous line)'), records[1].getMessage())
+
     def test_post_requires_same_origin_json_and_session(self):
         self.start()
         self.assertEqual(self.request('/api/login', dict(password='wrong'), origin=False)[0], 403)

@@ -289,6 +289,23 @@ class EmergencyAgentTests(unittest.TestCase):
         cluster.run(600)
         self.assertEqual((cluster.active(), len(cluster.sent)), ([], count))
 
+    def test_journal_shows_every_stage_of_the_emergency(self):
+        logging.disable(logging.NOTSET)
+        cluster = Cluster(self)
+        with self.assertLogs('vpn2.emergency.agent', logging.INFO) as journal:
+            cluster.entry = False
+            cluster.run(25 * 60)
+            cluster.entry = True
+            cluster.run(agent.STABLE + agent.RETURN + 120)
+        self.assertEqual(cluster.active(), [])
+        lines = '\n'.join(journal.output)
+        for stage in (r'entry silent \d+ s: admin notified, emergency starts in \d+ s',
+                      r'emergency access issued: generation 1, 1 devices',
+                      r'entry answers again after \d+ s of silence',
+                      r'entry recovered: ready 120 s, emergency ends at \d{4}-\d\d-\d\d \d\d:\d\d UTC',
+                      r'emergency end: credentials revoked'):
+            self.assertRegex(lines, stage)
+
     def test_return_cancelled_when_entry_fails_again(self):
         cluster = Cluster(self)
         self.outage(cluster)

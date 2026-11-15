@@ -169,6 +169,8 @@ class Exit(Agent):
             return
         self.counters[sender] = counter
         if sender == self.entry:
+            if self.leader['active'] and now - self.entry_seen >= MISSED:
+                LOG.info('entry answers again after %d s of silence', now - self.entry_seen)
             self.entry_seen = now
             if message.get('ready') is True:
                 self.not_ready = 0
@@ -179,6 +181,7 @@ class Exit(Agent):
             known = self.state.get('entry_host') or self.nodes[self.entry][0]
             if address[0] != known:
                 self.state['entry_host'] = address[0]
+                LOG.info('entry answers from a new address %s', address[0])
                 self.state['moved'] = address[0] if address[0] != self.nodes[self.entry][0] else None
             return
         try:
@@ -276,8 +279,11 @@ class Exit(Agent):
             if leader.get('deadline') is None:
                 if not quiet and self.ready_since is not None and now - self.ready_since >= STABLE:
                     leader['deadline'] = math.ceil((wall + RETURN) / 60) * 60
+                    LOG.info('entry recovered: ready %s s, emergency ends at %s', STABLE,
+                             time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(leader['deadline'])))
             elif quiet:
                 leader['deadline'] = None
+                LOG.info('entry lost again: emergency end cancelled')
         if leader.get('deadline') is not None and wall >= leader['deadline']:
             self.finish()
 
@@ -511,6 +517,7 @@ class Exit(Agent):
                                                           'message_id': sent['message_id']})
                 if not (reply.ok or reply.final):
                     return
+                LOG.info('entry back before the emergency: admin notice corrected')
             with self.lock:
                 self.state.pop('notice', None)
             if self.server and self.server.panel.link_only:
@@ -524,6 +531,7 @@ class Exit(Agent):
                 'text': notices.OUTAGE.format(minutes=math.ceil((OUTAGE - silence) / 60)),
                 'reply_markup': {'inline_keyboard': [[{'text': notices.OUTAGE_BUTTON, 'url': url}]]}})
             if reply.ok:
+                LOG.info('entry silent %d s: admin notified, emergency starts in %d s', silence, OUTAGE - silence)
                 with self.lock:
                     self.state['notice'] = {'nonce': nonce, 'expires': expires,
                                             'message_id': (reply.result or {}).get('message_id')}

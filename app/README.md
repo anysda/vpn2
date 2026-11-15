@@ -29,8 +29,9 @@ VPN-службами; один файл — `bash e2e/run-local.sh e2e/routes.sp
 
 ## Деплой
 
-Образ собирает GitHub Actions (`.github/workflows/images.yml`) на каждый пуш в `dev`/`main`
-и кладёт в `ghcr.io/anysda/vpn2/panel` с тегом ветки; нода тянет его (стадия `30-frontend`).
+Образ собирает GitHub Actions (`.github/workflows/images.yml`) на каждый пуш в `dev`
+и кладёт в `ghcr.io/anysda/vpn2/panel` с тегом ветки; `main` и тег выпуска получают свои
+теги на тот же образ. Нода тянет его (стадия `30-frontend`).
 Собрать руками (без пуша: в GHCR пушит только Actions):
 
 ```bash

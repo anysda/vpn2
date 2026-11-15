@@ -378,3 +378,23 @@ def test_help_and_errors_do_not_consume_stdin(bare, flag):
         stdin.seek(0)
         help_run(bare, [flag], stdin)
         assert stdin.tell() == 0
+
+
+@pytest.mark.parametrize('on_node', [True, False])
+def test_empty_password_with_generated_one_on_node_is_kept(tmp_path, monkeypatch, capfd, on_node):
+    """VPN2-974: пароль из /etc/anysda/admin-password.txt деплой не меняет - мастер не обещает новый."""
+    generated = tmp_path / 'admin-password.txt'
+    if on_node:
+        generated.write_text('x' * 18 + '\n')
+    monkeypatch.setattr(setup, 'ADMIN_PASSWORD', generated)
+    read, write = os.pipe()
+    os.write(write, b'\n\n\n')
+    os.close(write)
+    with os.fdopen(read) as stdin:
+        monkeypatch.setattr('sys.stdin', stdin)
+        answer = setup.ask_admin(setup.Console(), {'user': 'anysda', 'password': '', 'ssh_pubkey': ''})
+    err = capfd.readouterr().err
+    assert answer['password'] == ''
+    kept = f'оставить прежний (сгенерирован при установке, {generated})'
+    assert (kept in err) is on_node
+    assert ('Будет сгенерирован случайный пароль' in err) is not on_node

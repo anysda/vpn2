@@ -30,6 +30,8 @@ SPACE = (' \t\n\r\v\f\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006'
          '\u2008\u2009\u200a\u2028\u2029\u205f\u3000')
 PRIVATE = re.compile(r'(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.)')
 BOX = 44
+# Пароль панели, который нода сгенерировала при пустом admin.password: деплой его не меняет.
+ADMIN_PASSWORD = Path('/etc/anysda/admin-password.txt')
 
 
 class Interrupted(Exception):
@@ -297,11 +299,13 @@ def ask_admin(ui, stored):
     ui.header('Учётка администратора веб-панели')
     user = clean(ui.ask('Логин', stored['user']), stored['user'])
     kept = stored['password']
-    if kept:
+    generated = not kept and ADMIN_PASSWORD.is_file()
+    if kept or generated:
         ui.hint('Пароль: Enter — оставить прежний, иначе свой от 8 символов')
     else:
         ui.hint('Пароль: Enter — сгенерировать случайный 18-символьный, иначе свой от 8 символов')
-    enter = 'оставить прежний' if kept else 'сгенерировать'
+    enter = (f'оставить прежний (сгенерирован при установке, {ADMIN_PASSWORD})' if generated
+             else 'оставить прежний' if kept else 'сгенерировать')
     # Короче 8 панель не примет при смене пароля, ставить такой мастером тоже нельзя.
     while True:
         ui.secret_prompt(f'Пароль (Enter — {enter})')
@@ -315,14 +319,15 @@ def ask_admin(ui, stored):
         repeat = ui.line(silent=True)
         ui.err('\n')
         if password != repeat:
-            ui.fail('Пароли не совпадают — ' + ('оставлен прежний пароль' if kept
+            ui.fail('Пароли не совпадают — ' + ('оставлен прежний пароль' if kept or generated
                                                else 'пароль будет сгенерирован автоматически'))
             password = kept
     elif kept:
         password = kept
         ui.ok('Пароль оставлен прежний')
     if not password:
-        ui.ok('Будет сгенерирован случайный пароль на ноде')
+        ui.ok(f'Пароль оставлен прежний (сгенерирован при установке, {ADMIN_PASSWORD})' if generated
+              else 'Будет сгенерирован случайный пароль на ноде')
 
     ui.hint('SSH-ключ админа (опционально, но рекомендуется).')
     ui.hint('Вставь свой ПУБЛИЧНЫЙ ключ (~/.ssh/id_ed25519.pub) — он ляжет на все ноды,')

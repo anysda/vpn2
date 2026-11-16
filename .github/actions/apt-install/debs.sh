@@ -108,7 +108,10 @@ install_local() {
   printf 'deb [trusted=yes] file:%s ./\n' "$work" > "$st/sources.list"
   local loc=(-o Dir::Etc::sourcelist="$st/sources.list" -o Dir::Etc::sourceparts=- -o Dir::State::lists="$st/lists"
     -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o DPkg::Lock::Timeout=60)
-  sudo apt-get -qq "${loc[@]}" update
+  # Индекс одного локального каталога: хуки обновления из apt.conf.d раннера
+  # (cnf-update-db, appstream) ему не нужны, а на части образов идут 8 с.
+  mkdir "$st/parts"; printf 'Dir::Etc::parts "%s";\n' "$st/parts" > "$st/apt.conf"
+  sudo env APT_CONFIG="$st/apt.conf" apt-get -qq "${loc[@]}" update
   # Раннер одноразовый: dpkg без fsync, needrestart не опрашивает сервисы.
   if ! out=$(sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "${loc[@]}" install -y \
     --no-install-recommends -o Dpkg::Options::=--force-unsafe-io "$@" 2>&1); then

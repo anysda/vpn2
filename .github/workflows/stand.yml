@@ -152,8 +152,14 @@ jobs:
           key: ${{ steps.image.outputs.key }}
 
       # Полный деплой сам кончается 99-verify всех узлов.
+      # Venv сверки слепков собирается фоном, пока раннер ждёт деплой ВМ.
       - name: deploy
-        run: sudo infra/tests/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
+        run: |
+          if [ "${{ matrix.part }}" = again ]; then
+            { python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" install -q ./infra/vpn2
+              echo $? > "$RUNNER_TEMP/venv.rc"; } > "$RUNNER_TEMP/venv.log" 2>&1 &
+          fi
+          sudo infra/tests/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
 
       # ansible с entry достаёт все узлы стенда.
       - name: ansible ping
@@ -178,9 +184,11 @@ jobs:
 
       - name: venv
         if: matrix.part == 'again'
+        timeout-minutes: 3
         run: |
-          python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install -q ./infra/vpn2
+          until [ -s "$RUNNER_TEMP/venv.rc" ]; do sleep 0.2; done
+          cat "$RUNNER_TEMP/venv.log"
+          exit "$(cat "$RUNNER_TEMP/venv.rc")"
 
       # Оба узла сверяются всегда: красный шаг - если разошёлся хоть один
       # или эталона нет.

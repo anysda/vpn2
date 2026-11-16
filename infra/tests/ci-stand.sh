@@ -642,10 +642,11 @@ push_tree() {
 }
 
 # Docker на entry ставит 00-bootstrap, а образ панели нужен только к
-# 35-telegram и 30-frontend: грузится, как только docker поднялся.
+# 35-telegram и 30-frontend: грузится, как только docker поднялся и образ
+# <образ> есть на этой машине (stand.yml собирает его, пока идёт деплой).
 load_panel() {
-  local deadline=$((SECONDS + 600))
-  until ssh_node "$ENTRY" 'systemctl is-active -q docker' 2>/dev/null \
+  local image=$1 deadline=$((SECONDS + 600))
+  until docker tag "$image" "$PANEL_REF" 2>/dev/null && ssh_node "$ENTRY" 'systemctl is-active -q docker' 2>/dev/null \
       && docker save "$PANEL_REF" | gzip -1 | ssh_node "$ENTRY" 'gunzip | docker load' >/dev/null 2>&1; do
     (( SECONDS < deadline )) || { log 'образ панели не загрузился на entry за 10 мин'; return 1; }
     sleep 2
@@ -717,8 +718,7 @@ cmd_deploy() {
   log "деплой начат на $(entry_uptime) с от загрузки entry"
   push_tree
   snapshot_base
-  docker tag "$image" "$PANEL_REF"
-  load_panel &
+  load_panel "$image" &
   local loader=$! started=$SECONDS rc=0
   entry_run deploy './deploy.sh --development' || rc=$?
   wait "$loader" || (( rc )) || rc=1
@@ -1123,8 +1123,7 @@ cmd_deploy_upgrade() {
   mgmt=$(ssh_node "$ENTRY" "grep -v '^#' $STATE/mgmt-ips.txt 2>/dev/null || grep -v '^#' $OLD_STATE/mgmt-ips.txt") \
     || die 'обновление: адреса mesh выпуска не прочитаны'
   push_tree --over "$tag"
-  docker tag "$image" "$PANEL_REF"
-  load_panel || return 1
+  load_panel "$image" || return 1
   entry_run deploy './deploy.sh --development' || rc=$?
   log "обновление с $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"

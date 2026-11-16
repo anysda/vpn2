@@ -48,7 +48,8 @@ if fault == name + '-error':
 if fault == name + '-error2':
     sys.exit(2)
 if name == 'systemctl':
-    sys.exit(3 if fault == sys.argv[-1] else 0)
+    # Проверка WARP своим юнитом к verify кончилась: юнита уже нет.
+    sys.exit(3 if fault == sys.argv[-1] or sys.argv[-1] == 'anysda-warp-bootstrap.service' else 0)
 elif name == 'ssh':
     # Как настоящий вход: опции и хост отбрасываются, команда идёт в bash.
     rest = sys.argv[1:]

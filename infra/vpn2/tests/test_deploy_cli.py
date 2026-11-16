@@ -216,7 +216,9 @@ def test_one_stage_runs_only_its_play_on_its_nodes(tree, inproc):
 
 def test_full_deploy_follows_site_yml(tree, inproc):
     together = ['21-failover-watchdog', '22-adguard', '25-monitoring', '26-backup']
-    done = inproc(FAKE_RULES=json.dumps([['--tags 19-yt-zapret ', 0, 2], *([f'--tags {name} ', 0, 1] for name in together)]))
+    chained = ['27-ikev2', '29-control', '35-telegram']
+    done = inproc(FAKE_RULES=json.dumps([['--tags 19-yt-zapret ', 0, 2], ['--tags 27-ikev2 ', 0, 2],
+                                         *([f'--tags {name} ', 0, 1] for name in together)]))
     assert done.returncode == 0, done.stderr
     calls = plays(tree)
     staged = [(call['args'].split('--tags ')[1].split()[0], call['args'].split('--limit ')[1].split()[0], call['follows'])
@@ -226,20 +228,25 @@ def test_full_deploy_follows_site_yml(tree, inproc):
     assert exits == [('10-foreign', 'us', None), ('99-verify', 'us', None), ('10-foreign', 'gb', None),
                      ('99-verify', 'gb', None), ('23-emergency', 'us,gb', None)]
     entry = [item for item in staged if item not in exits]
-    assert entry[:7] + entry[11:] == [
+    tags = lambda call: call['args'].split('--tags ')[1].split()[0]  # noqa: E731
+    assert entry[:7] + entry[14:] == [
         ('00-bootstrap', 'ru,us,gb', None), ('05-mgmt-mesh', 'ru,us,gb', None),
         ('28-wireguard', 'ru', None), ('29-openvpn', 'ru', None), ('19-yt-zapret', 'ru', None), ('20-ru-router', 'ru', None),
-        ('23-emergency', 'ru', None), ('27-ikev2', 'ru', None), ('29-control', 'ru', None),
-        ('35-telegram', 'ru', 'true'), ('30-frontend', 'ru', None), ('99-verify', 'ru,us,gb', None)]
+        ('23-emergency', 'ru', None), ('30-frontend', 'ru', None), ('99-verify', 'ru,us,gb', None)]
     # Стадии группы идут разом: каждая началась раньше, чем кончилась любая (пауза заглушки 1 с).
     assert sorted(entry[7:11]) == [(name, 'ru', None) for name in together]
     grouped = [call for call in calls if any(f'--tags {name} ' in call['args'] for name in together)]
     assert max(call['t'] for call in grouped) - min(call['t'] for call in grouped) < 0.9
+    # Вторая группа: 27-ikev2 (пауза 2 с) рядом с цепочкой 29-control, 35-telegram.
+    assert [item for item in entry[11:14] if item[0] != '27-ikev2'] == [('29-control', 'ru', None), ('35-telegram', 'ru', 'true')]
+    begun = {tags(call): call['t'] for call in calls if any(f'--tags {name} ' in call['args'] for name in chained)}
+    assert begun['35-telegram'] < begun['27-ikev2'] + 1.5
+    grouped += [call for call in calls if any(f'--tags {name} ' in call['args'] for name in chained)]
     assert all('mitogen_task_isolation=fork' in call['args'] for call in grouped)
     assert not [call for call in calls if call not in grouped and 'mitogen_task_isolation' in call['args']]
-    assert [row.split()[1] for row in done.stdout.splitlines() if re.search(r'│  2[1256]-', row)] == together
+    rows = [row.split()[1] for row in done.stdout.splitlines() if re.search(r'│  \d\d-', row)]
+    assert [row for row in rows if row in together + chained] == together + chained
     # WARP экзитов полный деплой не ждёт: проверка своим юнитом, итог в итоговом 99-verify.
-    tags = lambda call: call['args'].split('--tags ')[1].split()[0]  # noqa: E731
     assert [tags(call) for call in calls if '{"exit_warp_wait": false}' in call['args']] == ['10-foreign', '10-foreign']
     at = [item[0] for item in staged].index
     assert at('05-mgmt-mesh') < at('10-foreign') and staged.index(('99-verify', 'gb', None)) < at('20-ru-router')
@@ -292,6 +299,13 @@ def test_failed_stage_of_the_group_waits_for_the_others_and_keeps_the_journal(tr
     assert not [call for call in plays(tree) if '--tags 27-' in call['args'] or '--tags abort' in call['args']]
     # Сторож упавшей стадии снят как у любой стадии, что кончилась сама.
     assert [call for call in plays(tree, 'ssh') if 'disarm 22-adguard' in call['command']]
+
+
+def test_failed_stage_stops_its_chain_and_the_next_chain_finishes(tree, inproc):
+    done = inproc(FAKE_RULES=json.dumps([['--tags 29-control ', 2, 0], ['--tags 27-ikev2 ', 0, 1]]))
+    assert done.returncode == 1 and 'стадия 29-control: одна или несколько нод' in done.stderr
+    assert '[deploy] [27-ikev2 → ru] done' in done.stderr and 'deploy interrupted: operation journal retained' in done.stderr
+    assert not [call for call in plays(tree) if re.search(r'--tags (35|30)-', call['args'])]
 
 
 def test_failed_exit_track_stops_the_deploy_before_the_stage_that_needs_exits(tree, inproc):

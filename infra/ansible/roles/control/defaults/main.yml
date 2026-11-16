@@ -19,6 +19,7 @@ control_panel_files:
   - access-worker.sqlite
   - access-worker.sqlite-journal
 control_runtime_files: [sso-runtime.json, telegram-runtime.json]
-# Каталоги конфигов, которые служба правит: на первой установке их ещё нет.
-control_config_dirs: [/etc/wireguard, /etc/openvpn/server, /etc/swanctl/conf.d]
+# Каталоги конфигов, которые служба правит: на первой установке их ещё нет. /etc/swanctl/conf.d
+# ставит пакет strongswan-swanctl стадии 27-ikev2.
+control_config_dirs: [/etc/wireguard, /etc/openvpn/server]
 control_resources: [sing-box, openvpn]

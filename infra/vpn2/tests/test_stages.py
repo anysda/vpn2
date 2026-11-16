@@ -126,16 +126,23 @@ def test_broken_site_is_an_error(text):
         stages.parse(text)
 
 
-def test_together_stages_share_no_writer():
-    """Группа полного деплоя run.TOGETHER: подряд в site.yml, сторож фаервола у одной, нет задач
-    пользователей и групп, ufw, второй службы compose.yaml."""
+def test_together_chains_share_no_writer():
+    """Группы полного деплоя run.TOGETHER: стадии группы подряд в site.yml, у каждой цепочки свой порядок site.yml;
+    пользователи и группы, ufw, служба compose.yaml и сторож фаервола - не больше чем у одной цепочки группы."""
     from vpn2.deploy import run
     names = [stage.name for stage in stages.load(SITE)]
-    first = names.index(run.TOGETHER[0])
-    assert tuple(names[first:first + len(run.TOGETHER)]) == run.TOGETHER
-    assert len(set(run.TOGETHER) & run.GUARDED) == 1
-    roles = [ROLES[name][0] for name in run.TOGETHER]
-    assert sum(isinstance(role, dict) for role in roles) <= 1
-    for role in (role['role'] if isinstance(role, dict) else role for role in roles):
-        tasks = ''.join(path.read_text() for path in (ROOT / f'infra/ansible/roles/{role}/tasks').glob('*.yml'))
-        assert not re.search(r'ansible\.builtin\.(user|group):|\bufw\b', tasks), role
+    for chains in run.TOGETHER:
+        flat = [name for chain in chains for name in chain]
+        first = names.index(chains[0][0])
+        assert sorted(names[first:first + len(flat)], key=names.index) == sorted(flat, key=names.index)
+        assert all(list(chain) == sorted(chain, key=names.index) for chain in chains)
+        writes = {'users': 0, 'ufw': 0, 'compose': 0, 'guard': 0}
+        for chain in chains:
+            roles = [ROLES[name][0] for name in chain]
+            tasks = ''.join(path.read_text() for role in roles
+                            for path in (ROOT / f"infra/ansible/roles/{role['role'] if isinstance(role, dict) else role}/tasks").glob('*.yml'))
+            writes['users'] += bool(re.search(r'ansible\.builtin\.(user|group):', tasks))
+            writes['ufw'] += bool(re.search(r'\bufw\b', tasks))
+            writes['compose'] += any(isinstance(role, dict) for role in roles)
+            writes['guard'] += bool(set(chain) & run.GUARDED)
+        assert max(writes.values()) <= 1, (chains, writes)

@@ -34,9 +34,15 @@ QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 BESIDE = {'10-foreign': '20-ru-router', '23-emergency': '30-frontend'}
 # WARP экзита в полном деплое поднимается своим юнитом, итог - в итоговом 99-verify: до 20-ru-router его не ждут.
 WARP_LATER = ('-e', '{"exit_warp_wait": false}')
-# Стадии entry полного деплоя, что идут разом: общего писателя на узле у них нет - ни пользователей и групп,
-# ни ufw, ни цепочки nft, ни compose.yaml, ни apt с пользователями пакетов; сторож фаервола (один на узел) - у одной.
-TOGETHER = ('21-failover-watchdog', '22-adguard', '25-monitoring', '26-backup')
+# Группы полного деплоя: цепочки стадий entry идут разом, стадии цепочки - по порядку site.yml. Общих писателей
+# на узле у цепочек группы нет: пользователи и группы, ufw, цепочка nft, compose.yaml, apt с пользователями пакетов,
+# сторож фаервола (он один на узел) - у одной цепочки группы.
+TOGETHER = (
+    (('21-failover-watchdog',), ('22-adguard',), ('25-monitoring',), ('26-backup',)),
+    (('27-ikev2',), ('29-control', '35-telegram')),
+)
+# Окружение стадии в полном деплое: панель ставится следом и сама берёт новый секрет бота.
+FULL_ENV = {'35-telegram': {'VPN2_PANEL_FOLLOWS': 'true'}}
 
 
 class Interrupted(SystemExit):
@@ -258,7 +264,7 @@ class Deploy:
                 ok(f'[99-verify → {host}] done')
         return result
 
-    def run_stage(self, stage, group, extra=(), held=False):
+    def run_stage(self, stage, group, extra=(), held=False, env=None):
         t0, code = time.time(), 0
         nodes = self.stage_nodes(stage, self.expand(group))
         if not nodes:
@@ -285,7 +291,7 @@ class Deploy:
                 code = 2
             code = {0: code, 2: 2}.get(self.verify(nodes), 1)
             self.warn_insecure_exits()
-        elif self.stage_once(stage, nodes, held=held):
+        elif self.stage_once(stage, nodes, env=env, held=held):
             code = 1
         else:
             ok(f'[{stage} → {nodes}] done')
@@ -346,18 +352,19 @@ class Deploy:
         thread.start()
         return thread, failed, BESIDE[stage]
 
-    def together(self, names):
-        """Стадии entry разом, вывод каждой - блоком; упавшая валит деплой, когда закончат все.
-        Строки сводки - в порядке site.yml."""
-        failed, rows = [], len(self.stage_log)
+    def together(self, chains):
+        """Цепочки стадий entry разом, вывод каждой стадии - блоком. Упавшая стадия останавливает свою цепочку
+        и валит деплой, когда закончат остальные. Строки сводки - в порядке site.yml."""
+        failed, rows, names = [], len(self.stage_log), [name for chain in chains for name in chain]
 
-        def track(name):
+        def track(chain):
             try:
-                self.run_stage(name, 'ru', held=True)
+                for name in chain:
+                    self.run_stage(name, 'ru', held=True, env=FULL_ENV.get(name))
             except BaseException as error:
                 failed.append(error)
 
-        threads = [threading.Thread(target=track, args=(name,), daemon=True) for name in names]
+        threads = [threading.Thread(target=track, args=(chain,), daemon=True) for chain in chains]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -383,9 +390,9 @@ class Deploy:
                 if side and stage.name == side[2]:
                     self.join(side)
                     side = None
-                if stage.name in TOGETHER:
-                    if stage.name == TOGETHER[0]:
-                        self.together(TOGETHER)
+                if chains := next((found for found in TOGETHER if stage.name in sum(found, ())), None):
+                    if stage.name == chains[0][0]:
+                        self.together(chains)
                     continue
                 group = {'entry': 'ru', 'exits': 'foreign'}.get(stage.hosts, 'all')
                 if stage.name in BESIDE:
@@ -393,15 +400,12 @@ class Deploy:
                     if group == 'foreign':
                         continue
                     group = 'ru'
-                if stage.name == '35-telegram':
-                    os.environ['VPN2_PANEL_FOLLOWS'] = 'true'
                 if stage.name == '99-verify':
                     # Остатки раскладки v1.1.5 убирает тот же плей за зелёной проверкой узла.
                     self.old_layout = True
                     verify = self.run_stage(stage.name, group)
                 else:
-                    self.run_stage(stage.name, group)
-                os.environ.pop('VPN2_PANEL_FOLLOWS', None)
+                    self.run_stage(stage.name, group, env=FULL_ENV.get(stage.name))
                 if stage.name == '20-ru-router':
                     self.rotate_ports()
         except BaseException as error:

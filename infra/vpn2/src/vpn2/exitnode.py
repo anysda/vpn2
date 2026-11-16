@@ -29,20 +29,26 @@ WARP_PLACEHOLDER = {
     'WGCF_RESERVED_JSON': '[0,0,0]',
 }
 WARP_PEER_FALLBACK = '162.159.192.1'
+# Без предела wgcf при фильтрации Cloudflare висит ~145 с на TCP connect.
+WGCF_TIMEOUT = 15
 
 
 def _output(argv, run, **kwargs):
     return run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
 
 
+def _wgcf(etc, run, *args):
+    """wgcf ходит в Cloudflare API; не уложился в предел - None, как сбой."""
+    try:
+        return _output([WGCF, *args], run, cwd=etc, timeout=WGCF_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None
+
+
 def _registered(etc, say, run):
     """Вывод register несёт Id аккаунта и устройства: в лог идёт только хвост сбоя."""
     say('регистрирую WARP устройство')
-    try:
-        # Без таймаута register при фильтрации Cloudflare висит ~145 с на TCP connect.
-        done = _output([WGCF, 'register', '--accept-tos'], run, cwd=etc, timeout=15)
-    except subprocess.TimeoutExpired:
-        done = None
+    done = _wgcf(etc, run, 'register', '--accept-tos')
     if done and done.returncode == 0:
         return True
     for line in done.stdout.splitlines()[-3:] if done else []:
@@ -60,7 +66,8 @@ def ensure_warp_profile(etc, say, run=subprocess.run):
     account, profile = etc / 'wgcf-account.toml', etc / 'wgcf-profile.conf'
     if not account.is_file() and not _registered(etc, say, run):
         return False
-    if _output([WGCF, 'generate'], run, cwd=etc).returncode == 0:
+    generated = _wgcf(etc, run, 'generate')
+    if generated and generated.returncode == 0:
         account.chmod(0o600)
         profile.chmod(0o600)
     elif _nonempty(profile):

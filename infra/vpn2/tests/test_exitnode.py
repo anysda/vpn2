@@ -47,6 +47,9 @@ class Node:
                 (self.etc / 'wgcf-account.toml').write_text(ACCOUNT)
         elif name == 'wgcf':
             code, out = self.generate.pop(0) if len(self.generate) > 1 else self.generate[0]
+            if code == 'hang':
+                assert kwargs.get('timeout'), 'wgcf generate без предела висит вечно'
+                subprocess.run(['sleep', '600'], timeout=kwargs['timeout'])
             if code == 0:
                 (self.etc / 'wgcf-profile.conf').write_text(PROFILE.format(endpoint=self.endpoint))
         elif name == 'curl':
@@ -114,6 +117,20 @@ def test_failed_generate_without_profile_gives_placeholder(node):
     (node.etc / 'wgcf-account.toml').write_text(ACCOUNT)
     node.generate = [(1, 'cloudflare is down')]
     assert exitnode.warp_values(node.etc, node.say, node.run) == exitnode.WARP_PLACEHOLDER
+
+
+@pytest.mark.parametrize('had_profile', [True, False])
+def test_hung_generate_is_cut_off_like_failed_one(node, monkeypatch, had_profile):
+    monkeypatch.setattr(exitnode, 'WGCF_TIMEOUT', 0.5)
+    exitnode.warp_values(node.etc, node.say, node.run)
+    if not had_profile:
+        (node.etc / 'wgcf-profile.conf').unlink()
+    node.generate = [('hang', '')]
+    values = exitnode.warp_values(node.etc, node.say, node.run)
+    if had_profile:
+        assert values['WGCF_PRIVKEY'] == 'cHJpdg=='
+    else:
+        assert values == exitnode.WARP_PLACEHOLDER
 
 
 def test_legacy_account_returns_when_cloudflare_is_down(node):

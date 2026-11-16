@@ -71,9 +71,14 @@
 
 # Таймер стоит, пока настройки и сниппеты Caddy переписываются; последний шаг
 # запускает его снова. Пара «остановил - запустил» изменением не считается.
+# Прогон, прерванный паузой, сбоем службы не остаётся: его работу делает шаг первого сертификата.
 - name: Таймер TLS на паузе
   ansible.builtin.command:
-    argv: "{{ emergency_bash + ['systemctl stop vpn2-tls.timer vpn2-tls.service 2>/dev/null || true'] }}"
+    argv: "{{ emergency_bash + [emergency_tls_pause] }}"
+  vars:
+    emergency_tls_pause: |
+      systemctl stop vpn2-tls.timer vpn2-tls.service 2>/dev/null || true
+      systemctl reset-failed vpn2-tls.service 2>/dev/null || true
   changed_when: false
 
 - name: Юниты аварийного Hysteria2 и выгрузки сертификата

@@ -215,8 +215,12 @@ class Deploy:
             if failed := self.guard_arm(stage, nodes):
                 warn(f'[{stage} → {nodes}] сторож фаервола не встал ({failed}), стадию не запускаю')
                 return self.guard_finish(stage, nodes) or 1
-        if held and sys.stdout.isatty():
-            env = {**(env or {}), 'ANSIBLE_FORCE_COLOR': '1'}
+        if held:
+            # Плеи деплоя делят контекст Mitogen узла, а он исполняет модули по одному: у плеев,
+            # что идут разом, каждый модуль - в своём fork на узле.
+            extra = (*extra, '-e', 'mitogen_task_isolation=fork')
+            if sys.stdout.isatty():
+                env = {**(env or {}), 'ANSIBLE_FORCE_COLOR': '1'}
         with tempfile.TemporaryFile('w+') if held else contextlib.nullcontext() as out:
             code = self.play(PLAYBOOK, SITE, '--tags', tags, '--limit', nodes, '-e', self.bundle(), '-e', f'manifest={self.manifest}',
                              *extra, stdout=out, stderr=out, env=env)

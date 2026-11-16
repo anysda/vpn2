@@ -233,8 +233,10 @@ def test_full_deploy_follows_site_yml(tree, inproc):
         ('35-telegram', 'ru', 'true'), ('30-frontend', 'ru', None), ('99-verify', 'ru,us,gb', None)]
     # Стадии группы идут разом: каждая началась раньше, чем кончилась любая (пауза заглушки 1 с).
     assert sorted(entry[7:11]) == [(name, 'ru', None) for name in together]
-    started = [call['t'] for call in calls if any(f'--tags {name} ' in call['args'] for name in together)]
-    assert max(started) - min(started) < 0.9
+    grouped = [call for call in calls if any(f'--tags {name} ' in call['args'] for name in together)]
+    assert max(call['t'] for call in grouped) - min(call['t'] for call in grouped) < 0.9
+    assert all('mitogen_task_isolation=fork' in call['args'] for call in grouped)
+    assert not [call for call in calls if call not in grouped and 'mitogen_task_isolation' in call['args']]
     assert [row.split()[1] for row in done.stdout.splitlines() if re.search(r'│  2[1256]-', row)] == together
     # WARP экзитов полный деплой не ждёт: проверка своим юнитом, итог в итоговом 99-verify.
     tags = lambda call: call['args'].split('--tags ')[1].split()[0]  # noqa: E731

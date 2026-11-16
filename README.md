@@ -488,8 +488,6 @@ IKEv2, повторный деплой без изменений и восста
 обрыв UDP до экзита. В CI это `stand.yml` на каждый пуш в `dev` и в ветку
 выпуска `lane/release`; коммит, пройденный на `lane/release`, в `dev` не
 повторяется. Локально, на машине с KVM:
-выпуска `lane/release`; коммит, пройденный на `lane/release`, в `dev` не
-повторяется. Локально, на машине с KVM:
 
 ```bash
 sudo infra/tests/ci-stand.sh up

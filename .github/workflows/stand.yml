@@ -408,21 +408,21 @@ jobs:
         if: steps.release-cache.outputs.cache-hit != 'true'
         run: sudo infra/tests/ci-stand.sh deploy-release "$UPGRADE_FROM" "$RUNNER_TEMP/release-manifest.json"
 
-      # Диски выпуска - в кэш dev (кэш ветки другим веткам не виден, место
-      # общее); ВМ грузятся с них, как в прогоне с попаданием.
+      # Диски выпуска - в кэш ветки пуша (dev, lane/release: кэш ветки другим
+      # веткам не виден); ВМ грузятся с них, как в прогоне с попаданием.
       - name: выпуск в кэш
-        if: steps.release-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev'
+        if: steps.release-cache.outputs.cache-hit != 'true' && github.event_name == 'push'
         run: sudo infra/tests/ci-stand.sh release-save && sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh up-bg --release
 
       - name: release cache save
-        if: steps.release-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev'
+        if: steps.release-cache.outputs.cache-hit != 'true' && github.event_name == 'push'
         uses: actions/cache/save@v6
         with:
           path: /var/tmp/vpn2-release-cache
           key: ${{ steps.image.outputs.release }}
 
       - name: up с дисков выпуска
-        if: steps.release-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/dev'
+        if: steps.release-cache.outputs.cache-hit != 'true' && github.event_name == 'push'
         run: sudo infra/tests/ci-stand.sh up-wait
 
       - name: обновление до ветки

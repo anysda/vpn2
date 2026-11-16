@@ -1,4 +1,5 @@
 """site.yml - единственный список стадий: имена, узлы и порядок полного деплоя."""
+import re
 import subprocess
 import sys
 
@@ -13,8 +14,8 @@ SITE = ROOT / 'infra/ansible/site.yml'
 PIPELINE = [
     ('00-bootstrap', 'all'), ('05-mgmt-mesh', 'all'), ('10-foreign', 'exits'),
     ('28-wireguard', 'entry'), ('29-openvpn', 'entry'), ('19-yt-zapret', 'entry'),
-    ('20-ru-router', 'entry'), ('21-failover-watchdog', 'entry'), ('22-adguard', 'entry'),
-    ('23-emergency', 'all'), ('25-monitoring', 'entry'), ('26-backup', 'entry'), ('27-ikev2', 'entry'),
+    ('20-ru-router', 'entry'), ('23-emergency', 'all'), ('21-failover-watchdog', 'entry'), ('22-adguard', 'entry'),
+    ('25-monitoring', 'entry'), ('26-backup', 'entry'), ('27-ikev2', 'entry'),
     ('29-control', 'entry'), ('35-telegram', 'entry'), ('30-frontend', 'entry'), ('99-verify', 'all'),
 ]
 # Роли плеев до сведения в site.yml: стадия -> роли и их переменные.
@@ -123,3 +124,18 @@ def test_cli_codes_and_output(tmp_path):
 def test_broken_site_is_an_error(text):
     with pytest.raises(ValueError):
         stages.parse(text)
+
+
+def test_together_stages_share_no_writer():
+    """Группа полного деплоя run.TOGETHER: подряд в site.yml, сторож фаервола у одной, нет задач
+    пользователей и групп, ufw, второй службы compose.yaml."""
+    from vpn2.deploy import run
+    names = [stage.name for stage in stages.load(SITE)]
+    first = names.index(run.TOGETHER[0])
+    assert tuple(names[first:first + len(run.TOGETHER)]) == run.TOGETHER
+    assert len(set(run.TOGETHER) & run.GUARDED) == 1
+    roles = [ROLES[name][0] for name in run.TOGETHER]
+    assert sum(isinstance(role, dict) for role in roles) <= 1
+    for role in (role['role'] if isinstance(role, dict) else role for role in roles):
+        tasks = ''.join(path.read_text() for path in (ROOT / f'infra/ansible/roles/{role}/tasks').glob('*.yml'))
+        assert not re.search(r'ansible\.builtin\.(user|group):|\bufw\b', tasks), role

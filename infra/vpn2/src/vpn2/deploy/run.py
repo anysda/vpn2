@@ -34,6 +34,9 @@ QUIET = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
 BESIDE = {'10-foreign': '20-ru-router', '23-emergency': '30-frontend'}
 # WARP экзита в полном деплое поднимается своим юнитом, итог - в итоговом 99-verify: до 20-ru-router его не ждут.
 WARP_LATER = ('-e', '{"exit_warp_wait": false}')
+# Стадии entry полного деплоя, что идут разом: общего писателя на узле у них нет - ни пользователей и групп,
+# ни ufw, ни цепочки nft, ни compose.yaml, ни apt с пользователями пакетов; сторож фаервола (один на узел) - у одной.
+TOGETHER = ('21-failover-watchdog', '22-adguard', '25-monitoring', '26-backup')
 
 
 class Interrupted(SystemExit):
@@ -200,9 +203,9 @@ class Deploy:
             raise SystemExit(1)
         return f'bundle={path}'
 
-    def stage_once(self, stage, nodes, env=None, extra=()):
+    def stage_once(self, stage, nodes, env=None, extra=(), held=False):
         """Одна стадия на узлах: сторож, плей стадии, снятие сторожа. /tmp/anysda выложил выпуск,
-        без выпуска (99-verify) - тот же плей тегом prepare."""
+        без выпуска (99-verify) - тот же плей тегом prepare. held - вывод плея одним блоком по его концу."""
         log(f'[{stage} → {nodes}] starting')
         self.staged = True
         tags = stage if self.opened else f'prepare,{stage}'
@@ -212,8 +215,19 @@ class Deploy:
             if failed := self.guard_arm(stage, nodes):
                 warn(f'[{stage} → {nodes}] сторож фаервола не встал ({failed}), стадию не запускаю')
                 return self.guard_finish(stage, nodes) or 1
-        code = self.play(PLAYBOOK, SITE, '--tags', tags, '--limit', nodes, '-e', self.bundle(), '-e', f'manifest={self.manifest}',
-                         *extra, env=env)
+        if held and sys.stdout.isatty():
+            env = {**(env or {}), 'ANSIBLE_FORCE_COLOR': '1'}
+        with tempfile.TemporaryFile('w+') if held else contextlib.nullcontext() as out:
+            code = self.play(PLAYBOOK, SITE, '--tags', tags, '--limit', nodes, '-e', self.bundle(), '-e', f'manifest={self.manifest}',
+                             *extra, stdout=out, stderr=out, env=env)
+            if out:
+                out.seek(0)
+                with self.lock:
+                    sys.stdout.write(out.read())
+                    sys.stdout.flush()
+        # Прерванный деплой сторожа не снимает: без пульса он вернёт фаервол сам.
+        if self.closing:
+            raise SystemExit(1)
         if guard:
             code = self.guard_finish(stage, nodes) and 1 or code
         return code
@@ -240,7 +254,7 @@ class Deploy:
                 ok(f'[99-verify → {host}] done')
         return result
 
-    def run_stage(self, stage, group, extra=()):
+    def run_stage(self, stage, group, extra=(), held=False):
         t0, code = time.time(), 0
         nodes = self.stage_nodes(stage, self.expand(group))
         if not nodes:
@@ -267,7 +281,7 @@ class Deploy:
                 code = 2
             code = {0: code, 2: 2}.get(self.verify(nodes), 1)
             self.warn_insecure_exits()
-        elif self.stage_once(stage, nodes):
+        elif self.stage_once(stage, nodes, held=held):
             code = 1
         else:
             ok(f'[{stage} → {nodes}] done')
@@ -328,6 +342,28 @@ class Deploy:
         thread.start()
         return thread, failed, BESIDE[stage]
 
+    def together(self, names):
+        """Стадии entry разом, вывод каждой - блоком; упавшая валит деплой, когда закончат все.
+        Строки сводки - в порядке site.yml."""
+        failed, rows = [], len(self.stage_log)
+
+        def track(name):
+            try:
+                self.run_stage(name, 'ru', held=True)
+            except BaseException as error:
+                failed.append(error)
+
+        threads = [threading.Thread(target=track, args=(name,), daemon=True) for name in names]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if failed:
+            raise failed[0]
+        # Строки цепочки экзитов, что пришли за это время, - следом за группой.
+        order = {name: index for index, name in enumerate(names)}
+        self.stage_log[rows:] = sorted(self.stage_log[rows:], key=lambda row: order.get(row.split('\t')[0], len(names)))
+
     @staticmethod
     def join(side):
         side[0].join()
@@ -343,6 +379,10 @@ class Deploy:
                 if side and stage.name == side[2]:
                     self.join(side)
                     side = None
+                if stage.name in TOGETHER:
+                    if stage.name == TOGETHER[0]:
+                        self.together(TOGETHER)
+                    continue
                 group = {'entry': 'ru', 'exits': 'foreign'}.get(stage.hosts, 'all')
                 if stage.name in BESIDE:
                     side = self.beside(stage.name)

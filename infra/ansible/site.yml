@@ -41,6 +41,11 @@
   tags: [20-ru-router]
   roles: [router]
 
+- name: Наблюдатель аварийки и аварийный вход
+  hosts: all
+  tags: [23-emergency]
+  roles: [emergency]
+
 - name: Сторожа экзитов и TPROXY на entry
   hosts: entry
   tags: [21-failover-watchdog]
@@ -50,11 +55,6 @@
   hosts: entry
   tags: [22-adguard]
   roles: [adguard]
-
-- name: Наблюдатель аварийки и аварийный вход
-  hosts: all
-  tags: [23-emergency]
-  roles: [emergency]
 
 - name: VictoriaMetrics на entry
   hosts: entry

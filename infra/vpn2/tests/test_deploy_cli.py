@@ -215,7 +215,8 @@ def test_one_stage_runs_only_its_play_on_its_nodes(tree, inproc):
 
 
 def test_full_deploy_follows_site_yml(tree, inproc):
-    done = inproc(FAKE_RULES=json.dumps([['--tags 19-yt-zapret ', 0, 2]]))
+    together = ['21-failover-watchdog', '22-adguard', '25-monitoring', '26-backup']
+    done = inproc(FAKE_RULES=json.dumps([['--tags 19-yt-zapret ', 0, 2], *([f'--tags {name} ', 0, 1] for name in together)]))
     assert done.returncode == 0, done.stderr
     calls = plays(tree)
     staged = [(call['args'].split('--tags ')[1].split()[0], call['args'].split('--limit ')[1].split()[0], call['follows'])
@@ -224,18 +225,23 @@ def test_full_deploy_follows_site_yml(tree, inproc):
     exits = [item for item in staged if 'ru' not in item[1].split(',')]
     assert exits == [('10-foreign', 'us', None), ('99-verify', 'us', None), ('10-foreign', 'gb', None),
                      ('99-verify', 'gb', None), ('23-emergency', 'us,gb', None)]
-    assert [item for item in staged if item not in exits] == [
+    entry = [item for item in staged if item not in exits]
+    assert entry[:7] + entry[11:] == [
         ('00-bootstrap', 'ru,us,gb', None), ('05-mgmt-mesh', 'ru,us,gb', None),
         ('28-wireguard', 'ru', None), ('29-openvpn', 'ru', None), ('19-yt-zapret', 'ru', None), ('20-ru-router', 'ru', None),
-        ('21-failover-watchdog', 'ru', None), ('22-adguard', 'ru', None), ('23-emergency', 'ru', None),
-        ('25-monitoring', 'ru', None), ('26-backup', 'ru', None), ('27-ikev2', 'ru', None), ('29-control', 'ru', None),
+        ('23-emergency', 'ru', None), ('27-ikev2', 'ru', None), ('29-control', 'ru', None),
         ('35-telegram', 'ru', 'true'), ('30-frontend', 'ru', None), ('99-verify', 'ru,us,gb', None)]
+    # Стадии группы идут разом: каждая началась раньше, чем кончилась любая (пауза заглушки 1 с).
+    assert sorted(entry[7:11]) == [(name, 'ru', None) for name in together]
+    started = [call['t'] for call in calls if any(f'--tags {name} ' in call['args'] for name in together)]
+    assert max(started) - min(started) < 0.9
+    assert [row.split()[1] for row in done.stdout.splitlines() if re.search(r'│  2[1256]-', row)] == together
     # WARP экзитов полный деплой не ждёт: проверка своим юнитом, итог в итоговом 99-verify.
     tags = lambda call: call['args'].split('--tags ')[1].split()[0]  # noqa: E731
     assert [tags(call) for call in calls if '{"exit_warp_wait": false}' in call['args']] == ['10-foreign', '10-foreign']
     at = [item[0] for item in staged].index
     assert at('05-mgmt-mesh') < at('10-foreign') and staged.index(('99-verify', 'gb', None)) < at('20-ru-router')
-    assert at('22-adguard') < staged.index(('23-emergency', 'us,gb', None)) < at('30-frontend')
+    assert at('20-ru-router') < staged.index(('23-emergency', 'us,gb', None)) < at('30-frontend')
     # Секреты экзитов тянет цепочка экзитов за 10-foreign, один раз, пока entry ещё в 19-yt-zapret.
     pulled = [call['t'] for call in calls if '--tags secrets' in call['args']]
     zapret = next(call['t'] for call in calls if '--tags 19-yt-zapret ' in call['args'])
@@ -274,6 +280,16 @@ def test_failed_stage_stops_the_deploy_and_keeps_the_journal(tree, inproc):
     assert 'стадия 20-ru-router: одна или несколько нод завершились с ошибкой' in done.stderr
     assert 'deploy interrupted: operation journal retained' in done.stderr
     assert not [call for call in plays(tree) if '--tags 21-' in call['args'] or '--tags abort' in call['args']]
+
+
+def test_failed_stage_of_the_group_waits_for_the_others_and_keeps_the_journal(tree, inproc):
+    done = inproc(FAKE_RULES=json.dumps([['--tags 22-adguard ', 2, 0], ['--tags 26-backup ', 0, 1]]))
+    assert done.returncode == 1
+    assert 'стадия 22-adguard: одна или несколько нод завершились с ошибкой' in done.stderr
+    assert '[deploy] [26-backup → ru] done' in done.stderr and 'deploy interrupted: operation journal retained' in done.stderr
+    assert not [call for call in plays(tree) if '--tags 27-' in call['args'] or '--tags abort' in call['args']]
+    # Сторож упавшей стадии снят как у любой стадии, что кончилась сама.
+    assert [call for call in plays(tree, 'ssh') if 'disarm 22-adguard' in call['command']]
 
 
 def test_failed_exit_track_stops_the_deploy_before_the_stage_that_needs_exits(tree, inproc):

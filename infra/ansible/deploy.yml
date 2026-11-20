@@ -6,7 +6,7 @@
 #   secrets    пароли каналов, сертификаты и ключи экзитов для 20-ru-router
 #   artifacts  пакет vpn2 и журнал выпуска в /tmp/anysda (откат панели)
 # Сторож фаервола, пульс, закрытие журнала и уборка /tmp/anysda - новыми ssh-входами из vpn2.deploy.run.
-# Переменные запуска (-e): out, manifest, partial, bundle, journal, bootstrap, scope.
+# Переменные запуска (-e): out, manifest, partial, fresh, bundle, journal, bootstrap, scope.
 
 - name: Проверки выпуска и артефакты
   hosts: all
@@ -69,7 +69,10 @@
       tags: [release, prepare]
       when: scope | default('') == '' or inventory_hostname in scope.split(',')
     - name: ОС, ресурсы и совместимость
-      ansible.builtin.command: python3 -m vpn2.cli state preflight {{ '--partial' if partial | default(false) | bool else '' }}
+      # Новый экзит (fresh) ставится целиком: прошлого выпуска на нём нет.
+      ansible.builtin.command: >-
+        python3 -m vpn2.cli state preflight
+        {{ '--partial' if partial | default(false) | bool and inventory_hostname != fresh | default('') else '' }}
       changed_when: false
       tags: [release]
       when: manifest | default('') != ''

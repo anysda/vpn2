@@ -69,6 +69,17 @@ def validate(request):
     return method, params
 
 
+def failure(said, host, body):
+    """Строка отказа из журнала: сообщение деплоя или упавшая задача ansible на узле (её stderr, иначе msg)."""
+    if not host:
+        return said
+    try:
+        found = json.loads(body)
+    except ValueError:
+        return f'{host}: {body[:300]}'
+    return f'{host}: {(found.get("stderr") or found.get("msg") or "").strip()[:300]}'
+
+
 class Progress:
     """Ход задания: пишет процесс деплоя (VPN2_JOB - каталог задания), читает менеджер."""
 
@@ -348,7 +359,7 @@ class Manager:
             handle.seek(max(current.get('offset', 0) if current else 0, handle.seek(0, 2) - LOG_TAIL))
             log = handle.read()
         text = log.decode(errors='replace')
-        errors = re.findall(r'(?m)(?:FATAL:|^✗)\s*(.+)$', text)
+        errors = [failure(*found) for found in re.findall(r'(?m)(?:FATAL:|^✗)\s*(.+)$|^fatal: \[(\S+)\]: FAILED! => (.+)$', text)]
         open_job = job['state'] in ('failed', 'interrupted')
         return {**{name: job[name] for name in ('id', 'kind', 'tag', 'host', 'state', 'skipped')},
                 'stages': [{name: item[name] for name in ('name', 'state', 'nodes', 'failed')} for item in stages],

@@ -60,6 +60,12 @@ async function install() {
   }
 }
 
+function reset() {
+  host.value = ''
+  tag.value = ''
+  checked.value = null
+}
+
 function update(next: ExitJob) {
   job.value = next
   emit('job', next)
@@ -101,10 +107,13 @@ async function copy() {
           <b>Сервер пока не годится</b>
           <span v-for="p in checked!.problems" :key="p">{{ p }}</span>
         </div>
-        <div class="fld">
-          <span /><code />
-          <button type="button" class="pill w" :disabled="!ready || starting" @click="install">Установить</button>
-        </div>
+        <!-- Мастер установки ставит экзит не сразу, а в черновик: свой ряд кнопок вместо «Установить». -->
+        <slot name="submit" :value="value()" :ready="ready" :problems="fresh ? checked!.problems : null" :reset="reset">
+          <div class="fld">
+            <span /><code />
+            <button type="button" class="pill w" :disabled="!ready || starting" @click="install">Установить</button>
+          </div>
+        </slot>
       </fieldset>
       <p v-if="startError" role="alert" class="xbad">{{ startError }}</p>
     </template>

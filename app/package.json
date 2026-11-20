@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "emergency:build": "vite build --config emergency/vite.config.ts",
+    "wizard:build": "vite build --config wizard/vite.config.ts",
     "build": "nuxt build",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
@@ -17,7 +18,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "flock -n .migration.lock node scripts/migrate.mjs",
     "db:studio": "drizzle-kit studio",
-    "typecheck": "nuxt typecheck && vue-tsc --noEmit -p emergency/tsconfig.json",
+    "typecheck": "nuxt typecheck && vue-tsc --noEmit -p emergency/tsconfig.json && vue-tsc --noEmit -p wizard/tsconfig.json",
     "test:unit": "vitest run",
     "e2e": "playwright test",
     "e2e:local": "bash e2e/run-local.sh"

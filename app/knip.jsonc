@@ -10,7 +10,7 @@
   // Мигратор запускает deploy в контейнере, а не импорт приложения.
   // Настройки темы импортируют только конфиги сборки (nuxt.config.ts,
   // emergency/vite.config.ts), а их --production входами не считает.
-  "entry": ["shared/color-mode.ts!", "scripts/migrate.mjs!", "scripts/control-probe.mjs!", "e2e/support/fake-backends.mjs", "e2e/support/admin-password-check.mjs", "e2e/support/config-error-check.mjs", "e2e/support/long-password-check.mjs", "e2e/support/pool-upgrade.mjs", "e2e/support/wg-endpoint-check.mjs", "e2e/support/sso-secret-check.mjs", "e2e/session-gone-check.mjs"],
+  "entry": ["shared/color-mode.ts!", "scripts/migrate.mjs!", "scripts/control-probe.mjs!", "e2e/support/fake-backends.mjs", "e2e/support/fake-wizard.mjs", "e2e/support/admin-password-check.mjs", "e2e/support/config-error-check.mjs", "e2e/support/long-password-check.mjs", "e2e/support/pool-upgrade.mjs", "e2e/support/wg-endpoint-check.mjs", "e2e/support/sso-secret-check.mjs", "e2e/session-gone-check.mjs"],
   // scripts/route-plan.mjs импортирует только server/utils/route-check.test.ts.
   // server/test/stubs.ts берут только тесты vitest.
   // Суффикс ! — шаблон для --production. Там тесты не входы, и e2e/support

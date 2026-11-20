@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // Ход задания менеджера: стадии по порядку, журнал текущей свёрнут, итог в конце, действия упавшего.
 // Обычный Vue без Nuxt: опрос сам, через транспорт хоста; сбой связи - заметка и опрос дальше.
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { Refused, type ExitJob, type ExitTransport } from './transport'
 
-const props = defineProps<{ transport: ExitTransport, job: ExitJob }>()
+// logOpen: журнал раскрыт сразу (экран установки мастера).
+const props = defineProps<{ transport: ExitTransport, job: ExitJob, logOpen?: boolean }>()
 const emit = defineEmits<{ update: [job: ExitJob] }>()
 
 const current = ref(props.job)
@@ -54,10 +55,25 @@ async function act(run: () => Promise<ExitJob>) {
   }
 }
 
+// Журнал идёт за новыми строками, пока человек не прокрутил его вверх; вернулся вниз - снова идёт.
+const logBox = ref<HTMLPreElement>()
+let follow = true
+function scrolled() {
+  const box = logBox.value!
+  follow = box.scrollHeight - box.scrollTop - box.clientHeight < 8
+}
+watch(() => current.value.log, async () => {
+  await nextTick()
+  if (follow && logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
+}, { immediate: true })
+
 const STAGES: Record<string, string> = {
   'preflight': 'Вход на серверы', '00-bootstrap': 'Подготовка сервера', '05-mgmt-mesh': 'Служебная сеть',
-  '10-foreign': 'Службы экзита', '20-ru-router': 'Маршруты entry', '23-emergency': 'Аварийный доступ',
-  '25-monitoring': 'Мониторинг', '30-frontend': 'Панель', '99-verify': 'Проверка', 'cleanup': 'Очистка сервера',
+  '10-foreign': 'Службы экзита', '28-wireguard': 'WireGuard', '29-openvpn': 'OpenVPN', '19-yt-zapret': 'YouTube через РФ',
+  '20-ru-router': 'Маршруты entry', '23-emergency': 'Аварийный доступ', '21-failover-watchdog': 'Сторожа экзитов',
+  '22-adguard': 'AdGuard', '25-monitoring': 'Мониторинг', '26-backup': 'Бэкапы', '27-ikev2': 'IKEv2',
+  '29-control': 'Управление узлом', '35-telegram': 'Telegram-бот', '30-frontend': 'Панель', '99-verify': 'Проверка',
+  'cleanup': 'Очистка сервера',
 }
 const STATE = { pending: 'ждёт', running: 'идёт…', done: 'готово', failed: 'ошибка' }
 const COLOR = { pending: 'var(--t3)', running: 'var(--amber)', done: 'var(--green)', failed: 'var(--red)' }
@@ -102,9 +118,9 @@ const outcome = computed(() => {
         <small>{{ STATE[s.state] }}<template v-if="s.failed.length"> · {{ s.failed.join(', ') }}</template></small>
       </li>
     </ol>
-    <details v-if="current.log" class="xlog">
+    <details v-if="current.log" class="xlog" :open="logOpen">
       <summary>Журнал{{ running ? ' текущего шага' : '' }}</summary>
-      <pre>{{ current.log }}</pre>
+      <pre ref="logBox" @scroll.passive="scrolled">{{ current.log }}</pre>
     </details>
     <p v-if="lost" class="sub2" role="status">Нет связи с менеджером установки, повторяю…</p>
     <div v-if="current.error" role="alert" class="al red"><b>Ошибка</b>{{ current.error }}</div>

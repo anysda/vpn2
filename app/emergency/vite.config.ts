@@ -8,7 +8,7 @@ import { colorMode } from '../shared/color-mode'
 // (подстановка как в самом модуле) ставит data-theme до отрисовки. Отдельный
 // файл в <head>: CSP экзита запрещает встроенные скрипты. Выбор «как в системе»
 // следует смене темы системы без перезагрузки, как plugin.client модуля.
-function colorModeScript(): Plugin {
+export function colorModeScript(): Plugin {
   const options: Record<string, string> = colorMode
   const template = readFileSync(new URL('script.min.js', import.meta.resolve('@nuxtjs/color-mode')), 'utf8')
   const script = template.replace(/<%= options\.([^ ]+) %>/g, (_, option: string) => {

@@ -416,8 +416,9 @@ class Wizard:
         from vpn2 import tls
         with contextlib.suppress(OSError, subprocess.SubprocessError):
             tls.serve_routes('wizard', '')
-        for path in (RUN / 'token.json', CADDY / 'vpn2-wizard.crt', CADDY / 'vpn2-wizard.key'):
+        for path in (CADDY / 'vpn2-wizard.crt', CADDY / 'vpn2-wizard.key'):
             path.unlink(missing_ok=True)
+        shutil.rmtree(RUN, ignore_errors=True)
         shutil.rmtree(STATE, ignore_errors=True)
         subprocess.run(['systemctl', 'disable', UNIT], capture_output=True)
         Path(f'/etc/systemd/system/{UNIT}.service').unlink(missing_ok=True)

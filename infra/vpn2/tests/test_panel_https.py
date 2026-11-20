@@ -350,6 +350,7 @@ def test_own_site_on_the_ip_survives_the_stage_with_its_pair(domain, tmp_path):
         if domain:
             assert proxy.get(DOMAIN, '/api/version', tls_on=True, sni=DOMAIN)[::2] == (200, MARK)
         assert serve('').returncode == 0
+        assert not (caddy_dir / 'vpn2-sites.d').exists() and not any((caddy_dir / 'vpn2-site.d').iterdir())
         proxy.assert_https_open()
 
 

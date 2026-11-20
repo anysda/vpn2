@@ -472,8 +472,13 @@ def serve_routes(name, routes, caddy_dir='/etc/caddy', site=''):
 
     def write(texts):
         for path, text in texts.items():
-            path.parent.mkdir(exist_ok=True)
-            atomic(path, text, 0o644) if text else path.unlink(missing_ok=True)
+            if text:
+                path.parent.mkdir(exist_ok=True)
+                atomic(path, text, 0o644)
+                continue
+            path.unlink(missing_ok=True)
+            if path.parent.name == SITES and path.parent.is_dir() and not any(path.parent.iterdir()):
+                path.parent.rmdir()
 
     write(paths)
     try:

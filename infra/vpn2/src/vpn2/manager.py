@@ -410,14 +410,17 @@ def callers():
 
 
 def serve(manager, path=SOCKET):
+    """Сокет появляется под своим именем, уже слушая и с правами: клиент не застаёт его полуготовым."""
     path.parent.mkdir(mode=0o755, exist_ok=True)
-    path.unlink(missing_ok=True)
+    new = path.with_name(f'.{path.name}.new')
+    new.unlink(missing_ok=True)
     with socket.socket(socket.AF_UNIX) as listener:
-        listener.bind(str(path))
+        listener.bind(str(new))
         with contextlib.suppress(KeyError):
-            os.chown(path, 0, pwd.getpwnam('vpn2-control').pw_gid)
-        path.chmod(0o660)
+            os.chown(new, 0, pwd.getpwnam('vpn2-control').pw_gid)
+        new.chmod(0o660)
         listener.listen(16)
+        os.replace(new, path)
         threading.Thread(target=manager.watch, daemon=True).start()
         while True:
             connection, _address = listener.accept()

@@ -41,7 +41,7 @@ const blocked = computed(() => {
   if (status.value?.deploy === 'busy') return 'Идёт ./deploy.sh в терминале: добавлять и удалять экзиты можно после его конца'
   return ''
 })
-const removeBlocked = computed(() => blocked.value || (exits.value.length <= 1 ? 'Последний экзит удалить нельзя: без экзита VPN не работает' : ''))
+const removeBlocked = computed(() => blocked.value || (status.value && exits.value.length <= 1 ?'Последний экзит удалить нельзя: без экзита VPN не работает' : ''))
 const MONITORING = { up: ['ok', 'В работе'], down: ['badt', 'Нет связи'], unknown: ['', 'Нет данных'] } as const
 
 function onJob(next: ExitJob) {

@@ -1,6 +1,6 @@
 """Подставной менеджер установки для e2e: API vpn2.manager на его сокете, задания без деплоя.
 
-Сценарий задаёт ввод: тег fail* - добавление падает на маршрутах entry (повтор проходит), cut* - обрывается;
+Сценарий задаёт ввод: тег fail* - добавление (не удаление) падает на маршрутах entry (повтор проходит), cut* - обрывается;
 адрес на .66 - проверка с двумя замечаниями; удаление экзита с адресом на .4 - сервер не ответил (forgotten),
 на .5 - очищен не весь (partial). Каждое чтение задания продвигает его на стадию; файл hold держит ход и тянет проверку 2 с,
 файл deploy-busy - «идёт ./deploy.sh». Законченное задание меняет runtime/nodes.json, как стадия 30-frontend.
@@ -51,10 +51,11 @@ def step(job):
     plan = ADD if job['kind'] == 'add' else REMOVE
     if job['state'] != 'running' or (RUN / 'hold').exists():
         return
-    if job['tag'].startswith('fail') and job['at'] == 4 and not job['retried']:
+    scripted = job['kind'] == 'add' and not job['retried']
+    if scripted and job['tag'].startswith('fail') and job['at'] == 4:
         job['state'] = 'failed'
         return
-    if job['tag'].startswith('cut') and job['at'] == 2 and not job['retried']:
+    if scripted and job['tag'].startswith('cut') and job['at'] == 2:
         job['state'] = 'interrupted'
         return
     job['at'] += 1

@@ -169,13 +169,14 @@ def digest(view):
     return hashlib.sha256(text).hexdigest()
 
 
-def _rewrite_json(path, data):
+def _rewrite_json(path, data, text):
+    """Файл без секрета - в той же записи JSON, что у деплоя: перевод строки в конце - как был."""
     stat = os.stat(path)
     temporary = f'{path}.creds'
     with open(temporary, 'w', encoding='utf-8') as out:
         os.fchown(out.fileno(), stat.st_uid, stat.st_gid)
         os.fchmod(out.fileno(), stat.st_mode & 0o7777)
-        out.write(json.dumps(data) + '\n')
+        out.write(json.dumps(data) + ('\n' if text.endswith('\n') else ''))
     os.replace(temporary, path)
 
 
@@ -195,12 +196,13 @@ def adopt(root='/'):
             os.unlink(file)
     for file, field, name in ((place(file), field, name) for file, field, name in LEGACY_JSON):
         with contextlib.suppress(FileNotFoundError, ValueError):
-            data = json.loads(Path(file).read_text())
+            text = Path(file).read_text()
+            data = json.loads(text)
             if isinstance(data, dict) and field in data:
                 if name and str(data[field] or '').strip():
                     write(name, str(data[field]).strip())
                 del data[field]
-                _rewrite_json(file, data)
+                _rewrite_json(file, data, text)
     for file in map(place, LEGACY_DROP):
         with contextlib.suppress(FileNotFoundError):
             os.unlink(file)

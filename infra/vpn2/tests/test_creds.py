@@ -126,16 +126,17 @@ class AdoptTests(Store):
         files = [self.place('/etc/anysda/session-secret.txt', 'sess\n'), self.place(os.path.expanduser('~/.ssh/id_ed25519'), 'KEY\n'),
                  self.place('/etc/anysda/admin-password.txt', 'admin pw'), self.place('/etc/anysda/adguard-password.txt', 'agh')]
         runtime = self.place('/var/lib/anysda-vpn2/runtime/telegram-runtime.json',
-                             json.dumps({'bot_token': 'panel:tok', 'chat_id': '42'}))
+                             json.dumps({'bot_token': 'panel:tok', 'chat_id': '42'}) + '\n')
         runtime.chmod(0o640)
         taken = self.place('/etc/anysda/telegram-from-config.json', json.dumps({'bot_token': 'old:tok', 'chat_id': '42'}))
         creds.adopt(self.root / 'fs')
         self.assertEqual((creds.read('session_secret'), creds.read('orchestrator_key')), ('sess', 'KEY\n'))
         self.assertEqual(creds.read('telegram_bot_token'), 'panel:tok', 'действовал токен из панели')
         self.assertTrue(all(not path.exists() for path in files))
-        self.assertEqual(json.loads(runtime.read_text()), {'chat_id': '42'})
+        # Запись та же, что у деплоя: перевод строки в конце - как был, файл чистой установки совпадает побайтно.
+        self.assertEqual(runtime.read_text(), '{"chat_id": "42"}\n')
         self.assertEqual(runtime.stat().st_mode & 0o777, 0o640)
-        self.assertEqual(json.loads(taken.read_text()), {'chat_id': '42'})
+        self.assertEqual(taken.read_text(), '{"chat_id": "42"}')
         creds.adopt(self.root / 'fs')
         self.assertEqual(creds.read('telegram_bot_token'), 'panel:tok', 'повтор ничего не меняет')
 

@@ -13,12 +13,9 @@ backup_backend: "{{ vpn2_env.BACKUP_BACKEND | default('') }}"
 backup_local_dir: "{{ vpn2_env.BACKUP_LOCAL_DIR | default('/var/backups/anysda-vpn2', true) }}"
 backup_retention: "{{ vpn2_env.BACKUP_RETENTION | default('10', true) }}"
 backup_schedule: "{{ vpn2_env.BACKUP_SCHEDULE | default('off', true) }}"
-backup_passphrase: "{{ vpn2_env.BACKUP_PASSPHRASE | default('') }}"
 backup_s3:
   BACKUP_S3_ENDPOINT: "{{ vpn2_env.BACKUP_S3_ENDPOINT | default('') }}"
   BACKUP_S3_BUCKET: "{{ vpn2_env.BACKUP_S3_BUCKET | default('') }}"
-  BACKUP_S3_ACCESS_KEY: "{{ vpn2_env.BACKUP_S3_ACCESS_KEY | default('') }}"
-  BACKUP_S3_SECRET_KEY: "{{ vpn2_env.BACKUP_S3_SECRET_KEY | default('') }}"
 backup_s3_region: "{{ vpn2_env.BACKUP_S3_REGION | default('') }}"
 
 backup_packages: [age, sqlite3]

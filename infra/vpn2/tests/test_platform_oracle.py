@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from vpn2 import config, resources
+from vpn2 import config, creds, resources
 from vpn2.adguard import dns, stage
 from vpn2.containers import compose
 
@@ -54,12 +54,13 @@ def test_bad_override_is_refused_by_config():
 
 
 @pytest.mark.parametrize('key', sorted(COMPOSE['cases']))
-def test_compose_file_and_panel_spec(key):
+def test_compose_file_and_panel_spec(key, monkeypatch):
+    monkeypatch.setattr(creds, 'VIEWS', Path('/run/vpn2-secrets'))
     case, env, facts = COMPOSE['cases'][key], COMPOSE['env'], COMPOSE['facts']
     values = _values(key)
     scrape, skipped = compose.scrape_config(env)
     services = {compose.VM: compose.vm_service('vm:1', values, scrape),
-                compose.BOT: compose.bot_service(env, 'bot@sha256:1', values, secret='x', user='999:998', panel_gid=997),
+                compose.BOT: compose.bot_service(env, 'bot@sha256:1', values, user='999:998', panel_gid=997),
                 compose.PANEL: compose.panel_service(env, 'panel@sha256:2', values, facts, user='996:995', control_gid=994)}
     text = ''
     for name, service in services.items():

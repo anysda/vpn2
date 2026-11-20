@@ -4,7 +4,6 @@
 Здесь - что делается на самом entry до стадий: перенос состояния старой раскладки, venv с
 ansible и колесом vpn2, зависимости, ключи оркестратора.
 """
-import base64
 import contextlib
 import fcntl
 import hashlib
@@ -18,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from vpn2 import config, creds
 from vpn2.config import STATE_DIR
 
 INFRA = Path(os.environ.get('DEPLOY_ROOT') or Path(__file__).resolve().parents[3])
@@ -318,29 +318,40 @@ def dedupe(path):
     path.chmod(0o600)
 
 
+def pub():
+    """Открытая часть ключа оркестратора: её кладут в authorized_keys экзитов (./deploy.sh -key)."""
+    return Path.home() / '.ssh/id_ed25519.pub'
+
+
 def installed():
     """На этой машине уже стоит entry: есть база панели или /etc/anysda."""
     return Path('/var/lib/anysda-vpn2/db.sqlite').exists() or Path('/etc/anysda').is_dir()
 
 
 def orchestrator_key(create=False):
-    """Приватный ключ оркестратора: им entry входит на себя и на экзиты. Копия в config.yaml (orchestrator_key)
-    переживает пересоздание entry. create - ключа нет, создать; есть - не трогать. Открытая часть ключа - рядом
-    (.pub) и в /root/.ssh/authorized_keys самой entry."""
-    key = Path.home() / '.ssh/id_ed25519'
+    """Приватный ключ оркестратора (вид хранилища на tmpfs): им entry входит на себя и на экзиты.
+    create - ключа нет, создать; есть - не трогать. Открытая часть - pub() и authorized_keys самой entry."""
     if not create:
-        return key
-    key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return creds.key_file('orchestrator_key')
+    public = pub()
+    public.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    creds.adopt()
+    key = creds.key_file('orchestrator_key')
     if not key.is_file():
         log('ключа оркестратора нет — создаю ed25519')
-        subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', 'anysda-orchestrator', '-f', key, '-q'], check=True)
-    pub = Path(f'{key}.pub')
-    if not pub.is_file():
-        pub.write_text(subprocess.run(['ssh-keygen', '-y', '-f', key], check=True, capture_output=True, text=True).stdout)
-    authorized = key.parent / 'authorized_keys'
-    if key_id(pub.read_text()) not in map(key_id, read_raw(authorized).splitlines()):
+        creds.VIEWS.mkdir(mode=0o755, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=creds.VIEWS) as work:
+            subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', 'anysda-orchestrator', '-f', f'{work}/key', '-q'],
+                           check=True)
+            creds.write('orchestrator_key', Path(work, 'key').read_text())
+        public.unlink(missing_ok=True)
+        key = creds.key_file('orchestrator_key')
+    if not public.is_file():
+        public.write_text(subprocess.run(['ssh-keygen', '-y', '-f', key], check=True, capture_output=True, text=True).stdout)
+    authorized = public.parent / 'authorized_keys'
+    if key_id(public.read_text()) not in map(key_id, read_raw(authorized).splitlines()):
         with open(authorized, 'a') as keys:
-            keys.write(pub.read_text())
+            keys.write(public.read_text())
         authorized.chmod(0o600)
     return key
 
@@ -351,13 +362,40 @@ def ssh_options(state=STATE_DIR):
             '-o', 'PreferredAuthentications=publickey', '-o', 'ConnectTimeout=10']
 
 
+def take_secrets():
+    """Секреты из мест 1.2.0 и из области secrets config.yaml - в хранилище, до стадий; файл стирается только
+    после успешного деплоя (finish_secrets). Вернуть пароль админа из файла: в хранилище он не идёт.
+
+    Место 1.2.0 в config.yaml применяется, только пока секрета в хранилище нет: действовавший в 1.2.0 токен бота
+    и секрет SSO из панели уже взял adopt().
+    """
+    creds.adopt()
+    try:
+        cfg = config.load(CONFIG)
+    except (OSError, config.ConfigError):
+        return ''
+    found, area = config.secrets(cfg), cfg.raw.get('secrets', {})
+    password = found.pop('admin_password', '')
+    for name, value in found.items():
+        if area.get(name) or not creds.read(name):
+            creds.write(name, value)
+    return password
+
+
+def finish_secrets(panel=True):
+    """Деплой прошёл: область secrets пуста, места 1.2.0 убраны из config.yaml. Пароль админа в хранилище не идёт:
+    без стадии панели (panel=False) он остаётся в файле до прогона, который его применит."""
+    keep = () if panel else ('admin_password',)
+    return config.wipe_secrets(CONFIG, keep) if CONFIG.is_file() else False
+
+
 def admin_key_check(env):
     """Вход по паролю закрывается всегда, поэтому без ключа человека деплой не начинается. На установленной entry
     (обновление с 1.2.0) хватает ключа, что уже лежит в /root/.ssh/authorized_keys."""
     key = env.get('ADMIN_SSH_PUBKEY', '')
     if key and not key_id(key):
         die('admin.ssh_pubkey в config.yaml - не открытый ключ ssh (ожидается строка вида «ssh-ed25519 AAAA... имя»)')
-    if key or (installed() and human_keys(read_raw(orchestrator_key().parent / 'authorized_keys'), *own_keys())):
+    if key or (installed() and human_keys(read_raw(pub().parent / 'authorized_keys'), *own_keys())):
         return
     die('admin.ssh_pubkey в config.yaml не задан. Вход на серверы по паролю деплой закрывает, '
         'поэтому без ключа на entry будет не зайти. Впиши свой открытый ключ ssh '
@@ -367,32 +405,32 @@ def admin_key_check(env):
 def own_keys():
     """Тексты .pub ключей самого узла: оркестратора, старого RSA и mgmt."""
     ssh = Path.home() / '.ssh'
-    return [read_raw(path) for path in (f'{orchestrator_key()}.pub', ssh / 'id_rsa.pub', '/root/.ssh/id_ed25519_mgmt.pub')]
+    return [read_raw(path) for path in (pub(), ssh / 'id_rsa.pub', '/root/.ssh/id_ed25519_mgmt.pub')]
 
 
 def prep_keys():
-    """Перед 00-bootstrap: копия ключа оркестратора в config.yaml, ключи для authorized_keys узлов и
-    ключ entry для ssh на экзиты через mgmt (отдельный)."""
+    """Перед 00-bootstrap: ключи для authorized_keys узлов и ключ entry для ssh на экзиты через mgmt (отдельный,
+    приватная часть - в хранилище, как у ключа оркестратора)."""
     out = INFRA / 'secrets/rendered'
     out.mkdir(parents=True, exist_ok=True)
     out.chmod(0o700)
-    key = orchestrator_key(create=True)
-    pub, ssh = Path(f'{key}.pub'), key.parent
-    if CONFIG.is_file() and not re.search(r'(?m)^orchestrator_key:', CONFIG.read_text()):
-        log('сохраняю orchestrator-ключ в config.yaml (переживёт пересоздание entry)')
-        with open(CONFIG, 'a') as config:
-            config.write('\n# orchestrator SSH-ключ — НЕ удалять: нужен для повторного деплоя\n'
-                         '# с пересозданной entry-ноды. config.yaml надо сохранять/переносить.\n'
-                         f'orchestrator_key: {base64.b64encode(key.read_bytes()).decode()}\n'
-                         f'orchestrator_pubkey: {pub.read_text().rstrip(chr(10))}\n')
+    orchestrator_key(create=True)
+    ssh = pub().parent
     authorized = ssh / 'authorized_keys'
-    (out / 'orchestrator_keys').write_text(''.join(read_raw(path) for path in (pub, ssh / 'id_rsa.pub', authorized)))
+    (out / 'orchestrator_keys').write_text(''.join(read_raw(path) for path in (pub(), ssh / 'id_rsa.pub', authorized)))
     for path in (authorized, out / 'orchestrator_keys'):
         dedupe(path)
-    mgmt = Path('/root/.ssh/id_ed25519_mgmt')
+    mgmt = Path('/root/.ssh/id_ed25519_mgmt.pub')
+    if not creds.read('mgmt_key'):
+        with tempfile.TemporaryDirectory(dir=creds.VIEWS) as work:
+            subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-C', 'anysda-entry-mgmt', '-f', f'{work}/key'],
+                           check=True)
+            creds.write('mgmt_key', Path(work, 'key').read_text())
+        mgmt.unlink(missing_ok=True)
     if not mgmt.is_file():
-        subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-C', 'anysda-entry-mgmt', '-f', mgmt], check=True)
-    shutil.copyfile(f'{mgmt}.pub', out / 'entry_mgmt_key')
+        mgmt.write_text(subprocess.run(['ssh-keygen', '-y', '-f', creds.key_file('mgmt_key')], check=True,
+                                       capture_output=True, text=True).stdout)
+    shutil.copyfile(mgmt, out / 'entry_mgmt_key')
     (out / 'entry_mgmt_key').chmod(0o600)
     # Ключ человека на entry - не свой ключ узла: заданный у хостера или админом.
     (out / 'admin_keys').write_text(human_keys(read_raw(authorized), *own_keys()))

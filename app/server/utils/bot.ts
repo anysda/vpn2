@@ -61,17 +61,21 @@ export const pruneEvents = () => useDb().delete(events).where(lt(events.at, Date
 
 const TELEGRAM_PATH = '/var/lib/anysda-vpn2/runtime/telegram-runtime.json'
 
-/** admin_username - ник администратора бота без @: бот называет его людям без доступа. */
+/** admin_username - ник администратора бота без @: бот называет его людям без доступа. Токен - в хранилище entry. */
 export function readTelegramRuntime() {
   const parsed = readJsonFile<Record<string, unknown>>(TELEGRAM_PATH) ?? {}
   return {
-    bot_token: String(parsed.bot_token ?? ''),
+    bot_token: readSecret('telegram_bot_token'),
     chat_id: (parsed.chat_id ?? '') as string | number,
     admin_username: String(parsed.admin_username ?? ''),
   }
 }
 
-export const writeTelegramRuntime = (data: ReturnType<typeof readTelegramRuntime>) => writeJsonFile(TELEGRAM_PATH, data)
+/** Токен - сначала в хранилище: смену файла бот ловит перезапуском и читает уже новый токен. */
+export async function writeTelegramRuntime({ bot_token, ...data }: ReturnType<typeof readTelegramRuntime>) {
+  await saveSecret('telegram_bot_token', bot_token)
+  writeJsonFile(TELEGRAM_PATH, data)
+}
 
 /** Настроен = есть кому доставлять: секрет бота и токен с чатом из настроек, условие значка «НЕНАСТРОЕН». */
 export function botConfigured(): boolean {

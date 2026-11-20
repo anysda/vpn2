@@ -17,6 +17,7 @@ COMMANDS = (
     ('backup-list', 'vpn2.cli:backup_list'),
     ('containers', 'vpn2.cli:containers'),
     ('control', 'vpn2.cli:control'),
+    ('creds', 'vpn2.creds:main'),
     ('emergency', 'vpn2.emergency.__main__:main'),
     ('host', 'vpn2.cli.host:main'),
     ('manager', 'vpn2.manager:main'),

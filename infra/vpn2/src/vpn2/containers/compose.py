@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from vpn2 import fsutil, release, resources
+from vpn2 import creds, fsutil, release, resources
 from vpn2.nodevars import env_tag
 
 PROJECT = 'vpn2'
@@ -23,8 +23,12 @@ PROJECT_LABEL = 'com.docker.compose.project'
 COMPOSE_FILE = '/etc/vpn2/compose/compose.yaml'
 MANIFEST = '/tmp/anysda/release-manifest.json'
 DB_URL = 'file:/var/lib/anysda-vpn2/db.sqlite'
-PANEL_COMMAND = ['sh', '-ec', ('export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure); '
-                              'exec node .output/server/index.mjs')]
+# Секреты - только при старте, из вида хранилища на tmpfs (vpn2.creds): в compose.yaml и docker inspect их нет.
+SECRETS = {'NUXT_SESSION_PASSWORD': 'session_secret', 'NUXT_CLASH_SECRET': 'clash_secret',
+           'NUXT_AGH_PASSWORD': 'adguard_password', 'NUXT_TGBOT_SECRET': 'tgbot_secret'}
+PANEL_COMMAND = ['sh', '-ec', ('export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure)'
+                              + ''.join(f' {name}=$(cat /run/secrets/{file})' for name, file in SECRETS.items())
+                              + '; exec node .output/server/index.mjs')]
 
 
 class EngineError(Exception):
@@ -78,20 +82,20 @@ def vm_service(image, values, scrape):
                  '-search.latencyOffset=1s', '-promscrape.config=/etc/vm/scrape.yml'])
 
 
-def bot_service(environ, image, values, *, secret, user, panel_gid):
+def bot_service(environ, image, values, *, user, panel_gid):
+    """Токен и общий секрет бот читает из /run/secrets; метка - отпечаток вида: сменился секрет - новый контейнер."""
     limits, extra, _ = resources.container(values, 'bot')
-    env = {**extra, 'TELEGRAM_BOT_TOKEN': environ.get('TELEGRAM_BOT_TOKEN') or '',
-           'TELEGRAM_CHAT_ID': environ.get('TELEGRAM_CHAT_ID') or '',
+    env = {**extra, 'TELEGRAM_CHAT_ID': environ.get('TELEGRAM_CHAT_ID') or '',
            'TELEGRAM_ADMIN_USERNAME': environ.get('TELEGRAM_ADMIN_USERNAME') or '',
-           'TGBOT_SECRET': secret, 'TGBOT_EVENT_PORT': '8877',
+           'TGBOT_EVENT_PORT': '8877',
            'TGBOT_POLL_STALL_SEC': environ.get('TGBOT_POLL_STALL_SEC') or '300',
            'ANYSDA_URL': 'http://127.0.0.1:51821', 'TG_PROXY': 'http://127.0.0.1:7897'}
     for name in ('ALERT_CPU_PCT', 'ALERT_RAM_PCT', 'ALERT_WINDOW_SEC', 'TGBOT_INVALID_TOKEN_PAUSE_SEC'):
         if environ.get(name):
             env[name] = environ[name]
     return _service(
-        BOT, image, limits, **_hardened(user, panel_gid),
-        volumes=['/etc/localtime:/etc/localtime:ro',
+        BOT, image, limits, **_hardened(user, panel_gid), labels={SPEC_LABEL: creds.digest('bot')},
+        volumes=['/etc/localtime:/etc/localtime:ro', f'{creds.VIEWS}/bot:/run/secrets:ro',
                  '/var/lib/anysda-vpn2/runtime/telegram-runtime.json:/etc/anysda/telegram-runtime.json:ro',
                  '/var/lib/anysda-tgbot:/var/lib/anysda-tgbot'],
         environment=env)
@@ -109,11 +113,11 @@ def mgmt_ips(environ):
 
 
 def panel_environment(environ, facts):
-    """facts: секреты и решения стадии (session, clash, tgbot, admin_user, agh_password, sso*)."""
+    """facts: решения стадии (admin_user, sso*); секреты панель берёт из /run/secrets (PANEL_COMMAND)."""
     entry, get = environ['ENTRY_HOST'], environ.get
     return {
         'NODE_ENV': 'production', 'PORT': '51821', 'HOST': '127.0.0.1',
-        'NUXT_SESSION_PASSWORD': facts['session'], 'NUXT_DATABASE_URL': DB_URL,
+        'NUXT_DATABASE_URL': DB_URL,
         'NUXT_ANYSDA_CONFIG_PATH': '/etc/anysda/config.yaml', 'NUXT_WG_ENABLED': 'true',
         'NUXT_WG_LISTEN_PORT': get('WG_LISTEN_PORT') or '51820',
         'NUXT_WG_SERVER_IP': get('WG_SERVER_IP') or '10.66.66.1',
@@ -123,17 +127,15 @@ def panel_environment(environ, facts):
         'NUXT_WG_MTU': get('WG_MTU') or '1420', 'NUXT_WG_SPLIT_LOCAL': get('WG_SPLIT_LOCAL') or 'true',
         'NUXT_OVPN_ENABLED': 'true', 'NUXT_OVPN_PORT': get('OVPN_PORT') or '1194',
         'NUXT_OVPN_PROTO': get('OVPN_PROTO') or 'udp', 'NUXT_OVPN_PUBLIC_HOST': get('OVPN_PUBLIC_HOST') or entry,
-        'NUXT_CLASH_SECRET': facts['clash'],
         'NUXT_CLASH_API_URL': f'http://{get("MGMT_IP") or ""}:9090',
         'NUXT_AGH_URL': f'http://127.0.0.1:{environ["AGH_PORT"]}', 'NUXT_AGH_USER': facts['admin_user'],
-        'NUXT_AGH_PASSWORD': facts['agh_password'], 'NUXT_EXIT_TAGS': get('EXIT_TAGS') or '',
+        'NUXT_EXIT_TAGS': get('EXIT_TAGS') or '',
         'NUXT_MGMT_MESH_IP_PREFIX': '10.99.0.', 'NUXT_MGMT_IPS': mgmt_ips(environ),
-        'NUXT_VM_URL': 'http://127.0.0.1:8428', 'NUXT_TGBOT_SECRET': facts['tgbot'], 'NUXT_TGBOT_EVENT_PORT': '8877',
+        'NUXT_VM_URL': 'http://127.0.0.1:8428', 'NUXT_TGBOT_EVENT_PORT': '8877',
         'NUXT_PUBLIC_SSO_ENABLED': facts['sso_enabled'], 'NUXT_PUBLIC_SSO_AUTO_REDIRECT': facts['sso_auto_redirect'],
         'NUXT_PUBLIC_SSO_LABEL': get('SSO_LABEL') or 'Authentik', 'NUXT_SSO_ALLOWED_SUBS': get('SSO_ALLOWED_SUBS') or '',
         'NUXT_SSO_PASSWORD_LOGIN': facts['sso_password_login'],
         'NUXT_OAUTH_OIDC_CLIENT_ID': get('SSO_CLIENT_ID') or '',
-        'NUXT_OAUTH_OIDC_CLIENT_SECRET': get('SSO_CLIENT_SECRET') or '',
         'NUXT_OAUTH_OIDC_OPENID_CONFIG': get('SSO_DISCOVERY_URL') or '',
         'NUXT_OAUTH_OIDC_REDIRECT_URL': facts['sso_redirect_url'], 'LOG_LEVEL': 'info',
     }
@@ -145,7 +147,8 @@ def panel_service(environ, image, values, facts, *, user, control_gid):
         PANEL, image, limits, **_hardened(user, control_gid),
         volumes=['/etc/localtime:/etc/localtime:ro', '/etc/vpn2/tls/panel:/run/vpn2-tls:ro',
                  '/etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro',
-                 '/run/vpn2-control:/run/vpn2-control:ro', '/var/lib/anysda-vpn2:/var/lib/anysda-vpn2'],
+                 '/run/vpn2-control:/run/vpn2-control:ro', '/var/lib/anysda-vpn2:/var/lib/anysda-vpn2',
+                 f'{creds.VIEWS}/panel:/run/secrets:ro', f'{creds.VIEWS}/inbox:/run/secrets-inbox'],
         environment={**extra, **panel_environment(environ, facts)}, command=list(PANEL_COMMAND))
 
 

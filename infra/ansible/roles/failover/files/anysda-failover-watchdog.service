@@ -10,7 +10,7 @@ EnvironmentFile=/etc/anysda/failover-watchdog.env
 Restart=always
 RestartSec=2
 # root без DynamicUser: сторож перезапускает sing-box, когда мертвы все каналы
-# (systemctl restart), и шлёт событие в бот с секретом /etc/anysda/tgbot-secret.txt.
+# (systemctl restart), и шлёт событие в бот с секретом /run/vpn2-secrets/root/tgbot_secret.
 # Время переездов дорожек и перезапуска — /var/lib/anysda-failover-watchdog
 StateDirectory=anysda-failover-watchdog
 NoNewPrivileges=true

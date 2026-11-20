@@ -18,7 +18,7 @@ import { accounts, sessions, twoFactors, users, verifications } from '../databas
 // users.totp_secret и гашение кода, правило допуска SSO, отзыв сессий при смене пароля, 2FA и списка SSO.
 
 const ConfigSchema = z.object({
-  admin: z.object({ user: z.string().default('admin'), password: z.string().optional() }).default({ user: 'admin' }),
+  admin: z.object({ user: z.string().default('admin') }).default({ user: 'admin' }),
 })
 
 let anysdaConfig: z.infer<typeof ConfigSchema> | null = null
@@ -91,7 +91,7 @@ function seedFromConfig(): SsoStored {
     authentikUrl: m ? m[1]! : discovery,
     appSlug: m ? m[2]! : '',
     clientId: String(oidc.clientId ?? ''),
-    clientSecret: String(oidc.clientSecret ?? ''),
+    clientSecret: '',
     allowedSubs: String(cfg.sso.allowedSubs ?? ''),
     label: String(cfg.public.sso.label || 'Authentik'),
     autoRedirect: !!cfg.public.sso.autoRedirect,
@@ -113,12 +113,14 @@ export function readSsoStored() {
     }
     cached = { stored, fromPanel: !!parsed }
   }
-  return { stored: { ...cached.stored }, fromPanel: cached.fromPanel }
+  return { stored: { ...cached.stored, clientSecret: readSecret('sso_client_secret') }, fromPanel: cached.fromPanel }
 }
 
-export function writeSsoStored(data: SsoStored) {
+/** Секрет клиента - в хранилище entry, остальное - в sso-runtime.json. */
+export async function writeSsoStored({ clientSecret, ...data }: SsoStored) {
+  await saveSecret('sso_client_secret', clientSecret)
   writeJsonFile(SSO_PATH, data)
-  cached = { stored: { ...data }, fromPanel: true }
+  cached = { stored: { ...data, clientSecret: '' }, fromPanel: true }
 }
 
 export function maskSecret(secret: string): string {

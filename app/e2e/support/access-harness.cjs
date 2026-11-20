@@ -51,11 +51,12 @@ module.exports = function harness(root, database, adapter, runtime = {}) {
     const [resource, key] = name.split(/ (.*)/)
     return load(`app/server/resources/${resource}.ts`).default[key]
   }
-  // Бот настроен: секрет в конфиге и файл Telegram с токеном и чатом.
+  // Бот настроен: секрет в конфиге, токен в виде хранилища, чат в файле Telegram.
   runtime = { tgbotSecret: 'test', ...runtime }
-  const { readJsonFile } = load('app/server/utils/api.ts')
+  const { readJsonFile, readSecret } = load('app/server/utils/api.ts')
   patch('app/server/utils/api.ts', {
-    readJsonFile: file => file.endsWith('telegram-runtime.json') ? { bot_token: 'test', chat_id: 1 } : readJsonFile(file),
+    readJsonFile: file => file.endsWith('telegram-runtime.json') ? { chat_id: 1 } : readJsonFile(file),
+    readSecret: name => name === 'telegram_bot_token' ? 'test' : readSecret(name),
   })
   return { load, overrides, patch, route }
 }

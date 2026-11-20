@@ -3,15 +3,19 @@
 Зовёт infra/deploy.sh после проверки config.yaml; флаги --development и --manifest он разбирает
 сам и отдаёт в VPN2_DEVELOPMENT и VPN2_MANIFEST.
 """
+import contextlib
 import os
+import secrets
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 
+from vpn2 import creds
 from vpn2.config import STATE_DIR, drop_passwords
-from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, admin_key_check, die, install_prereqs, migrate_state, ok,
-                         orchestrator_key, read, report, step, svc)
+from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, E, admin_key_check, die, finish_secrets, install_prereqs,
+                         migrate_state, ok, orchestrator_key, pub, read, report, step, svc, take_secrets)
 from vpn2.deploy.run import EXIT_FIRST, EXIT_STAGES, Deploy, Interrupted
 from vpn2.manager import Progress
 
@@ -89,7 +93,22 @@ def dispatch(deploy, argv):
     # Пароли root из config.yaml 1.2.0 больше не нужны: вход по ключу на все узлы прошёл, деплой - тоже.
     if action in ('', 'recover') and drop_passwords(CONFIG):
         ok('пароли root entry и экзитов убраны из config.yaml: вход на серверы только по ключу')
+    # Секреты уже в хранилище (take_secrets до стадий): успешный прогон стирает их из config.yaml.
+    if finish_secrets(panel=action in ('', 'recover') or (action == '30-frontend' and argv[1] in ('ru', 'all'))):
+        ok('секреты перенесены в зашифрованное хранилище entry и стёрты из config.yaml')
     return 0
+
+
+def panel_admin(db='/var/lib/anysda-vpn2/db.sqlite'):
+    """В базе панели уже есть админ: его пароль деплой без secrets.admin_password не трогает."""
+    if not os.path.exists(db):
+        return False
+    try:
+        with contextlib.closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True)) as base:
+            return base.execute('SELECT count(*) FROM users').fetchone()[0] > 0
+    except sqlite3.Error as error:
+        # Занятая или битая база - не повод задать новый пароль: админ, может быть, есть.
+        return 'no such table' not in str(error)
 
 
 def main(argv):
@@ -98,8 +117,8 @@ def main(argv):
     signal.signal(signal.SIGTERM, interrupted(143))
     manifest = os.environ.pop('VPN2_MANIFEST', '')
     if argv == ['-key']:
-        key = orchestrator_key(create=True)
-        print(read(f'{key}.pub'))
+        orchestrator_key(create=True)
+        print(read(pub()))
         print('Положи эту строку в /root/.ssh/authorized_keys на каждом экзите, затем заполни config.yaml '
               'и запусти ./deploy.sh -yaml', file=sys.stderr)
         return 0
@@ -114,10 +133,21 @@ def main(argv):
         return 1
     # Каталог окружений прежних выпусков (с секретами) не читается никем.
     shutil.rmtree(REPO / 'infra/envs', ignore_errors=True)
+    try:
+        password, generated = take_secrets(), ''
+    except (creds.CredsError, OSError) as error:
+        print(f'✗ секреты не перенесены в хранилище entry: {error}', file=sys.stderr)
+        return 1
+    # Пароль админа доходит до стадии панели окружением. Не задан, а базы панели ещё нет - новый.
+    if not password and argv[:1] in ([], ['recover']) and not panel_admin():
+        password = generated = secrets.token_urlsafe(13)[:18]
+    if password:
+        os.environ['ADMIN_PASSWORD'] = password
     deploy, code, progress = None, 1, Progress.from_env()
     try:
         deploy = Deploy(os.environ.get('VPN2_DEVELOPMENT') == 'true', manifest)
         deploy.progress = progress
+        deploy.admin_generated = bool(generated)
         code = dispatch(deploy, argv)
     except subprocess.CalledProcessError as error:
         code = error.returncode
@@ -130,6 +160,8 @@ def main(argv):
             deploy.close(code)
         if progress:
             progress.finish(code, deploy and deploy.result)
+        if generated and panel_admin():
+            print(f'\n  {G}Пароль панели: {generated}{E}  (показан один раз и нигде не хранится)\n', flush=True)
     return code
 
 

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { accounts, adminConfigPassword, sessions, users } from '../database/schema'
@@ -48,15 +48,16 @@ async function initPanel() {
     log.warn(error.message)
   })
 
-  // 2. Seed/sync admin user from config.yaml (idempotent restore)
+  // 2. Seed/sync admin user: login from config.yaml, password only while the deploy hands it over (idempotent restore)
   const yamlConfig = loadAnysdaConfig()
   const configUser = yamlConfig?.admin?.user
-  const configPassword = yamlConfig?.admin?.password
+  const configPassword = readSecret('admin_password')
   const [current] = await localDb.select().from(users).limit(1)
 
   if (!current) {
     const username = configUser ?? process.env.NUXT_ADMIN_USER ?? 'admin'
-    const password = configPassword || process.env.NUXT_ADMIN_PASSWORD || await generatedAdminPassword()
+    const password = configPassword || process.env.NUXT_ADMIN_PASSWORD
+    if (!password) throw new Error('no admin password: the deploy hands it over on the first start')
     const passwordHash = await hashPassword(password)
     await localDb.transaction(async (tx) => {
       // Синтетическая почта привязана к id, а он известен только после вставки.
@@ -82,21 +83,6 @@ async function initPanel() {
   // 3. Список SSO мог смениться, пока панель стояла.
   const revoked = await revokeDisallowedSsoSessions()
   if (revoked > 0) log.info({ count: revoked }, 'sso sessions revoked: sub no longer allowed')
-}
-
-/** Пароля нет ни в конфиге, ни в env: случайный, в файл только для root. */
-async function generatedAdminPassword(): Promise<string> {
-  const password = randomBytes(13).toString('base64url').slice(0, 18)
-  const path = '/var/lib/anysda-vpn2/admin-password.txt'
-  try {
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, password, { mode: 0o600 })
-  }
-  catch {
-    throw new Error(`Cannot save generated admin password to ${path}`)
-  }
-  useLogger().warn({ pwdPath: path }, 'generated admin password — saved to file')
-  return password
 }
 
 /**

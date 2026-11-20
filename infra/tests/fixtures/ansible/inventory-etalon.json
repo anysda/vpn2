@@ -4,7 +4,7 @@
       "nl": {
         "ansible_host": "198.18.10.20",
         "ansible_ssh_common_args": "-o UserKnownHostsFile=@STATE@/known_hosts -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey -o ConnectTimeout=10",
-        "ansible_ssh_private_key_file": "/root/.ssh/id_ed25519",
+        "ansible_ssh_private_key_file": "/run/vpn2-secrets/root/orchestrator_key",
         "ansible_user": "root",
         "vpn2_env": {
           "ADMIN_SSH_PUBKEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStand vpn2-ci-stand",
@@ -50,17 +50,15 @@
       "ru": {
         "ansible_host": "198.18.10.10",
         "ansible_ssh_common_args": "-o UserKnownHostsFile=@STATE@/known_hosts -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey -o ConnectTimeout=10",
-        "ansible_ssh_private_key_file": "/root/.ssh/id_ed25519",
+        "ansible_ssh_private_key_file": "/run/vpn2-secrets/root/orchestrator_key",
         "ansible_user": "root",
         "vpn2_env": {
-          "ADMIN_PASSWORD": "",
           "ADMIN_SSH_PUBKEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStand vpn2-ci-stand",
           "ADMIN_USER": "anysda",
           "AGH_PORT": "3000",
           "BACKUP_BACKEND": "local",
           "BACKUP_ENABLED": "true",
           "BACKUP_LOCAL_DIR": "/var/backups/anysda-vpn2",
-          "BACKUP_PASSPHRASE": "stand-etalon",
           "BACKUP_RETENTION": "10",
           "BACKUP_SCHEDULE": "off",
           "DOMAIN_NL": "198.18.10.20",

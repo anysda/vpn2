@@ -13,7 +13,7 @@ from urllib import error, parse, request
 
 BOT_URL = 'http://127.0.0.1:8877/event'
 PANEL_URL = 'http://127.0.0.1:51821/api/bot/events'
-SECRET_FILE = '/etc/anysda/tgbot-secret.txt'
+SECRET_FILE = '/run/vpn2-secrets/root/tgbot_secret'
 
 # Telegram refuses these for good (deleted chat, blocked bot, malformed
 # request): repeating them only spams the API, so the row ends with the reason.

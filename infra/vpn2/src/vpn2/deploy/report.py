@@ -8,6 +8,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from vpn2 import creds
 from vpn2.deploy import B, E, G, elapsed, read, warn
 
 ETC = Path('/etc/anysda')
@@ -35,8 +36,8 @@ def summary(deploy, t0):
         url = f'https://{env.get("ENTRY_HOST") or env["SSH_HOST"]}/'
     if env.get('PANEL_DOMAIN'):
         url = f'https://{env["PANEL_DOMAIN"]}/'
-    password = 'задан в config.yaml (admin.password)' if env.get('ADMIN_PASSWORD') else \
-        f'ssh {env.get("SSH_USER") or "root"}@{env["SSH_HOST"]} cat /etc/anysda/admin-password.txt'
+    password = ('показан ниже, один раз' if deploy.admin_generated else 'задан в config.yaml (secrets.admin_password)'
+                if os.environ.get('ADMIN_PASSWORD') else 'прежний; новый - в профиле панели или secrets.admin_password')
     warned = deploy.verify_warnings or deploy.deploy_warnings or deploy.skipped
     title = f'  {"⚠ деплой завершён с предупреждениями" if warned else "деплой завершён"}  ·  {timing}  '
     rows = [title, '-', *(f'  {row}' for row in columns(deploy.stage_log)), '-',
@@ -70,21 +71,18 @@ def ikev2_notice():
 
 def sso_notice(deploy):
     env = deploy.env()
-    if (env.get('SSO_REQUESTED') or env.get('SSO_ENABLED') or 'false') == 'true' and not env.get('SSO_CLIENT_SECRET', '').strip() \
+    if (env.get('SSO_REQUESTED') or env.get('SSO_ENABLED') or 'false') == 'true' and not creds.read('sso_client_secret') \
             and not (ETC / 'sso-runtime.json').exists():
         print('SSO не включён, потому что не задан секрет. Входите по паролю администратора. Чтобы включить SSO, '
-              'заполните sso.client_secret в config.yaml и запустите ./deploy.sh 30-frontend ru.', flush=True)
+              'заполните secrets.sso_client_secret в config.yaml и запустите ./deploy.sh 30-frontend ru.', flush=True)
 
 
 def announce(deploy):
-    """Бот включён, если токен и чат заданы в config.yaml или в панели (telegram-runtime.json)."""
-    env = deploy.env()
-    if not (env.get('TELEGRAM_BOT_TOKEN') and env.get('TELEGRAM_CHAT_ID')):
-        runtime = read(ETC / 'telegram-runtime.json')
-        if not (re.search(r'"bot_token": *"[^"]', runtime) and re.search(r'"chat_id": *("[^"]|-?[1-9])', runtime)):
-            return
-    secret = read(ETC / 'tgbot-secret.txt')
-    if not (ETC / 'tgbot-secret.txt').is_file():
+    """Бот включён, если есть токен в хранилище и чат в config.yaml или в панели (telegram-runtime.json)."""
+    if not deploy.env().get('TELEGRAM_CHAT_ID') and not re.search(r'"chat_id": *("[^"]|-?[1-9])', read(ETC / 'telegram-runtime.json')):
+        return
+    secret = creds.read('tgbot_secret')
+    if not (secret and creds.read('telegram_bot_token')):
         return
     body = json.dumps({'type': 'deploy_done', 'verify_unmeasured': bool(deploy.verify_warnings)}).encode()
     request = urllib.request.Request('http://127.0.0.1:8877/event', body, {'Content-Type': 'application/json', 'X-Tgbot-Secret': secret})
@@ -134,7 +132,7 @@ def restore(deploy, args, capture=False):
     done = subprocess.run([RESTORE, archive, *flags], **output)
     if done.returncode or '--dry-run' in flags or '--preflight' in flags:
         return done.returncode, done.stdout or ''
-    # После restore стадии читают пароль панели из восстановленного файла, а не из config.yaml.
+    # Пароль панели - в восстановленной базе: стадии после restore его не задают.
     os.environ['VPN2_PRESERVE_ADMIN'] = '1'
     deploy.load_nodes()
     for stage in RESTAGES:

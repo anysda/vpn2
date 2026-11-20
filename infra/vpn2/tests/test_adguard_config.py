@@ -5,6 +5,7 @@
 """
 import contextlib
 import copy
+import functools
 import hashlib
 import io
 import json
@@ -16,7 +17,7 @@ from unittest import mock
 import yaml
 
 from envs import node_envs, sourced
-from vpn2 import containers, resources
+from vpn2 import containers, creds, resources
 from vpn2.adguard import dns, stage
 from vpn2.containers import compose
 
@@ -152,28 +153,27 @@ class AdguardPanelSettingsTests(unittest.TestCase):
 
 
 class AdguardPasswordTests(unittest.TestCase):
-    def test_stage_and_panel_use_same_complete_password(self):
-        for password in ('short-ASCII', 'a' * 72, 'a' * 73, 'a' * 256, 'a' * 300,
-                         'я' * 36, 'я' * 37, '🔑' * 300, 'a' * 299 + 'b'):
-            with self.subTest(length=len(password.encode())), tempfile.TemporaryDirectory() as directory:
-                work = Path(directory)
-                (work / 'anysda').mkdir()
-                with mock.patch.object(stage, 'ETC', str(work / 'anysda')), mock.patch.object(stage, 'UNITS', {}), \
-                        mock.patch.object(stage, 'build_configs', lambda *_a, **_k: ()):
-                    stage.configure({'ADMIN_PASSWORD': password, 'AGH_PORT': '3000'})
-                backend = (work / 'anysda/adguard-password.txt').read_text()
-                digest = stage.password_hash(None, 'anysda', backend)
-                panel = stage.agh_password(password)
-                self.assertEqual(stage.password_hash({'users': [{'name': 'anysda', 'password': digest}]}, 'anysda', panel), digest)
-                expected = password.encode()
-                if len(expected) > 72:
-                    expected = hashlib.sha256(b'vpn2-adguard-v1\0' + expected).hexdigest().encode()
-                self.assertEqual(backend.encode(), expected)
-                self.assertEqual(panel.encode(), expected)
-                self.assertEqual((work / 'anysda/admin-password.txt').read_text(), password)
-                saved = work / 'anysda/adguard-password.txt'
-                self.assertEqual(saved.read_bytes(), expected)
-                self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+    def test_own_password_lives_in_the_store_and_matches_the_hash(self):
+        """Не пароль панели: свой случайный в хранилище, тот же в виде панели и под хэшем AdGuard."""
+        with tempfile.TemporaryDirectory() as directory:
+            hub = Hub(directory)
+            agh = hub.agh
+            build = functools.partial(stage.build_configs, agh_dir=hub.agh, plain_dir=hub.plain, etc=hub.etc)
+            with mock.patch.object(stage, 'ETC', str(hub.etc)), mock.patch.object(stage, 'build_configs', build), \
+                    mock.patch.object(stage, 'UNITS', dict(zip(stage.UNITS, (str(hub.agh), str(hub.plain))))), \
+                    mock.patch.object(stage, 'POOLS', ROOT / 'app/shared/vpn-pools.json'), \
+                    mock.patch.object(resources, 'hardware', lambda: (8000, 8192)), \
+                    mock.patch.object(stage.svc, 'active', lambda _unit: False), \
+                    mock.patch.object(stage.svc, 'forget', lambda _unit: None), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertTrue(stage.configure({'AGH_PORT': '3000', 'MGMT_IP': '192.0.2.53', 'ADMIN_PASSWORD': 'panel'}))
+                password = creds.read('adguard_password')
+                digest = dns.user_password(yaml.safe_load((agh / 'AdGuardHome.yaml').read_text()), 'anysda')
+                self.assertFalse(stage.configure({'AGH_PORT': '3000', 'MGMT_IP': '192.0.2.53'}))
+            self.assertEqual(len(password), 24)
+            self.assertEqual(stage.password_hash({'users': [{'name': 'anysda', 'password': digest}]}, 'anysda', password), digest)
+            self.assertEqual(creds.read('adguard_password'), password)
+            self.assertNotEqual(stage.password_hash({'users': [{'name': 'anysda', 'password': digest}]}, 'anysda', 'panel'), digest)
 
 
 class AdguardWebBindTests(unittest.TestCase):
@@ -298,8 +298,7 @@ class TelegramLiteralTests(unittest.TestCase):
                 with mock.patch.object(containers, 'ETC', work):
                     containers.sync_runtime({'TELEGRAM_BOT_TOKEN': value, 'TELEGRAM_CHAT_ID': value,
                                              'TELEGRAM_ADMIN_USERNAME': value}, [])
-                self.assertEqual(json.loads(path.read_text()),
-                                 dict(bot_token=value, chat_id=value, admin_username=value))
+                self.assertEqual(json.loads(path.read_text()), dict(chat_id=value, admin_username=value))
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 

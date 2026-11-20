@@ -6,8 +6,10 @@
 полного восстановления entry-ноды:
 
 - `db.sqlite` панели (онлайн-копия через backup API SQLite, без простоя панели);
-- `/etc/anysda/*`: admin-password, tgbot-secret, clash-secret,
-  telegram-runtime, manual-routes, session-secret;
+- секреты хранилища entry (токен бота, ключи S3, пароль бэкапов, секреты
+  панели и SSO) - открытым JSON внутри зашифрованного архива; restore
+  шифрует их ключом нового сервера. Ключи ssh самой entry в архив не идут;
+- `/etc/anysda/*`: clash-secret, telegram-runtime, manual-routes;
 - серверный приватный ключ WireGuard (`/etc/wireguard/wg0.conf`) - без него
   клиентские `.conf` ломаются;
 - OpenVPN CA + PKI (`/etc/openvpn/server/`: `pki/`, `server.conf`, `ccd/`, `crl.pem`) -
@@ -78,7 +80,6 @@ ssh root@<entry> 'timedatectl set-timezone Europe/Moscow'
 backup:
   enabled: true
   backend: local              # local | s3
-  passphrase: ABC123XYZ...    # age symmetric passphrase
   retention: 10
   schedule: daily             # off | daily
   local:
@@ -88,11 +89,15 @@ backup:
   #   bucket: anysda-vpn2-backups
   #   region: ru-central-1    # обязателен: cloud.ru → ru-central-1,
   #                           # yandex → ru-central1, selectel → ru-1
-  #   access_key: ""
-  #   secret_key: ""
+secrets:
+  backup_passphrase: ABC123XYZ...   # age symmetric passphrase
+  # s3_access_key: ""
+  # s3_secret_key: ""
 ```
 
-Passphrase генерирует `setup.sh` и пишет в `config.yaml`. Стадия
+Passphrase и ключи S3 деплой переносит в хранилище секретов entry и стирает
+из `config.yaml`; посмотреть на entry (только root) -
+`cat /run/vpn2-secrets/root/backup_passphrase`. Стадия
 `26-backup` ставит `age`, `sqlite3` (и `rclone` при `backend: s3`),
 кладёт скрипты `/usr/local/bin/anysda-{backup,restore,backup-list}.sh`,
 рендерит `/etc/anysda/backup.env` и включает таймер. Сами скрипты - короткий
@@ -101,14 +106,14 @@ Passphrase генерирует `setup.sh` и пишет в `config.yaml`. Ст�
 стадия пишет в `/etc/anysda/source-root`). Архивы прежних версий читаются
 как раньше.
 
-## config.yaml - мастер-секрет
+## Что хранить вне entry
 
-В нём root-пароли всех нод, `admin.password` панели, токен бота,
-`orchestrator_key` для повторного бутстрапа exit-нод (вход по паролю на
-экзитах отключён, без ключа новая entry на них не зайдёт) и
-`backup.passphrase`. Потеря passphrase - потеря всех архивов. Храните копию
-вне entry-ноды, `chmod 600`, не коммитьте. При компрометации оркестратора
-ротируйте `config.yaml` и перешифруйте существующие архивы новым passphrase.
+После деплоя в `config.yaml` секретов нет: они в зашифрованном хранилище
+entry, копия которого на другой машине не открывается. Вне entry храните
+`config.yaml`, passphrase бэкапов и ключи S3: без passphrase архив не
+открыть, потеря passphrase - потеря всех архивов. При компрометации entry
+смените passphrase (`secrets.backup_passphrase` и `./deploy.sh`) и снимите
+новый архив.
 
 ## Восстановление entry-ноды с нуля
 
@@ -131,12 +136,16 @@ chmod 600 config.yaml
 
 # 4. в config.yaml: entry.password - root-пароль новой машины, entry.host -
 #    новый IP, если сменился; иначе deploy остановится на входе по SSH.
+#    В secrets: backup_passphrase и при s3 - s3_access_key, s3_secret_key.
 #    Временно panel.domain: "" и sso.enabled: false (SSO требует HTTPS):
 #    первый деплой откроет панель по IP и не выпустит сертификат на домен
 #    до restore
+# 5. у новой entry свой ключ: строку ./deploy.sh -key - в
+#    /root/.ssh/authorized_keys каждого экзита (вход - ключом admin.ssh_pubkey)
+./deploy.sh -key
 ./deploy.sh
 
-# 5. вернуть panel.domain и sso.enabled, восстановить (база после deploy
+# 6. вернуть panel.domain и sso.enabled, восстановить (база после deploy
 #    не пустая, поэтому --force)
 #    backend: s3
 ./deploy.sh backup-list
@@ -156,8 +165,9 @@ chmod 600 config.yaml
 deploy: между ними аварийного доступа нет, а база нового entry пустая.
 
 Restore сам пересобирает стадии 29/20/21/26/27/35/30 под восстановленные
-секреты; пароль из архива имеет приоритет над `admin.password` текущего
-`config.yaml`. Restore останавливает Caddy и cert-sync, возвращает хранилище
+секреты; пароль панели из архива имеет приоритет над
+`secrets.admin_password` текущего `config.yaml`. Restore останавливает
+Caddy и cert-sync, возвращает хранилище
 с владельцем `caddy:caddy`, затем запускает службы. Сохранённый сертификат
 должен подходить домену и оставаться действующим, иначе Caddy обратится к
 ACME.

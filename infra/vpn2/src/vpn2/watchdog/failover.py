@@ -70,7 +70,7 @@ STUCK_MAX_HEALS = 2
 LANE_STATE_FILE = '/var/lib/anysda-failover-watchdog/lanes.json'
 RESTART_STATE_FILE = '/var/lib/anysda-failover-watchdog/restart.json'
 DISABLED_FILE = '/etc/anysda/exits-disabled.json'
-BOT_SECRET_FILE = '/etc/anysda/tgbot-secret.txt'
+BOT_SECRET_FILE = '/run/vpn2-secrets/root/tgbot_secret'
 PSI_DIR, PROC_DIR = '/proc/pressure', '/proc'
 
 clock = time.monotonic

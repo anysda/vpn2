@@ -65,7 +65,7 @@ def ok_bot(n=1):
 def test_константы():
     assert notify.BOT_URL == 'http://127.0.0.1:8877/event'
     assert notify.PANEL_URL == 'http://127.0.0.1:51821/api/bot/events'
-    assert notify.SECRET_FILE == '/etc/anysda/tgbot-secret.txt'
+    assert notify.SECRET_FILE == '/run/vpn2-secrets/root/tgbot_secret'
 
 
 def test_bot_event_отправляет_секрет_и_тело(secret_file):

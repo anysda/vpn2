@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { H3Event } from 'h3'
 import { pino, type Logger } from 'pino'
@@ -27,6 +27,31 @@ export function readJsonFile<T>(path: string): T | null {
 export function writeJsonFile(path: string, data: unknown) {
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
+}
+
+// Секреты entry: вид хранилища только для чтения; новый секрет панель кладёт в inbox, в хранилище его переносит root.
+const SECRETS = '/run/secrets'
+const INBOX = '/run/secrets-inbox'
+
+export function readSecret(name: string): string {
+  try {
+    return readFileSync(`${SECRETS}/${name}`, 'utf-8').trim()
+  }
+  catch {
+    return ''
+  }
+}
+
+/** Секрет в хранилище entry; ждёт, пока он появится в виде (до 10 с), иначе 503. */
+export async function saveSecret(name: string, value: string) {
+  if (readSecret(name) === value) return
+  writeFileSync(`${INBOX}/.${name}`, value, { mode: 0o600 })
+  renameSync(`${INBOX}/.${name}`, `${INBOX}/${name}`)
+  for (let wait = 0; wait < 100; wait++) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    if (readSecret(name) === value) return
+  }
+  throw createError({ statusCode: 503, statusMessage: 'secret_not_saved', message: 'Секрет не сохранился на сервере, повторите' })
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])

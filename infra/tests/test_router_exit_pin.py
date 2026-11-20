@@ -26,7 +26,7 @@ class ExitPinTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base = (ROOT / 'config.example.yaml').read_text().replace(
-                '  passphrase: ""', '  passphrase: test pass')
+                '  backup_passphrase:\n', '  backup_passphrase: test pass\n')
             (root / 'config.yaml').write_text(base.replace(
                 '    host: root@5.6.7.8   # root@адрес или просто адрес\n', '    host: 5.6.7.8\n    hy2_insecure: true\n'))
             result = write_envs(tmp, env={'VPN2_STATE_DIR': f'{tmp}/state'})

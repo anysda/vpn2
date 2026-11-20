@@ -16,7 +16,7 @@ from pathlib import Path
 from vpn2 import fsutil, ports, release, stages
 from vpn2.config import STATE_DIR
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, installed, log, ok, orchestrator_key, prep_keys,
-                         key_id, own_keys, read, report, ssh_options, step, warn)
+                         key_id, own_keys, pub, read, report, ssh_options, step, warn)
 from vpn2.deploy.plays import Plays
 
 PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
@@ -700,7 +700,7 @@ def refused(reason):
 
 
 def key_text():
-    return read(f'{orchestrator_key()}.pub') or '(ключа ещё нет)'
+    return read(pub()) or '(ключа ещё нет)'
 
 
 def install(src, dst, mode):

@@ -64,6 +64,13 @@
   register: base_step
   changed_when: "'vpn2: changed' in base_step.stdout"
 
+# Зависшее зеркало обрывается через 30 с без данных, apt повторяет сам.
+- name: Таймауты сети apt
+  ansible.builtin.copy:
+    src: 91anysda-net
+    dest: /etc/apt/apt.conf.d/91anysda-net
+    mode: '0644'
+
 # Чужой apt (unattended-upgrades первого часа жизни VPS) держит замок dpkg:
 # его ждём до 20 минут, сбой зеркала повторяем.
 - name: Списки пакетов apt
@@ -71,6 +78,7 @@
     update_cache: true
     cache_valid_time: 3600
     lock_timeout: 1200
+  timeout: 1500
   register: base_lists
   until: base_lists is succeeded
   retries: 3
@@ -177,6 +185,26 @@
     argv: [/usr/local/sbin/anysda-fq, "{{ base_wan_qdisc }}"]
   register: base_step
   changed_when: "'->' in base_step.stdout"
+
+# Секреты entry (vpn2.creds): виды хранилища на tmpfs собираются при загрузке раньше docker и служб,
+# секрет из панели переносит в хранилище юнит inbox.
+- name: Юниты хранилища секретов
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop: [vpn2-secrets.service, vpn2-secrets-inbox.path, vpn2-secrets-inbox.service]
+  register: base_creds_units
+  when: base_entry
+
+- name: Хранилище секретов включено
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: "{{ 'started' if item.endswith('.path') else omit }}"
+    daemon_reload: "{{ base_creds_units is changed }}"
+  loop: [vpn2-secrets.service, vpn2-secrets-inbox.path]
+  when: base_entry
 
 - name: Ключи оркестратора и админа
   ansible.builtin.lineinfile:

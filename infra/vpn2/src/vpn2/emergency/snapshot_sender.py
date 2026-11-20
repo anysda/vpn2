@@ -12,6 +12,7 @@
 """
 
 import argparse
+import hashlib
 from contextlib import closing
 import json
 from pathlib import Path
@@ -20,7 +21,7 @@ import subprocess
 import sys
 import time
 
-from .. import fsutil
+from .. import creds, fsutil
 from . import snapshot
 
 RECONCILE_SECONDS = 60
@@ -159,6 +160,9 @@ def run_once(config, deliver, collector, now=None):
                'admin_chat_id': data['admin_chat_id'], 'bot_token': data['bot_token'],
                'clients': data['clients']}
     image = state['image']
+    # Токен в файле отправителя - отпечатком: открыто он живёт только в хранилище секретов entry.
+    if image and image.get('bot_token') == _sealed(content['bot_token']):
+        image = {**image, 'bot_token': content['bot_token']}
     if image is None or {k: v for k, v in image.items() if k not in ('version', 'created_at')} != content:
         image = snapshot.validate(content | {'version': (image['version'] if image else 0) + 1,
                                              'created_at': snapshot.iso_time(now)})
@@ -173,8 +177,12 @@ def run_once(config, deliver, collector, now=None):
         else:
             results[exit_id] = 'unavailable'
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fsutil.atomic(path, snapshot.encode(state))
+    fsutil.atomic(path, snapshot.encode({**state, 'image': {**image, 'bot_token': _sealed(image['bot_token'])}}))
     return results
+
+
+def _sealed(token):
+    return 'sha256:' + hashlib.sha256(token.encode()).hexdigest() if token else None
 
 
 def main(argv=None):
@@ -204,8 +212,8 @@ def main(argv=None):
             config = {'state_dir': args.state_dir,
                       'agent': json.loads(Path(args.agent_config).read_text())}
             results = run_once(config, lambda exit_id, raw: push(ssh, exit_id, raw),
-                               lambda now: collect_as(args.panel_user or None, args.database,
-                                                      args.telegram_file, now))
+                               lambda now: collect_as(args.panel_user or None, args.database, args.telegram_file, now)
+                               | {'bot_token': creds.read('telegram_bot_token') or None})
             # Только счётчики исходов: ни токенов, ни имён, ни текста ошибок.
             values = list(results.values())
             line = json.dumps({status: values.count(status) for status in sorted(set(values))})

@@ -54,7 +54,7 @@ UNITS = 'sing-box openvpn-server@server strongswan-starter'
 
 
 @pytest.fixture
-def node(tmp_path, monkeypatch, capsys):
+def node(tmp_path, monkeypatch, capsys, creds_store):
     """Узел с архивом: после съёма бэкапа живые файлы изменены, restore должен вернуть архивные."""
     root = tmp_path / 'n'
     root.mkdir()
@@ -80,7 +80,7 @@ def node(tmp_path, monkeypatch, capsys):
     put(bin_dir / 'wg', WG, 0o755)
     put(bin_dir / 'vpn2', STAGE, 0o755)
     monkeypatch.setenv('VPN2_BIN', str(bin_dir / 'vpn2'))
-    for key, value in (('PATH', f'{bin_dir}:/usr/bin:/bin'), ('STUB_LOG', str(root / 'log')), ('T', str(tmp_path)),
+    for key, value in (('PATH', f"{bin_dir}:{creds_store / 'bin'}:/usr/bin:/bin"), ('STUB_LOG', str(root / 'log')), ('T', str(tmp_path)),
                        ('FAIL_ON', ''), ('IDS', 'caddy vpn2-panel'), ('UNITS', UNITS), ('ACTIVE', '')):
         monkeypatch.setenv(key, value)
     monkeypatch.delenv('VPN2_DEVELOPMENT', raising=False)

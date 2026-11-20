@@ -23,7 +23,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "secret12",
    "ADMIN_SSH_PUBKEY": "ssh-ed25519 AAAA key",
    "ADMIN_USER": "boss",
    "AGH_PORT": "3000",
@@ -77,7 +76,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -137,14 +135,12 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
    "BACKUP_BACKEND": "local",
    "BACKUP_ENABLED": "true",
    "BACKUP_LOCAL_DIR": "/var/backups/anysda-vpn2",
-   "BACKUP_PASSPHRASE": "pp",
    "BACKUP_RETENTION": "10",
    "BACKUP_SCHEDULE": "daily",
    "DE_HY2_DIRECT_PORT": "443",
@@ -197,20 +193,16 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
    "BACKUP_BACKEND": "s3",
    "BACKUP_ENABLED": "true",
    "BACKUP_LOCAL_DIR": "/var/backups/anysda-vpn2",
-   "BACKUP_PASSPHRASE": "pp",
    "BACKUP_RETENTION": "3",
-   "BACKUP_S3_ACCESS_KEY": "a",
    "BACKUP_S3_BUCKET": "b",
    "BACKUP_S3_ENDPOINT": "https://s3",
    "BACKUP_S3_REGION": "r",
-   "BACKUP_S3_SECRET_KEY": "k",
    "BACKUP_SCHEDULE": "weekly",
    "DE_HY2_DIRECT_PORT": "443",
    "DE_HY2_DOWN_MBPS": "",
@@ -262,14 +254,12 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
    "BACKUP_BACKEND": "local",
    "BACKUP_ENABLED": "true",
    "BACKUP_LOCAL_DIR": "/srv/b",
-   "BACKUP_PASSPHRASE": "pp",
    "BACKUP_RETENTION": "10",
    "BACKUP_SCHEDULE": "daily",
    "DE_HY2_DIRECT_PORT": "443",
@@ -298,7 +288,7 @@
    "YT_ZAPRET_OFFLOAD": "keep"
   }
  },
- "backup-3": "ConfigError: config.yaml: backup.passphrase: пустой при включённом бэкапе - задай его или выключи backup.enabled",
+ "backup-3": "ConfigError: config.yaml: secrets.backup_passphrase: пустой при включённом бэкапе - задай его или выключи backup.enabled",
  "base": {
   "de": {
    "ADMIN_SSH_PUBKEY": "",
@@ -323,7 +313,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -379,7 +368,6 @@
    "WG_PUBLIC_HOST": "panel.example.com"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -439,7 +427,6 @@
    "WG_PUBLIC_HOST": "vpn.example.com"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -495,7 +482,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -550,7 +536,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -605,7 +590,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -694,7 +678,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -760,7 +743,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -817,7 +799,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -875,7 +856,6 @@
    "WG_PUBLIC_HOST": "panel.example.com"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -966,7 +946,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1026,7 +1005,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1088,7 +1066,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1148,7 +1125,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1173,7 +1149,6 @@
    "SSO_ALLOWED_SUBS": "",
    "SSO_AUTO_REDIRECT": "true",
    "SSO_CLIENT_ID": "vpn2",
-   "SSO_CLIENT_SECRET": "s3cret",
    "SSO_DISCOVERY_URL": "https://auth.example.com/application/o/vpn2/.well-known/openid-configuration",
    "SSO_ENABLED": "true",
    "SSO_LABEL": "Authentik",
@@ -1209,7 +1184,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1234,7 +1208,6 @@
    "SSO_ALLOWED_SUBS": "a,b",
    "SSO_AUTO_REDIRECT": "false",
    "SSO_CLIENT_ID": "me",
-   "SSO_CLIENT_SECRET": "s",
    "SSO_DISCOVERY_URL": "https://d/x",
    "SSO_ENABLED": "true",
    "SSO_LABEL": "Keycloak",
@@ -1270,7 +1243,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1295,7 +1267,6 @@
    "SSO_ALLOWED_SUBS": "",
    "SSO_AUTO_REDIRECT": "false",
    "SSO_CLIENT_ID": "vpn2",
-   "SSO_CLIENT_SECRET": "",
    "SSO_DISCOVERY_URL": "",
    "SSO_ENABLED": "false",
    "SSO_LABEL": "Authentik",
@@ -1331,7 +1302,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1385,7 +1355,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1410,7 +1379,6 @@
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
    "TELEGRAM_ADMIN_USERNAME": "boss",
-   "TELEGRAM_BOT_TOKEN": "123:abc",
    "TELEGRAM_CHAT_ID": "42",
    "YT_MARK": "256",
    "YT_QUIC": "block",
@@ -1442,7 +1410,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1496,7 +1463,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1550,7 +1516,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",
@@ -1607,7 +1572,6 @@
    "SSH_USER": "root"
   },
   "ru": {
-   "ADMIN_PASSWORD": "",
    "ADMIN_SSH_PUBKEY": "",
    "ADMIN_USER": "anysda",
    "AGH_PORT": "3000",

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
 
 // Explicit deploy step before starting the application under test.
 assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
@@ -9,9 +8,8 @@ assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
   stdio: 'pipe',
 }).status, 0, 'deploy migration must succeed')
 
-// Запускать в одноразовом образе панели с read-only /etc/anysda и пустой БД.
+// Запускать в одноразовом образе панели с пустой БД: пароль первого входа отдаёт только деплой.
 // Не печатаем журнал дочернего процесса: на старой версии в нём пароль.
-mkdirSync('/var/lib/anysda-vpn2/admin-password.txt')
 const child = spawn(process.execPath, ['.output/server/index.mjs'], {
   env: {
     ...process.env,
@@ -33,5 +31,5 @@ const code = await new Promise((resolve, reject) => {
 }).finally(() => clearTimeout(timer))
 assert.equal(output.includes('migrations applied'), true, 'должны пройти миграции пустой БД')
 assert.equal(/GENERATED ADMIN PASSWORD|"password"\s*:/.test(output), false, 'пароль администратора утёк в журнал')
-assert.equal(code, 1, 'при невозможности сохранить пароль панель должна завершиться с кодом 1')
-console.log('admin password: read-only storage fails closed without leaking credentials')
+assert.equal(code, 1, 'без пароля от деплоя панель должна завершиться с кодом 1, а не придумать свой')
+console.log('admin password: no handed-over password fails closed without leaking credentials')

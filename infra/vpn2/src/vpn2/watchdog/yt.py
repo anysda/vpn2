@@ -23,7 +23,7 @@ from vpn2 import probe as clash
 
 STATE = Path('/var/lib/anysda-yt-failover/state.json')
 CONFIG = Path('/etc/sing-box/config.json')
-BOT_SECRET = Path('/etc/anysda/tgbot-secret.txt')
+BOT_SECRET = Path('/run/vpn2-secrets/root/tgbot_secret')
 VIDEO = os.environ.get('YT_PROBE_VIDEO', 'https://www.youtube.com/watch?v=aqz-KE-bpKQ')
 POT_VIDEO = os.environ.get('YT_PROBE_POT_VIDEO', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
 SAMPLE_BYTES = 4 * 1024 * 1024

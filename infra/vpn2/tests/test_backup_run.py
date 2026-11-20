@@ -161,7 +161,7 @@ def test_empty_passphrase_is_one_event(node, capsys):
     assert err.startswith('anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.')
     assert paths.env_file in err
     assert [event for event, _kw in events] == [{'type': 'backup_failed', 'detail': 'нет пароля шифрования'}]
-    assert events[0][1]['secret_file'] == f'{root}/etc/anysda/tgbot-secret.txt'
+    assert events[0][1]['secret_file'] == f'{root}/run/vpn2-secrets/root/tgbot_secret'
 
 
 @needs_tools

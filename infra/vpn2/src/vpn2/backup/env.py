@@ -1,11 +1,14 @@
-"""Настройки бэкапа из /etc/anysda/backup.env и вызов rclone с ними."""
+"""Настройки бэкапа из /etc/anysda/backup.env и хранилища секретов, вызов rclone с ними."""
 import os
 import subprocess
 from dataclasses import dataclass, field
 
+from vpn2 import creds
 from vpn2.backup import archive
 
 DEFAULT_ENV_FILE = '/etc/anysda/backup.env'
+STORED = {'ANYSDA_BACKUP_PASSPHRASE': 'backup_passphrase', 'ANYSDA_S3_ACCESS_KEY': 's3_access_key',
+          'ANYSDA_S3_SECRET_KEY': 's3_secret_key'}
 S3_NAMES = {'s3_bucket': 'BACKUP_S3_BUCKET', 's3_access_key': 'ANYSDA_S3_ACCESS_KEY',
             's3_secret_key': 'ANYSDA_S3_SECRET_KEY', 's3_endpoint': 'BACKUP_S3_ENDPOINT'}
 
@@ -49,10 +52,12 @@ class Settings:
 
 
 def settings(env, env_file=DEFAULT_ENV_FILE, *, lazy_s3=False):
-    """Settings из словаря read_env; пустое значение - как отсутствующее.
+    """Settings из словаря read_env; пустое значение - как отсутствующее. Пароль архива и ключи S3 - из
+    хранилища секретов; backup.env прежнего выпуска с ними (restore архива 1.2.0) тоже читается.
 
     lazy_s3 - не требовать переменные S3 сразу: restore спрашивает их только при обращении к облаку.
     """
+    env = {**env, **{name: value for name, secret in STORED.items() if not env.get(name) and (value := creds.read(secret))}}
     if not env.get('BACKUP_BACKEND'):
         raise BackupEnvError(f'BACKUP_BACKEND: BACKUP_BACKEND не задан в {env_file}', 1)
     values = Settings(backend=env['BACKUP_BACKEND'],

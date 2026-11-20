@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
 // Explicit deploy step before starting the application under test.
@@ -21,13 +21,22 @@ const profile = {
   autoRedirect: true, passwordLogin: false, redirectUrl: 'https://vpn.example.test/auth/authentik',
 }
 mkdirSync('/var/lib/anysda-vpn2/runtime', { recursive: true })
+// Вид хранилища entry и inbox панели; переносит секрет из inbox юнит vpn2-secrets-inbox, здесь - этот таймер.
+const secret = '/run/secrets/sso_client_secret'
+mkdirSync('/run/secrets-inbox', { recursive: true })
+const inbox = setInterval(() => {
+  for (const name of readdirSync('/run/secrets-inbox').filter(name => !name.startsWith('.'))) {
+    if (readFileSync(`/run/secrets-inbox/${name}`, 'utf8').trim()) renameSync(`/run/secrets-inbox/${name}`, `/run/secrets/${name}`)
+    else rmSync(`/run/secrets-inbox/${name}`)
+  }
+}, 100)
 
 for (const scenario of ['seed', 'restore-empty', 'restore-whitespace', 'restore-valid', 'reset-runtime']) {
+  // Архив 1.2.0 нёс секрет в sso-runtime.json: restore переносит его в хранилище, в файле остаётся профиль.
+  rmSync(secret, { force: true })
   if (scenario.startsWith('restore-')) {
-    writeFileSync(runtime, JSON.stringify({
-      ...profile,
-      clientSecret: scenario === 'restore-valid' ? 'test-only-secret' : scenario === 'restore-whitespace' ? '  ' : '',
-    }), { mode: 0o600 })
+    writeFileSync(runtime, JSON.stringify(profile), { mode: 0o600 })
+    if (scenario !== 'restore-empty') writeFileSync(secret, scenario === 'restore-valid' ? 'test-only-secret' : '  ')
   }
   else {
     rmSync(runtime, { force: true })
@@ -99,3 +108,4 @@ for (const scenario of ['seed', 'restore-empty', 'restore-whitespace', 'restore-
     await exited.finally(() => clearTimeout(timer))
   }
 }
+clearInterval(inbox)

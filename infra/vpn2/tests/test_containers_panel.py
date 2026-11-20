@@ -43,7 +43,7 @@ class SsoMissingSecretTests(unittest.TestCase):
                     self.assertEqual(env['NUXT_PUBLIC_SSO_ENABLED'], 'false')
                     self.assertEqual(env['NUXT_PUBLIC_SSO_AUTO_REDIRECT'], 'false')
                     self.assertEqual(env['NUXT_SSO_PASSWORD_LOGIN'], 'true')
-                    self.assertEqual(env['NUXT_OAUTH_OIDC_CLIENT_SECRET'], secret or '')
+                    self.assertNotIn('NUXT_OAUTH_OIDC_CLIENT_SECRET', env)
 
     def test_runtime_is_preserved_and_complete_seed_still_enables_sso(self):
         for runtime in (False, True):
@@ -54,6 +54,7 @@ class SsoMissingSecretTests(unittest.TestCase):
                 expected = ['false', 'true'] if runtime else ['true', 'false']
                 self.assertEqual([facts['sso_enabled'], facts['sso_password_login']], expected)
                 self.assertNotIn(SECRET, said)
+                self.assertNotIn(SECRET, repr(env), 'секрет SSO - только в виде хранилища')
                 if runtime:
                     self.assertEqual(env['NUXT_PUBLIC_SSO_ENABLED'], 'false')
                     self.assertEqual(env['NUXT_PUBLIC_SSO_AUTO_REDIRECT'], 'false')

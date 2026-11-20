@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from vpn2.config import HY2_PORT_CANDIDATES, STATE_DIR, TRUE_WORDS, Config, ConfigError
+from vpn2.config import HY2_PORT_CANDIDATES, STATE_DIR, TRUE_WORDS, Config, ConfigError, secrets
 from vpn2.watchdog.hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields
 
 RESERVED_TAGS = ('ru', 'all', 'exits', 'foreign')
@@ -16,9 +16,9 @@ TAG = re.compile(r'[a-z](?:[a-z0-9-]*[a-z0-9])?')
 OVPN_PROTOS = ('udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6', 'tcp-server', 'tcp4-server', 'tcp6-server')
 FALSE_WORDS = ('false', 'no', 'n', '0')
 LABEL = r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
-# Значения этих имён в выводе ansible-inventory закрыты (см. infra/ansible/inventory.py).
-SECRET_NAMES = frozenset({'ADMIN_PASSWORD', 'TELEGRAM_BOT_TOKEN', 'SSO_CLIENT_SECRET', 'BACKUP_PASSPHRASE',
-                           'BACKUP_S3_ACCESS_KEY', 'BACKUP_S3_SECRET_KEY'})
+# Значения этих имён в выводе ansible-inventory закрыты (см. infra/ansible/inventory.py). Остальные секреты
+# в переменные узлов не попадают: стадии берут их из хранилища (vpn2.creds).
+SECRET_NAMES = frozenset({'ADMIN_PASSWORD'})
 
 # Имена, которые деплой выводит из config.yaml (кроме имён с тегом экзита).
 CONFIG_NAMES = frozenset("""
@@ -27,12 +27,11 @@ HY2_HOP_MGMT HY2_HOP_INTERVAL ADMIN_SSH_PUBKEY EXIT_TAGS WG_PUBLIC_HOST OVPN_PUB
 HOST_TAG SSH_USER SSH_HOST PUB_IP PUB_IP_OUT MGMT_IP HY2_UP_MBPS HY2_DOWN_MBPS
 ADMIN_USER ADMIN_PASSWORD PANEL_DOMAIN ENTRY_RESOURCE_OVERRIDES PANEL_IMAGE TGBOT_IMAGE
 WG_LISTEN_PORT OVPN_PORT OVPN_PROTO WG_MTU WG_SPLIT_LOCAL RESTART_AFTER_CHECKS RESTART_MIN_INTERVAL_S
-TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID TELEGRAM_ADMIN_USERNAME ALERT_CPU_PCT ALERT_RAM_PCT ALERT_WINDOW_SEC
+TELEGRAM_CHAT_ID TELEGRAM_ADMIN_USERNAME ALERT_CPU_PCT ALERT_RAM_PCT ALERT_WINDOW_SEC
 YT_ROUTE YT_QUIC YT_MARK YT_ZAPRET_OFFLOAD YT_ZAPRET_WINDOW_SCALE YT_ZAPRET_STRATEGY YT_ZAPRET_REF YT_DOMAINS
-SSO_REQUESTED SSO_ENABLED SSO_DISCOVERY_URL SSO_CLIENT_ID SSO_CLIENT_SECRET SSO_ALLOWED_SUBS SSO_LABEL
-SSO_AUTO_REDIRECT SSO_PASSWORD_LOGIN BACKUP_ENABLED BACKUP_BACKEND BACKUP_PASSPHRASE BACKUP_RETENTION
-BACKUP_SCHEDULE BACKUP_LOCAL_DIR BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET BACKUP_S3_REGION BACKUP_S3_ACCESS_KEY
-BACKUP_S3_SECRET_KEY
+SSO_REQUESTED SSO_ENABLED SSO_DISCOVERY_URL SSO_CLIENT_ID SSO_ALLOWED_SUBS SSO_LABEL
+SSO_AUTO_REDIRECT SSO_PASSWORD_LOGIN BACKUP_ENABLED BACKUP_BACKEND BACKUP_RETENTION
+BACKUP_SCHEDULE BACKUP_LOCAL_DIR BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET BACKUP_S3_REGION
 """.split())
 # Имена с тегом экзита: DOMAIN_<ТЕГ>, <ТЕГ>_HY2_UP_MBPS.
 EXIT_PREFIXES = ('DOMAIN', 'MGMT_IP')
@@ -176,9 +175,6 @@ def validate(cfg: Config) -> dict:
         except ValueError:
             raise ConfigError(f'exits[{item["tag"]}]', 'нужны обе скорости hy2_up_mbps/hy2_down_mbps, целые Мбит/с '
                               'от 1 до 1000000, либо обе пустые (BBR)') from None
-    if _flag(sec['backup'].get('enabled', '')) and not sec['backup'].get('passphrase', ''):
-        raise ConfigError('backup.passphrase', 'пустой при включённом бэкапе - задай его '
-                          'или выключи backup.enabled')
     return sec
 
 
@@ -272,10 +268,9 @@ def _youtube(yt):
     return env
 
 
-def _sso(sso):
+def _sso(sso, present):
     requested = _flag(sso.get('enabled', '') or '')
-    secret = sso.get('client_secret', '') or ''
-    enabled = requested and bool(secret.strip())
+    enabled = requested and 'sso_client_secret' in present
     env = {'SSO_REQUESTED': 'true' if requested else 'false', 'SSO_ENABLED': 'true' if enabled else 'false'}
     if not requested:
         return env
@@ -286,33 +281,36 @@ def _sso(sso):
     redirect_off = not enabled or (sso.get('auto_redirect', '') or '').lower() in FALSE_WORDS
     password_off = enabled and (sso.get('password_login', '') or '').lower() in FALSE_WORDS
     env.update(SSO_DISCOVERY_URL=discovery, SSO_CLIENT_ID=sso.get('client_id', '') or 'vpn2',
-               SSO_CLIENT_SECRET=secret, SSO_ALLOWED_SUBS=sso.get('allowed_subs', ''),
+               SSO_ALLOWED_SUBS=sso.get('allowed_subs', ''),
                SSO_LABEL=sso.get('label', '') or 'Authentik',
                SSO_AUTO_REDIRECT='false' if redirect_off else 'true',
                SSO_PASSWORD_LOGIN='false' if password_off else 'true')
     return env
 
 
-def _backup(backup):
+def _backup(backup, present):
     if not _flag(backup.get('enabled', '')):
         return {}
+    if 'backup_passphrase' not in present:
+        raise ConfigError('secrets.backup_passphrase', 'пустой при включённом бэкапе - задай его '
+                          'или выключи backup.enabled')
     env = {'BACKUP_ENABLED': 'true', 'BACKUP_BACKEND': backup.get('backend', 'local'),
-           'BACKUP_PASSPHRASE': backup.get('passphrase', ''), 'BACKUP_RETENTION': backup.get('retention', '10'),
+           'BACKUP_RETENTION': backup.get('retention', '10'),
            'BACKUP_SCHEDULE': backup.get('schedule', 'daily'),
            'BACKUP_LOCAL_DIR': backup.get('local', {}).get('dir', '/var/backups/anysda-vpn2')}
     s3 = backup.get('s3', {})
     if backup.get('backend') == 's3' and s3:
-        for key in ('endpoint', 'bucket', 'region', 'access_key', 'secret_key'):
+        for key in ('endpoint', 'bucket', 'region'):
             env['BACKUP_S3_' + key.upper()] = s3.get(key, '')
     return env
 
 
-def _entry(sec, development):
-    """Переменные ru.env."""
+def _entry(sec, development, present):
+    """Переменные ru.env; present - имена секретов, что есть в хранилище или в config.yaml."""
     host = sec['entry']['host']
     env = {'HOST_TAG': 'ru', 'SSH_USER': 'root', 'SSH_HOST': host, 'PUB_IP_OUT': host, 'MGMT_IP': '10.99.0.1',
            'ADMIN_USER': sec['admin'].get('user', 'anysda') or 'anysda',
-           'ADMIN_PASSWORD': sec['admin'].get('password', ''), 'PANEL_DOMAIN': sec['panel'].get('domain', ''),
+           'PANEL_DOMAIN': sec['panel'].get('domain', ''),
            'ENTRY_RESOURCE_OVERRIDES': json.dumps(sec['entry_resources'])}
     # Образы из конфига - только для --development: проверенный деплой берёт их из манифеста.
     if development:
@@ -323,11 +321,11 @@ def _entry(sec, development):
         if key in sec[section]:
             env[name] = FORMATS[kind](sec[section][key])
     telegram = sec['telegram']
-    if telegram.get('bot_token') and telegram.get('chat_id'):
-        env.update(TELEGRAM_BOT_TOKEN=telegram['bot_token'], TELEGRAM_CHAT_ID=telegram['chat_id'])
+    if 'telegram_bot_token' in present and telegram.get('chat_id'):
+        env['TELEGRAM_CHAT_ID'] = telegram['chat_id']
         if telegram.get('admin_username'):
             env['TELEGRAM_ADMIN_USERNAME'] = telegram['admin_username']
-    return {**env, **_youtube(sec['youtube']), **_sso(sec['sso']), **_backup(sec['backup'])}
+    return {**env, **_youtube(sec['youtube']), **_sso(sec['sso'], present), **_backup(sec['backup'], present)}
 
 
 def _exit(item, octet, direct):
@@ -339,8 +337,9 @@ def _exit(item, octet, direct):
     return env
 
 
-def env_by_node(cfg: Config, *, state=STATE_DIR, repo_root=None, development=False) -> dict:
-    """{узел: {имя: строка}} для entry (ru) и экзитов, которые деплой настраивает."""
+def env_by_node(cfg: Config, *, state=STATE_DIR, repo_root=None, development=False, present=frozenset()) -> dict:
+    """{узел: {имя: строка}} для entry (ru) и экзитов, которые деплой настраивает; present - секреты хранилища."""
+    present = frozenset(present) | frozenset(secrets(cfg))
     sec = validate(cfg)
     octets = mgmt_octets([item['tag'] for item in sec['exits']], state, repo_root)
     skipped = excluded_exits(state, repo_root)
@@ -348,7 +347,7 @@ def env_by_node(cfg: Config, *, state=STATE_DIR, repo_root=None, development=Fal
     if not exits:
         raise ConfigError('exits', 'нужна хотя бы одна выходная нода')
     common = _common(sec, exits, octets)
-    nodes = {'ru': {**common, **_entry(sec, development)}}
+    nodes = {'ru': {**common, **_entry(sec, development, present)}}
     for item in exits:
         nodes[item['tag']] = {**common, **_exit(item, octets[item['tag']], common['HY2_DIRECT_PORT'])}
     return nodes

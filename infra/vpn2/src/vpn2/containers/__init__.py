@@ -8,9 +8,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from vpn2 import fsutil, resources
+from vpn2 import creds, fsutil, resources
 from vpn2.nodevars import env_tag
-from vpn2.adguard.stage import random_text
 from vpn2.containers import compose, panel
 from vpn2.containers.compose import EngineError, say
 
@@ -19,7 +18,7 @@ SCRAPE = '/etc/anysda/vmsingle-scrape.yml'
 ETC = '/etc/anysda'
 RUNTIME = '/var/lib/anysda-vpn2/runtime/telegram-runtime.json'
 BOT_DATA = '/var/lib/anysda-tgbot'
-TELEGRAM = ('bot_token', 'chat_id', 'admin_username')
+TELEGRAM = ('chat_id', 'admin_username')
 
 
 def targets():
@@ -65,18 +64,8 @@ def monitoring(environ, docker):
     return changed
 
 
-def bot_secret():
-    """Общий секрет бота и панели: создаётся один раз. Вернуть (секрет, создан ли)."""
-    path = Path(ETC, 'tgbot-secret.txt')
-    created = not (path.is_file() and path.stat().st_size)
-    if created:
-        fsutil.atomic(path, random_text(32))
-    os.chmod(path, 0o600)
-    return path.read_text(), created
-
-
 def sync_runtime(environ, previous_env):
-    """Поля telegram из config.yaml в настройки бота, только сменившиеся с прошлого деплоя.
+    """Чат и ник админа из config.yaml в настройки бота, только сменившиеся с прошлого деплоя (токен - в хранилище).
 
     Заданное в панели сильнее; снятое в config.yaml поле очищается, если панель его не меняла.
     Файл - ссылка в каталог панели: пишется сквозь неё, владелец и права цели прежние.
@@ -134,9 +123,11 @@ def place_runtime():
 
 
 def telegram(environ, docker):
-    """Бот работает и без токена: токен, чат и админа панель пишет в telegram-runtime.json."""
+    """Бот работает и без токена: токен панель кладёт в хранилище, чат и админа - в telegram-runtime.json."""
     os.makedirs(ETC, exist_ok=True)
-    value, created = bot_secret()
+    created = not creds.read('tgbot_secret')
+    creds.ensure('tgbot_secret')
+    creds.publish()
     say('  новый секрет создан' if created else '  секрет уже существует — не перегенерируем')
     before = docker.inspect(compose.BOT)
     changed = created | sync_runtime(environ, (before or {}).get('Config', {}).get('Env') or [])
@@ -144,8 +135,7 @@ def telegram(environ, docker):
     say('bot image digest verified')
     current = docker.inspect(compose.PANEL)
     # Полная установка ставит панель после бота, и она сама берёт новый секрет.
-    if (environ.get('VPN2_PANEL_FOLLOWS', 'false') != 'true' and current is not None
-            and compose.env_of(current).get('NUXT_TGBOT_SECRET', '') != value):
+    if environ.get('VPN2_PANEL_FOLLOWS', 'false') != 'true' and current is not None and created:
         say('пересоздание anysda-vpn2 для передачи TGBOT_SECRET...')
         development = environ.get('VPN2_DEVELOPMENT', 'false') == 'true'
         panel.run({**environ, 'PANEL_IMAGE': current['Image'] if development else '', 'PANEL_IMAGE_PULL': 'false'},
@@ -154,8 +144,7 @@ def telegram(environ, docker):
     place_runtime()
     stamp = compose.prepare_host('35-telegram')
     bot = pwd.getpwnam('vpn2-bot')
-    service = compose.bot_service(environ, image, resources.entry(environ), secret=value,
-                                  user=f'{bot.pw_uid}:{bot.pw_gid}', panel_gid=grp.getgrnam('vpn2-panel').gr_gid)
+    service = compose.bot_service(environ, image, resources.entry(environ), user=f'{bot.pw_uid}:{bot.pw_gid}', panel_gid=grp.getgrnam('vpn2-panel').gr_gid)
     changed |= docker.publish(compose.BOT, service)
     if docker.up(compose.BOT):
         changed = True

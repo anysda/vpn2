@@ -122,7 +122,7 @@ class BackupRestore(unittest.TestCase):
             if item.name != 'verify':
                 (package / item.name).symlink_to(item)
         put(clone / 'config.yaml', (ROOT / 'config.example.yaml').read_text()
-            .replace('  passphrase: ""', '  passphrase: disposable-test-only'))
+            .replace('  backup_passphrase:\n', '  backup_passphrase: disposable-test-only\n'))
         put('/opt/vpn2/venv/bin/vpn2', '#!/bin/sh\nexit 0\n', 0o755)
 
     def roundtrip(self, backup_root, bare=False, legacy=False):

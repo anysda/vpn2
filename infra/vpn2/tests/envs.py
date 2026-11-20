@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIG = (ROOT / 'config.example.yaml').read_text().replace('  passphrase: ""', '  passphrase: test pass')
+CONFIG = (ROOT / 'config.example.yaml').read_text().replace('  backup_passphrase:\n', '  backup_passphrase: test pass\n')
 
 
 def inventory(directory, *args, env=None):

@@ -9,7 +9,6 @@ import grp
 import json
 import os
 import pwd
-import secrets
 import shutil
 import signal
 import subprocess
@@ -17,8 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vpn2 import fsutil, resources, svc
-from vpn2.adguard.stage import admin_password, agh_password
+from vpn2 import creds, fsutil, resources, svc
 from vpn2.containers import compose
 from vpn2.containers.compose import PANEL, say
 
@@ -234,23 +232,25 @@ def sso(environ):
             'sso_redirect_url': redirect}
 
 
-def write_config(user, password):
-    """Логин и пароль JSON-строками: JSON-строка - YAML-скаляр, спецсимволы пароля конфиг не ломают."""
+def write_config(user):
+    """Логин JSON-строкой: JSON-строка - YAML-скаляр, спецсимволы логина конфиг не ломают."""
     template = Path(os.environ.get('VPN2_PANEL_CONFIG_TPL') or TEMPLATE)
     if not template.is_file():
         raise StageError(f'{template} не найден')
-    text = (template.read_text().replace('${ADMIN_USER_YAML}', json.dumps(user, ensure_ascii=False))
-            .replace('${ADMIN_PASS_YAML}', json.dumps(password, ensure_ascii=False)))
+    text = template.read_text().replace('${ADMIN_USER_YAML}', json.dumps(user, ensure_ascii=False))
     changed = fsutil.publish(CONFIG, text, 0o640)
     shutil.chown(CONFIG, 'root', 'vpn2-panel')
     return changed
 
 
-def session_secret():
-    """Постоянный секрет сессий: куки переживают пересоздание контейнера."""
-    path = Path(ETC, 'session-secret.txt')
-    changed = not path.is_file() and fsutil.publish(path, secrets.token_hex(32) + '\n')
-    return path.read_text().strip(), changed
+def hand_over(password):
+    """Пароль админа - панели при старте, файлом вида на tmpfs; после старта файл удаляется (forget)."""
+    path = creds.VIEWS / 'panel/admin_password'
+    if password:
+        creds.publish()
+        fsutil.atomic(path, password, mode=0o640)
+        shutil.chown(path, 'root', 'vpn2-panel')
+    return path
 
 
 CADDYFILE = '''{
@@ -394,7 +394,7 @@ def diagnose(docker, http_up, kept):
 def summary(environ, admin_user, sso_enabled):
     domain = environ.get('PANEL_DOMAIN') or ''
     opened = any(line.startswith('import to_panel') for line in _read(CADDY[3]).splitlines())
-    secret = f'{admin_user} / (пароль в {ETC}/admin-password.txt)'
+    secret = f'{admin_user} / пароль не хранится: смена - в профиле панели или secrets.admin_password в config.yaml'
     print()
     say('-------------------------------------------------------------')
     say(f' Панель:        https://{domain or environ["ENTRY_HOST"]}/{"" if opened else " (закрыта до выпуска сертификата)"}')
@@ -426,14 +426,13 @@ def stage(environ, docker, tx, image):
     db_owner()
 
     say('[2/4] config')
-    password, changed = admin_password(environ)
     admin_user = environ.get('ADMIN_USER') or 'anysda'
     facts = sso(environ)
-    changed |= write_config(admin_user, password)
-    session, created = session_secret()
-    changed |= created
+    changed = write_config(admin_user)
+    changed |= not creds.read('session_secret')
+    creds.ensure('session_secret', 64)
+    handed = hand_over(environ.get('ADMIN_PASSWORD') or '')
     say(f'  admin user:  {admin_user}')
-    say(f'  admin pass:  (см. {ETC}/admin-password.txt на ноде)')
 
     say('[3/4] caddy')
     quiet('systemctl', 'stop', 'vpn2-tls.timer', 'vpn2-tls.service')
@@ -450,14 +449,15 @@ def stage(environ, docker, tx, image):
     changed |= not Path(MANAGED).exists()
     Path(MANAGED).touch()
     quiet('systemctl', 'start', 'anysda-ikev2-sync.timer')
-    facts.update(session=session, clash=_read(f'{ETC}/clash-secret.txt'), tgbot=_read(f'{ETC}/tgbot-secret.txt'),
-                 admin_user=admin_user, agh_password=agh_password(password))
+    creds.publish()
+    facts['admin_user'] = admin_user
     values = resources.entry(environ)
 
     def service(previous=''):
         described = compose.panel_service(environ, image, values, {**facts, 'previous_node_hosts': previous},
                                           user=user, control_gid=control_gid)
-        described['labels'] = {compose.SPEC_LABEL: compose.panel_spec(described, Path(CONFIG).read_bytes())}
+        described['labels'] = {compose.SPEC_LABEL: compose.panel_spec(
+            described, Path(CONFIG).read_bytes() + creds.digest('panel').encode())}
         return described
 
     tx.candidate = service()
@@ -466,7 +466,11 @@ def stage(environ, docker, tx, image):
                 and (current['Config'].get('Labels') or {}).get(compose.SPEC_LABEL) == tx.candidate['labels'][compose.SPEC_LABEL]
                 and (current['Config'].get('Labels') or {}).get(compose.PROJECT_LABEL) == compose.PROJECT
                 and compose.http_ok(HEALTH))
-    if kept:
+    if kept and handed.is_file():
+        say('новый пароль админа: панель перезапускается')
+        docker.call('restart', PANEL)
+        kept, changed = False, True
+    elif kept:
         say('панель не изменилась, контейнер оставлен')
     else:
         # Карта адресов заменяемой панели - для обновления с версии без адресов экзитов в базе.
@@ -478,7 +482,10 @@ def stage(environ, docker, tx, image):
         changed = True
 
     say('жду пока контейнер откроет HTTP…')
-    diagnose(docker, compose.wait(lambda: compose.http_ok(HEALTH), 300, 0.2), kept)
+    try:
+        diagnose(docker, compose.wait(lambda: compose.http_ok(HEALTH), 300, 0.2), kept)
+    finally:
+        handed.unlink(missing_ok=True)
     say('статус контейнера:')
     for line in docker.logs(PANEL).splitlines():
         if 'client exit preference:' in line:
@@ -519,6 +526,7 @@ def run(environ, docker):
         tx.failure()
         raise
     finally:
+        (creds.VIEWS / 'panel/admin_password').unlink(missing_ok=True)
         for number, handler in previous.items():
             signal.signal(number, handler)
 

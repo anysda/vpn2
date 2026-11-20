@@ -30,10 +30,9 @@
       ansible.builtin.assert:
         that:
           - backup_backend | length > 0
-          - backup_passphrase | length > 0
           - backup_backend != 's3' or (backup_s3.values() | map('length') | min) > 0
         fail_msg: >-
-          Нет настроек бэкапа: backend, passphrase, а для s3 - endpoint, bucket и ключи.
+          Нет настроек бэкапа: backend, а для s3 - endpoint и bucket.
           Заполни раздел backup в config.yaml
         quiet: true
 

@@ -25,7 +25,7 @@ dk run --rm --name "$NAME-wg-endpoint" --network none --read-only \
   --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/wireguard \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/wg-endpoint-check.mjs"
 dk run --rm --name "$NAME-sso-secret" --read-only \
-  --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/anysda \
+  --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/anysda --tmpfs /run/secrets --tmpfs /run/secrets-inbox \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/sso-secret-check.mjs"
 bash "$APP_DIR/e2e/support/fonts-local-check.sh" "$IMAGE"
 echo "timing: image-checks=$((SECONDS - started))s"

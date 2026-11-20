@@ -103,11 +103,12 @@ sso:
   base_url: https://auth.example.com    # адрес IdP
   app_slug: vpn2                        # slug приложения в Authentik
   client_id: vpn2
-  client_secret: "<секрет OIDC-клиента>"
   allowed_subs: "<uuid>"                # или "<uuid>:<логин в панели>", через запятую
   auto_redirect: true                   # true — формы не видно вообще
   password_login: true                  # пароль спрятан, но ЖИВ
   label: Authentik
+secrets:
+  sso_client_secret: "<секрет OIDC-клиента>"   # деплой переносит в хранилище entry
 ```
 
 `redirect_uri` стадия строит сама из `panel.domain`. Выкатить:
@@ -143,7 +144,7 @@ OpenVPN, IKEv2 и sing-box не запускаются; при старте па
 | ситуация | что делать |
 |---|---|
 | Authentik лежит / SSO сломан | `https://<домен>/login?direct=1` → логин и пароль |
-| забыт первоначальный пароль | `cat /etc/anysda/admin-password.txt` на entry-ноде; смена пароля в профиле этот файл не обновляет |
+| забыт пароль | новый в `secrets.admin_password` в `config.yaml` и `./deploy.sh`: пароль сменится, поле сотрётся |
 | надо выключить SSO совсем | «Настройки» → включить «Оставить вход по паролю» → выключить «Вход через Authentik» → «Сохранить» |
 | надо сбросить настройки SSO из панели | на entry-ноде `rm -f /var/lib/anysda-vpn2/runtime/sso-runtime.json && docker restart anysda-vpn2` — вернутся настройки из env контейнера, заданные последним деплоем; без client_secret SSO и авторедирект выключены, парольный вход доступен независимо от `NUXT_SSO_PASSWORD_LOGIN`. При полном включённом SSO для парольного входа нужен `NUXT_SSO_PASSWORD_LOGIN=true` |
 

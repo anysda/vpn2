@@ -146,7 +146,7 @@ export default {
       // Никнейм без ведущего @: бот добавит его при показе.
       admin_username: body.admin_username?.trim().replace(/^@+/, '') ?? cur.admin_username,
     }
-    writeTelegramRuntime(next)
+    await writeTelegramRuntime(next)
     useLogger().info({ chat_id: next.chat_id }, 'telegram runtime updated')
     const changed = [
       next.bot_token !== cur.bot_token && 'токен бота',
@@ -198,7 +198,7 @@ export default {
     const allowed = parseAllowedSubs(next.allowedSubs)
     if (next.enabled) await checkSsoEnabled(next, allowed)
     if (!next.passwordLogin) await checkPasswordOff(next, cur, allowed, s)
-    writeSsoStored(next)
+    await writeSsoStored(next)
     const revoked = await revokeDisallowedSsoSessions()
     if ((Object.keys(next) as (keyof SsoStored)[]).some(k => next[k] !== cur[k])) {
       const actor = actorOf({ username: String((s.user as { username?: string }).username ?? '') })

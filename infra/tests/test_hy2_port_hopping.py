@@ -42,8 +42,8 @@ def candidates():
 
 def old_config():
     """config.yaml установки до смены портов: ключа ports.hy2_hop нет."""
-    return (ROOT / 'config.example.yaml').read_text().replace('  passphrase: ""',
-                                                              '  passphrase: test pass')
+    return (ROOT / 'config.example.yaml').read_text().replace('  backup_passphrase:\n',
+                                                              '  backup_passphrase: test pass\n')
 
 
 def with_hop(enabled='true', interval=None, **ranges):

@@ -3,12 +3,9 @@
 Шаг печатает changed=0|1 последней строкой; config и restart зовёт и восстановление из бэкапа.
 """
 import argparse
-import hashlib
 import json
 import os
 import re
-import secrets
-import string
 import subprocess
 import sys
 import tarfile
@@ -18,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from vpn2 import fsutil, release, resources, svc
+from vpn2 import creds, fsutil, release, resources, svc
 from vpn2.adguard import dns
 
 AGH_VER = 'v0.107.80'
@@ -68,28 +65,6 @@ def install_binary(environ, directory=AGH_DIR):
             fsutil.atomic(binary, tar.extractfile(member).read(), mode=0o755)
     print(f'AdGuard Home {installed_version(binary)} установлен')
     return True
-
-
-def agh_password(password):
-    """bcrypt берёт 72 байта: длинный пароль панели преобразуется целиком; его же передаёт панель."""
-    raw = password.encode()
-    return password if len(raw) <= 72 else hashlib.sha256(b'vpn2-adguard-v1\0' + raw).hexdigest()
-
-
-def random_text(length):
-    return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
-
-
-def admin_password(environ, etc=ETC):
-    """Пароль админа: из config.yaml, иначе прежний, иначе новый. Вернуть (пароль, сменился ли файл)."""
-    path = Path(etc, 'admin-password.txt')
-    changed = False
-    if environ.get('ADMIN_PASSWORD'):
-        changed = fsutil.publish(path, environ['ADMIN_PASSWORD'])
-    elif not path.is_file():
-        changed = fsutil.publish(path, random_text(18))
-    os.chmod(path, 0o600)
-    return path.read_text(), changed
 
 
 def password_hash(cfg, user, password):
@@ -196,11 +171,11 @@ def configure(environ):
         raise StageError('AGH_PORT не задан')
     for directory in (ETC, *UNITS.values()):
         Path(directory).mkdir(parents=True, exist_ok=True)
-    password, changed = admin_password(environ, ETC)
-    password = agh_password(password)
-    changed |= fsutil.publish(Path(ETC, 'adguard-password.txt'), password)
+    # Своя учётка AdGuard, не пароль панели: панель ходит в API с ним (вид хранилища panel/).
+    changed = not creds.read('adguard_password')
+    password = creds.ensure('adguard_password', 24)
     user = environ.get('ADMIN_USER') or 'anysda'
-    print(f'{user} / (пароль в {ETC}/adguard-password.txt)')
+    print(f'{user} / (пароль в {creds.VIEWS}/root/adguard_password)')
     with tempfile.TemporaryDirectory() as work:
         staged = build_configs(environ, user, password, work, pools=environ.get('VPN2_POOLS') or POOLS)
         for (unit, directory), path in zip(UNITS.items(), staged):

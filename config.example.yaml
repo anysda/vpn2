@@ -37,12 +37,9 @@ exits:
     # флагом entry не проверяет сертификат, и подмену экзита на пути не видно.
     # hy2_insecure: true
 
-# Учётка администратора веб-панели.
-# password опционально: если пусто — будет сгенерирован 18-символьный пароль
-# при первом деплое и записан в /etc/anysda/admin-password.txt на RU ноде.
+# Учётка администратора веб-панели. Пароль - secrets.admin_password в конце файла.
 admin:
   user: anysda
-  # password: my-secret
   # ssh_pubkey обязателен: твой открытый ключ ssh. Деплой кладёт его в
   # /root/.ssh/authorized_keys на всех нодах; вход по паролю закрыт везде.
   ssh_pubkey: "ssh-ed25519 AAAA... you@host"
@@ -87,7 +84,7 @@ admin:
 #                                           # {base_url}/application/o/{app_slug}/.well-known/openid-configuration
 #   app_slug: vpn2                          # slug приложения в Authentik
 #   client_id: vpn2
-#   client_secret: "<секрет OIDC-клиента>"
+#   # секрет OIDC-клиента - secrets.sso_client_secret в конце файла
 #   allowed_subs: "<uuid пользователя в IdP>"   # «<sub>» или «<sub>:<логин в панели>»,
 #                                               # несколько — через запятую
 #   auto_redirect: true                     # true — формы не видно вообще
@@ -128,8 +125,8 @@ admin:
 # Telegram-бот (опционально).
 # Бот ставится при любом deploy. Без токена ждёт его из панели; токен из config
 # включает бота, убранный из config - выключает (токен из панели остаётся).
+# Токен - secrets.telegram_bot_token в конце файла.
 # telegram:
-#   bot_token: <telegram-bot-token>
 #   chat_id: <telegram-chat-id>
 
 # Пороги тревог бота о нагрузке узла (опционально). Без блока бот считает их
@@ -236,15 +233,14 @@ admin:
 # на entry ДО записи на диск/выгрузки в S3 — plaintext .tar.gz никогда не
 # покидает mktemp-dir и не остаётся в файловой системе.
 #
-# passphrase — единственный секрет. Потерял = бэкапы нечитаемы.
-# passphrase обязателен при enabled: true, иначе deploy остановится на
-# проверке конфига (крепкий: openssl rand -base64 32).
-# На компрометацию оркестратора — ротировать passphrase И re-encrypt
+# Пароль архива - secrets.backup_passphrase в конце файла, единственный секрет
+# бэкапа. Потерял = бэкапы нечитаемы. Обязателен при enabled: true, иначе deploy
+# остановится на проверке конфига (крепкий: openssl rand -base64 32).
+# На компрометацию оркестратора — ротировать пароль И re-encrypt
 # существующие бэкапы (см. README §Backup & Disaster Recovery).
 backup:
   enabled: true                # отключить — заменить true на false в этой строке
   backend: local               # local | s3
-  passphrase: ""               # age symmetric passphrase
   retention: 10                # keep last N; «последний успешный» защищён от удаления
   schedule: daily              # off | daily — с 02:00 по системной TZ entry, задержка до 5 мин
                                # (timedatectl), случайная задержка до 5 минут
@@ -253,13 +249,22 @@ backup:
 
   # S3 — только если backend: s3. rclone ставится 26-backup, поддерживает любой
   # S3-совместимый endpoint: AWS, MinIO, Backblaze B2, Cloudflare R2, Yandex
-  # Object Storage, Cloud.ru и т.д. Креды - здесь же, доставляет 26-backup
-  # в /etc/anysda/backup.env (chmod 600), systemd читает через EnvironmentFile.
+  # Object Storage, Cloud.ru и т.д. Ключи - secrets.s3_access_key и
+  # secrets.s3_secret_key в конце файла.
   # s3:
   #   endpoint: https://s3.eu-central-1.amazonaws.com
   #   bucket:   my-anysda-backups
   #   region:   eu-central-1     # ОБЯЗАТЕЛЕН для cloud.ru (ru-central-1),
   #                              # yandex (ru-central1), selectel (ru-1) и др.
   #                              # AWS — региона из endpoint (eu-central-1 и т.п.)
-  #   access_key: ""
-  #   secret_key: ""
+
+# Секреты. Деплой переносит их в зашифрованное хранилище entry и стирает здесь;
+# пустое значение - секрет прежний, новое значение - применится при следующем ./deploy.sh.
+# admin_password пуст на первой установке - конец ./deploy.sh -yaml покажет новый пароль один раз.
+secrets:
+  telegram_bot_token:
+  s3_access_key:
+  s3_secret_key:
+  sso_client_secret:
+  backup_passphrase:
+  admin_password:

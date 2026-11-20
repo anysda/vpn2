@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_deploy_cli import RUNNER, environ, plays, tree  # noqa: F401 - tree - фикстура
+from vpn2 import creds
 from vpn2.deploy import report, run
 
 NOTICE = 'SSO не включён, потому что не задан секрет.'
@@ -19,14 +20,15 @@ def fake(env, **state):
                            deploy_warnings=[], skipped=[], **state)
 
 
-@pytest.mark.parametrize('env, runtime, said', [
-    ({'SSO_REQUESTED': 'true', 'SSO_CLIENT_SECRET': ' '}, False, True),
-    ({'SSO_REQUESTED': 'true', 'SSO_CLIENT_SECRET': ' '}, True, False),
-    ({'SSO_REQUESTED': 'true', 'SSO_CLIENT_SECRET': 'secret'}, False, False),
-    ({'SSO_REQUESTED': 'false'}, False, False),
+@pytest.mark.parametrize('env, secret, runtime, said', [
+    ({'SSO_REQUESTED': 'true'}, '', False, True),
+    ({'SSO_REQUESTED': 'true'}, '', True, False),
+    ({'SSO_REQUESTED': 'true'}, 'secret', False, False),
+    ({'SSO_REQUESTED': 'false'}, '', False, False),
 ])
-def test_sso_notice_conditions(env, runtime, said, tmp_path, monkeypatch, capsys):
+def test_sso_notice_conditions(env, secret, runtime, said, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(report, 'ETC', tmp_path)
+    creds.write('sso_client_secret', secret)
     if runtime:
         (tmp_path / 'sso-runtime.json').write_text('{"enabled":true}')
     report.sso_notice(fake(env))
@@ -47,14 +49,27 @@ def test_summary_names_panel_stages_and_ikev2(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(report, 'ETC', tmp_path)
     (tmp_path / 'ikev2-mode').write_text('letsencrypt\n')
     (tmp_path / 'ikev2-server-host').write_text('vpn.example.com\n')
-    deploy = fake({'SSH_HOST': '192.0.2.1', 'PANEL_DOMAIN': 'vpn.example.com', 'ADMIN_PASSWORD': 'x'})
+    monkeypatch.setenv('ADMIN_PASSWORD', 'x')
+    deploy = fake({'SSH_HOST': '192.0.2.1', 'PANEL_DOMAIN': 'vpn.example.com'}, admin_generated=False)
     deploy.stage_log += ['00-bootstrap\tall\t1m 2s', '99-verify\tall\t7s']
     deploy.verify_warnings.append('[ru] ? не проверено: скорость')
     report.summary(deploy, 0)
     out = capsys.readouterr().out
     assert '⚠ деплой завершён с предупреждениями' in out and '│  00-bootstrap  all  1m 2s' in out
-    assert 'Panel:    https://vpn.example.com/' in out and 'задан в config.yaml (admin.password)' in out
+    assert 'Panel:    https://vpn.example.com/' in out and 'задан в config.yaml (secrets.admin_password)' in out
     assert 'IKEv2: mode=letsencrypt server-host=vpn.example.com' in out and '[ru] ? не проверено: скорость' in out
+
+
+@pytest.mark.parametrize('generated, given, line', [
+    (True, 'pw', 'Password: показан ниже, один раз'),
+    (False, 'pw', 'Password: задан в config.yaml (secrets.admin_password)'),
+    (False, '', 'Password: прежний; новый - в профиле панели или secrets.admin_password')])
+def test_summary_never_prints_the_password(generated, given, line, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(report, 'ETC', tmp_path)
+    monkeypatch.setenv('ADMIN_PASSWORD', given)
+    report.summary(fake({'SSH_HOST': '192.0.2.1'}, admin_generated=generated), 0)
+    out = capsys.readouterr().out
+    assert line in out and (not given or given not in out)
 
 
 @pytest.mark.parametrize('script, code, said', [

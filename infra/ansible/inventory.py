@@ -9,14 +9,13 @@
 Секреты в --list закрыты: вывод ansible-inventory попадает в логи. Открыто их отдаёт
 только VPN2_INVENTORY_SECRETS=show - так инвентарь читает ansible-playbook оркестратора.
 """
-import base64
 import json
 import os
 import shlex
 import sys
 from pathlib import Path
 
-from vpn2 import nodevars
+from vpn2 import creds, nodevars
 from vpn2.config import STATE_DIR, Config, ConfigError, load
 from vpn2.deploy import orchestrator_key, ssh_options
 
@@ -38,10 +37,15 @@ def raw(value):
 def passed_through(environ, tags, entry=()):
     """Переменные запуска, которые оператор задаёт ролям мимо config.yaml (его значения сильнее).
 
-    entry - имена, что конфиг задаёт entry: экзиту их не отдаём, среди них секреты entry.
+    entry - имена, что конфиг задаёт entry: экзиту их не отдаём, как и пароль админа из окружения деплоя.
     """
     names = nodevars.RUN_NAMES | nodevars.CONFIG_NAMES | nodevars.exit_names(tags)
     return {name: environ[name] for name in names if name in environ and name not in entry}
+
+
+def present():
+    """Имена секретов, что уже лежат в хранилище entry (заданные в config.yaml nodevars видит сам)."""
+    return frozenset(name for name in creds.NAMES if creds.read(name))
 
 
 def exits_list(env):
@@ -83,7 +87,7 @@ def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_se
         'exits': {'hosts': [node.tag for node in cfg.exits]},
     }
     try:
-        nodes = nodevars.env_by_node(cfg, state=state, repo_root=repo_root,
+        nodes = nodevars.env_by_node(cfg, state=state, repo_root=repo_root, present=present(),
                                      development=environ.get('VPN2_DEVELOPMENT') == 'true')
     except ConfigError as error:
         # Такой конфиг деплой отвергает раньше (--prepare); узлы остаются видны, переменных нет.
@@ -91,7 +95,7 @@ def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_se
         return raw(result)
     tags = [tag for tag in nodes if tag != 'ru']
     for tag, env in nodes.items():
-        env = {**passed_through(environ, tags, () if tag == 'ru' else nodes['ru']), **env}
+        env = {**passed_through(environ, tags, () if tag == 'ru' else {*nodes['ru'], *nodevars.SECRET_NAMES}), **env}
         if tag == 'ru':
             env.pop('VPN2_WHEEL', None)  # wheel нужен узлу без исходников, entry ставит пакет из дерева
         if environ.get('VPN2_PRESERVE_ADMIN') == '1':
@@ -105,17 +109,8 @@ def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_se
 
 
 def prepare(cfg: Config, state: Path, repo_root: Path):
-    """Перед деплоем: ключ оркестратора из config.yaml в ~/.ssh, октеты mesh закреплены за тегами."""
-    nodevars.env_by_node(cfg, state=state, repo_root=repo_root)
-    if cfg.raw.get('orchestrator_key'):
-        private = orchestrator_key()
-        private.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        private.touch(mode=0o600, exist_ok=True)
-        private.chmod(0o600)
-        private.write_bytes(base64.b64decode(cfg.raw['orchestrator_key']))
-        if cfg.raw.get('orchestrator_pubkey'):
-            Path(f'{private}.pub').write_text(cfg.raw['orchestrator_pubkey'].rstrip() + '\n')
-        print('orchestrator-ключ восстановлен из config.yaml')
+    """Перед деплоем: конфиг проверен, октеты mesh закреплены за тегами."""
+    nodevars.env_by_node(cfg, state=state, repo_root=repo_root, present=present())
     tags = [node.tag for node in cfg.exits]
     path = state / 'mgmt-ips.txt'
     old = dict(line.split() for line in (path.read_text().splitlines() if path.exists() else ())

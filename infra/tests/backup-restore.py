@@ -28,7 +28,7 @@ DB = Path('/var/lib/anysda-vpn2/db.sqlite')
 BACKUPS = Path('/var/backups/anysda-vpn2')
 CADDY = Path('/var/lib/caddy/.local/share/caddy')
 FILES = (
-    '/etc/anysda/admin-password.txt', '/etc/wireguard/wg0.conf',
+    '/etc/anysda/clash-secret.txt', '/etc/wireguard/wg0.conf',
     '/etc/openvpn/server/pki/ca.key', '/etc/strongswan/pki/ca.key',
     '/etc/swanctl/private/server.key', '/etc/swanctl/conf.d/anysda-clients.conf',
     '/etc/strongswan.conf', '/etc/strongswan.d/anysda-swanctl-load.conf',
@@ -337,6 +337,40 @@ sys.stdin.read()
         for path in FILES:
             self.assertEqual(Path(path).read_text(), body(path, 'archived'))
         self.assertEqual(Path('/etc/wireguard/keys/server.priv').read_text().strip(), WG_KEYS['archived'])
+
+    def creds(self, *args):
+        return self.script('creds', *args)
+
+    def test_secrets_of_1_2_0_archive_move_into_store_and_follow_a_new_host_key(self):
+        # Архив 1.2.0: секреты открытыми файлами в /etc/anysda, хранилища нет.
+        store, key = Path('/var/lib/vpn2-secrets'), Path('/var/lib/systemd/credential.secret')
+        for path in (store, Path('/run/vpn2-secrets')):
+            shutil.rmtree(path, ignore_errors=True)
+        write('/etc/anysda/session-secret.txt', 'archived-session\n')
+        write('/etc/anysda/admin-password.txt', 'archived-admin')
+        self.backup()
+        for name in ('session-secret.txt', 'admin-password.txt'):
+            Path('/etc/anysda', name).unlink()
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.creds('read', 'session_secret').stdout, 'archived-session')
+        self.assertFalse(Path('/etc/anysda/session-secret.txt').exists() or Path('/etc/anysda/admin-password.txt').exists())
+        self.assertNotIn(b'archived-session', (store / 'session_secret.cred').read_bytes())
+        # Новый сервер: свой ключ systemd, хранилища нет; секреты едут в архиве и шифруются заново.
+        self.backup()
+        old = (store / 'session_secret.cred').read_bytes()
+        shutil.rmtree(store)
+        shutil.rmtree('/run/vpn2-secrets')
+        key.unlink()
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.creds('read', 'session_secret').stdout, 'archived-session')
+        self.assertNotEqual((store / 'session_secret.cred').read_bytes(), old)
+        write('/test-output/old.cred', '')
+        Path('/test-output/old.cred').write_bytes(old)
+        stale = run('systemd-creds', 'decrypt', '--name=session_secret', '/test-output/old.cred', '-')
+        self.assertNotEqual(stale.returncode, 0, 'копия хранилища открылась ключом другого сервера')
+        print('restore_store_new_host_key=PASS', flush=True)
 
     def test_restore_after_tmp_cleanup_preserves_archived_password(self):
         # Изолируем зависимость от /tmp от отдельной регрессии ссылок WG.
@@ -1754,8 +1788,8 @@ fi
         self.conn.execute('INSERT INTO clients VALUES (1, 0, NULL)')
         self.conn.execute("INSERT INTO devices VALUES (7, 1, 0, 'Телефон Ани', ?, ?, '10.66.66.8')", (key, psk))
         self.conn.commit()
-        write('/etc/anysda/tgbot-secret.txt', 'test-tgbot-secret')
-        self.addCleanup(Path('/etc/anysda/tgbot-secret.txt').unlink)
+        write('/run/vpn2-secrets/root/tgbot_secret', 'test-tgbot-secret')
+        self.addCleanup(Path('/run/vpn2-secrets/root/tgbot_secret').unlink)
         events = panel_events(self)
         result = self.script('backup')
         print('\n'.join(line for line in result.stdout.splitlines()

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from vpn2 import wg
+from vpn2 import creds, wg
 from vpn2.backup import archive, check, env, revoke
 from vpn2.backup import run as run_backup
 from vpn2.fsutil import filled
@@ -884,6 +884,10 @@ def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE):
             rb.step = 'запуск служб'
             start_services(rb)
         mark_good(rb)
+        # Секреты - ключом этого сервера; архив 1.2.0 вернул их в прежние места, они переезжают в хранилище.
+        if (Path(bundle) / run_backup.SECRETS).is_file():
+            creds.unbundle(Path(bundle) / run_backup.SECRETS)
+        creds.adopt(root)
         stages_env = stage_env(source_root, work)
         fail = resync(source_root, stages_env, work)
         smoke(source_root, stages_env, presnap)

@@ -76,7 +76,7 @@ class HysteriaTests(unittest.TestCase):
             with self.subTest(up=up, down=down), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 base = (ROOT / 'config.example.yaml').read_text().replace(
-                    '  passphrase: ""', '  passphrase: test pass')
+                    '  backup_passphrase:\n', '  backup_passphrase: test pass\n')
                 (root / 'config.yaml').write_text(base.replace('    host: root@5.6.7.8   # root@адрес или просто адрес\n',
                     f'    host: root@5.6.7.8\n    hy2_up_mbps: {up}\n    hy2_down_mbps: {down}\n'))
                 result = write_envs(tmp)

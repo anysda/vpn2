@@ -78,9 +78,9 @@ def rejected():
     cases += [(CONFIG.replace('tag: se', f'tag: {tag}'), 'exits[0].tag')
               for tag in ('ru', 'all', 'exits', 'foreign', 'SE', '-us', 'us-', 'US', 'us_2')]
     for enabled in ('true', 'yes'):
-        cases += [(backup(enabled, line), 'backup.passphrase')
+        cases += [(backup(enabled, line), 'secrets.backup_passphrase')
                   for line in ("passphrase: ''", 'passphrase: ""', 'passphrase:')]
-    cases.append((backup('true'), 'backup.passphrase'))
+    cases.append((backup('true'), 'secrets.backup_passphrase'))
     cases += [(CONFIG + extra, key) for extra, key in (
         ('sso:\n  enabeld: true\n', 'sso.enabeld'), ('panle:\n  domain: vpn.example.com\n', 'panle'),
         ('ports:\n  hy2_driect: 4443\n', 'ports.hy2_driect'), ('sso:\n  enabled: tru\n', 'sso.enabled'),
@@ -151,13 +151,20 @@ class AcceptedTests(Case):
             with self.subTest(tag=tag):
                 self.assertIn(tag, self.envs(CONFIG.replace('tag: se', f'tag: {tag}')))
 
-    def test_boundary_ports_ipv6_and_shell_quoted_secrets(self):
-        secret = " spaces ' \" $HOME $(touch CANARY)\\nsecond line "
-        text = CONFIG.replace('192.0.2.2', '2001:db8::2') + 'admin:\n  password: "' + secret.replace('"', '\\"') + '"\n'
-        result = sourced(self.root, self.envs(text + 'ports:\n  hy2_direct: 1\n  hy2_warp: 65535\n')['ru'],
-                         'printf "%s" "$ADMIN_PASSWORD"')
-        self.assertEqual((result.returncode, result.stdout), (0, secret.replace('\\n', '\n')), result.stderr)
+    def test_boundary_ports_ipv6_and_shell_quoted_values(self):
+        value = " spaces ' \" $HOME $(touch CANARY)\\nsecond line "
+        text = CONFIG.replace('192.0.2.2', '2001:db8::2') + 'admin:\n  user: "' + value.replace('"', '\\"') + '"\n'
+        texts = self.envs(text + 'ports:\n  hy2_direct: 1\n  hy2_warp: 65535\n')
+        result = sourced(self.root, texts['ru'], 'printf "%s" "$ADMIN_USER"')
+        self.assertEqual((result.returncode, result.stdout), (0, value.replace('\\n', '\n')), result.stderr)
         self.assertFalse((self.root / 'CANARY').exists())
+
+    def test_secrets_never_reach_node_values(self):
+        secret = " spaces ' \" $HOME $(touch CANARY)\\nsecond line "
+        text = CONFIG + 'admin:\n  password: "' + secret.replace('"', '\\"') + '"\n' + 'secrets:\n  s3_secret_key: S3CANARY\n'
+        self.assertNotIn('CANARY', ''.join(self.envs(text).values()))
+        found = vpn2_config.secrets(vpn2_config.loads(text))
+        self.assertEqual(found, {'admin_password': secret.replace('\\n', '\n'), 's3_secret_key': 'S3CANARY'})
 
     def test_safe_dump_output_is_accepted(self):
         envs = {node: parse(text) for node, text in self.envs(SAFE_DUMP).items()}
@@ -175,15 +182,16 @@ class AcceptedTests(Case):
                                ('  password: "first\n\n    second"\n', 'first\nsecond'),
                                ('  password: "\\u0451\\x41\\ \\t"\n', '\u0451A \t')):
             with self.subTest(line=line):
-                text = self.envs(SAFE_DUMP.replace('  password: adm pw\n', line))['ru']
-                self.assertEqual(sourced(self.root, text, 'printf %s "$ADMIN_PASSWORD"').stdout, expected)
+                found = vpn2_config.secrets(vpn2_config.loads(SAFE_DUMP.replace('  password: adm pw\n', line)))
+                self.assertEqual(found['admin_password'], expected)
 
     def test_backup_passphrase(self):
         for line, value in (("passphrase: '   '", '   '), ('passphrase: "\t "', '\t '),
                             ("passphrase: 'long backup secret'", 'long backup secret')):
             with self.subTest(line=line):
                 env = self.env(backup('true', line))
-                self.assertEqual((env['BACKUP_ENABLED'], env['BACKUP_PASSPHRASE']), ('true', value))
+                self.assertEqual((env['BACKUP_ENABLED'], 'BACKUP_PASSPHRASE' in env), ('true', False))
+                self.assertEqual(vpn2_config.secrets(vpn2_config.loads(backup('true', line)))['backup_passphrase'], value)
         for text in (backup('false', "passphrase: ''"), backup('false'), CONFIG):
             with self.subTest(text=text):
                 self.assertNotIn('BACKUP_ENABLED', ''.join(self.envs(text).values()))
@@ -202,7 +210,7 @@ class AcceptedTests(Case):
                 env = self.env(CONFIG + 'sso:\n  enabled: true\n  client_secret: ""\n' + seed)
                 self.assertEqual([env.get(name) for name in ('SSO_REQUESTED', 'SSO_ENABLED', 'SSO_AUTO_REDIRECT',
                                                               'SSO_PASSWORD_LOGIN', 'SSO_CLIENT_SECRET')],
-                                 ['true', 'false', 'false', 'true', ''])
+                                 ['true', 'false', 'false', 'true', None])
 
 
 class SetPortTests(unittest.TestCase):

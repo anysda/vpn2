@@ -46,7 +46,7 @@ stand_up() {
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
     "${vpn_args[@]}" "$@" "$image" sh -ec \
-    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; mkdir -p /var/lib/anysda-vpn2/runtime; chown -R 10001:10001 /var/lib/anysda-vpn2; exec setpriv --reuid 10001 --regid 10001 --clear-groups "$@"' \
+    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; mkdir -p /var/lib/anysda-vpn2/runtime /run/secrets /run/secrets-inbox; chown -R 10001:10001 /var/lib/anysda-vpn2 /run/secrets-inbox; exec setpriv --reuid 10001 --regid 10001 --clear-groups "$@"' \
     -- "${command[@]}" >/dev/null
 
   dk exec -i "$name" sh -c 'cat > /tmp/fake-backends.mjs' < "$STAND_APP_DIR/e2e/support/fake-backends.mjs"

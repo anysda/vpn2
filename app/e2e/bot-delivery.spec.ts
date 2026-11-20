@@ -12,10 +12,10 @@ import * as outbounds from '../shared/outbounds'
 import * as plural from '../shared/plural'
 import { botDeliveryPending, botDeliveryText } from '../shared/bot-delivery'
 
-// Бот настроен: файл Telegram с токеном и чатом; секрет - в useRuntimeConfig теста.
+// Бот настроен: токен в виде хранилища, чат в файле Telegram; секрет - в useRuntimeConfig теста.
 const telegramFile = (mocks: Record<string, unknown> = {}, globals: Record<string, unknown> = {}) => {
   const api = serverModule<typeof import('../server/utils/api')>('server/utils/api.ts', mocks, globals)
-  return { ...api, readJsonFile: () => ({ bot_token: 'test', chat_id: 1 }) }
+  return { ...api, readJsonFile: () => ({ chat_id: 1 }), readSecret: () => 'test' }
 }
 
 test.describe('bot-delivery', () => {

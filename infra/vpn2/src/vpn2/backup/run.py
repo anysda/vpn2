@@ -16,12 +16,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from vpn2 import fsutil, notify
+from vpn2 import creds, fsutil, notify
 from vpn2.backup import archive, check, env
 
 VERSION_URL = 'http://127.0.0.1:51821/api/version'
 LOCK_WAIT = 60
 SLICES = 10
+SECRETS = 'secrets.json'
 SLICE_NAMES = ('db.sqlite', 'etc-wireguard', 'etc-openvpn', 'etc-strongswan', 'etc-swanctl')
 FATAL_TEXT = '''anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.
 
@@ -290,6 +291,9 @@ def _make(settings, paths, enter, check, pause, wait):
         warning = take_slices(bundle, root, check=check, pause=pause, wait=wait)
         enter('копирование настроек служб не прошло')
         copy_extras(bundle, root)
+        # Хранилище секретов не открыть на другом сервере: в архив они идут открыто, архив зашифрован целиком.
+        enter('секреты не сняты')
+        creds.bundle(bundle / SECRETS)
         enter('описание архива не записано')
         write_manifest(bundle, root, ts)
         final = f'{settings.local_dir}/{name}.tar.gz.age'

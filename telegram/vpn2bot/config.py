@@ -26,11 +26,20 @@ log = logging.getLogger('tgbot')
 
 # Written by the panel's «Боты»; overrides the environment, a change of it restarts the bot.
 RUNTIME_PATH = pathlib.Path('/etc/anysda/telegram-runtime.json')
+# Token and shared secret: files of the entry's secrets store, mounted read-only (tmpfs on the host).
+SECRETS_DIR = pathlib.Path(os.environ.get('TGBOT_SECRETS_DIR', '/run/secrets'))
 try:
     _runtime = json.loads(RUNTIME_PATH.read_text()) if RUNTIME_PATH.exists() else {}
 except (OSError, ValueError):
     _runtime = {}
 _runtime = _runtime if isinstance(_runtime, dict) else {}
+
+
+def _secret(name: str, env: str) -> str:
+    try:
+        return (SECRETS_DIR / name).read_text().strip()
+    except OSError:
+        return os.environ.get(env, '').strip()
 
 
 def _chat_id() -> int:
@@ -44,14 +53,14 @@ def _chat_id() -> int:
     return 0
 
 
-TOKEN = str(_runtime.get('bot_token') or os.environ.get('TELEGRAM_BOT_TOKEN', '')).strip()
+TOKEN = _secret('telegram_bot_token', 'TELEGRAM_BOT_TOKEN')
 CHAT_ID = _chat_id()
 ADMIN_USERNAME = str(_runtime.get('admin_username') or os.environ.get('TELEGRAM_ADMIN_USERNAME', ''))
 ADMIN_USERNAME = ADMIN_USERNAME.strip().lstrip('@').strip()
-SECRET = os.environ.get('TGBOT_SECRET', '')
+SECRET = _secret('tgbot_secret', 'TGBOT_SECRET')
 if not SECRET:
     raise RuntimeError('TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
-                       'Задай TGBOT_SECRET через env или /etc/anysda/telegram-runtime.json.')
+                       'Задай его файлом /run/secrets/tgbot_secret или через env.')
 _RedactTokenFormatter.secrets = (TOKEN, SECRET)
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
 OUTBOX_PATH = os.environ.get('TGBOT_OUTBOX_PATH', '/var/lib/anysda-tgbot/outbox.sqlite')

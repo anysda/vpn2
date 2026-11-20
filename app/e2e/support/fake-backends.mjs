@@ -1,7 +1,7 @@
 // Подставные VictoriaMetrics (:8428) и clash API sing-box (:9090) для локального
 // прогона e2e. Запускается внутри контейнера панели, поэтому слушает только
 // 127.0.0.1. Ноды и выходы — из тех же NUXT_MGMT_IPS / NUXT_EXIT_TAGS, что у панели.
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -138,10 +138,10 @@ function notFound(res) {
 function bot(req, res) {
   let token = ''
   try {
-    token = JSON.parse(readFileSync('/var/lib/anysda-vpn2/runtime/telegram-runtime.json', 'utf8')).bot_token || ''
+    token = readFileSync('/run/secrets/telegram_bot_token', 'utf8')
   }
   catch {
-    // файла ещё нет — бот не настроен
+    // секрета ещё нет — бот не настроен
   }
   if (token.includes('E2E_ACCEPTED')) {
     if (req.url === '/event' || req.url === '/events' || req.url === '/health') return acceptedBot(req, res)
@@ -468,6 +468,19 @@ function acceptedBot(req, res) {
   }
   notFound(res)
 }
+
+// Юнит vpn2-secrets-inbox entry: секрет, что панель положила в inbox, переезжает в вид хранилища; пустой снимает его.
+setInterval(() => {
+  for (const name of readdirSync('/run/secrets-inbox').filter(name => !name.startsWith('.'))) {
+    const value = readFileSync(`/run/secrets-inbox/${name}`, 'utf8').trim()
+    if (value) renameSync(`/run/secrets-inbox/${name}`, `/run/secrets/${name}`)
+    else {
+      unlinkSync(`/run/secrets-inbox/${name}`)
+      try { unlinkSync(`/run/secrets/${name}`) }
+      catch { /* секрета и не было */ }
+    }
+  }
+}, 100)
 
 createServer(vm).listen(8428, '127.0.0.1')
 createServer(clash).listen(9090, '127.0.0.1')

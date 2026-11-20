@@ -791,7 +791,7 @@ class ControlTests(unittest.TestCase):
                                'sso_auto_redirect', 'sso_password_login', 'sso_redirect_url'), '')
         values = resources.calculate(2048, 8192, {})
         panel = compose.panel_service(environ, 'image', values, facts, user='10001:10001', control_gid=10003)
-        bot = compose.bot_service(environ, 'image', values, secret='s', user='10002:10002', panel_gid=10001)
+        bot = compose.bot_service(environ, 'image', values, user='10002:10002', panel_gid=10001)
         for service in (panel, bot):
             self.assertRegex(service['user'], r'^[1-9]\d*:[1-9]\d*$')
             self.assertEqual(service['cap_drop'], ['ALL'])

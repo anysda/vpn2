@@ -85,7 +85,6 @@ export default defineNuxtConfig({
     oauth: {
       oidc: {
         clientId: '',
-        clientSecret: '',
         openidConfig: '',
         redirectURL: '',
       },

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIG = (ROOT / 'config.example.yaml').read_text().replace('  passphrase: ""', '  passphrase: test pass')
+CONFIG = (ROOT / 'config.example.yaml').read_text().replace('  backup_passphrase:\n', '  backup_passphrase: test pass\n')
 TREE = ('deploy.sh', 'infra/deploy.sh', 'infra/lib', 'infra/ansible', 'infra/vpn2/src', 'infra/vpn2/pyproject.toml')
 # Заглушка ansible-playbook: строка JSON на вызов; FAKE_RULES - [подстрока аргументов, код, пауза].
 PLAYBOOK = r'''#!PYTHON
@@ -305,6 +305,28 @@ def test_unreachable_exit_of_a_clean_install_is_refused(tree, inproc):
     assert 'sshd на ноде запущен и слушает порт 22' in done.stdout and not plays(tree) and not inproc.services
 
 
+def test_key_before_and_after_the_first_deploy_is_the_same(tree, inproc):
+    first = inproc('-key')
+    assert first.returncode == 0 and first.stdout.startswith('ssh-ed25519 ') and 'anysda-orchestrator' in first.stdout
+    assert inproc().returncode == 0
+    assert inproc('-key').stdout == first.stdout
+    assert 'PRIVATE KEY' not in (tree / 'config.yaml').read_text()
+
+
+def test_stage_run_moves_secrets_and_keeps_an_unapplied_admin_password(tree, inproc):
+    """Стадия экзитов: токен ушёл в хранилище и стёрт, пароль админа ждёт прогона со стадией панели."""
+    from vpn2 import creds
+    text = CONFIG.replace('  telegram_bot_token:\n', "  telegram_bot_token: '7:new'\n").replace(
+        '  admin_password:\n', '  admin_password: fresh pw\n')
+    (tree / 'config.yaml').write_text(text)
+    assert inproc('10-foreign', 'us').returncode == 0
+    assert creds.read('telegram_bot_token') == '7:new'
+    left = (tree / 'config.yaml').read_text()
+    assert "'7:new'" not in left and '  admin_password: fresh pw\n' in left
+    assert inproc('30-frontend', 'ru').returncode == 0
+    assert (tree / 'config.yaml').read_text() == CONFIG.replace('  backup_passphrase: test pass\n', '  backup_passphrase:\n')
+
+
 def test_root_passwords_of_1_2_0_leave_config_after_a_good_deploy_only(tree, inproc):
     legacy = CONFIG.replace('  host: 1.2.3.4\n', '  host: 1.2.3.4\n  password: root pw\n').replace(
         '    host: root@9.10.11.12\n', '    host: root@9.10.11.12\n    password: "p2"\n')
@@ -314,9 +336,14 @@ def test_root_passwords_of_1_2_0_leave_config_after_a_good_deploy_only(tree, inp
     assert failed.returncode and (tree / 'config.yaml').read_text() == legacy
     done = inproc(FAKE_RULES='[]')
     assert done.returncode == 0, done.stderr
-    assert (tree / 'config.yaml').read_text() == CONFIG and (tree / 'config.yaml').stat().st_mode & 0o777 == 0o600
+    wiped = CONFIG.replace('  backup_passphrase: test pass\n', '  backup_passphrase:\n')
+    assert (tree / 'config.yaml').read_text() == wiped and (tree / 'config.yaml').stat().st_mode & 0o777 == 0o600
     assert 'пароли root entry и экзитов убраны из config.yaml' in done.stderr
-    assert inproc().returncode == 0 and (tree / 'config.yaml').read_text() == CONFIG
+    assert 'секреты перенесены в зашифрованное хранилище entry и стёрты из config.yaml' in done.stderr
+    # Повтор с пустой областью: секрет бэкапа берётся из хранилища, файл не трогается.
+    stamp = (tree / 'config.yaml').stat()
+    assert inproc().returncode == 0 and (tree / 'config.yaml').read_text() == wiped
+    assert (tree / 'config.yaml').stat().st_mtime_ns == stamp.st_mtime_ns
 
 
 def test_missing_admin_key_refuses_to_start(tree, inproc):

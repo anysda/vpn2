@@ -5,7 +5,7 @@ Host {{ tag }}
   HostName 127.0.0.1
   Port 22
   User root
-  IdentityFile /root/.ssh/id_ed25519_mgmt
+  IdentityFile /run/vpn2-secrets/root/mgmt_key
   IdentitiesOnly yes
   HostKeyAlias anysda-{{ tag }}
   UserKnownHostsFile /root/.ssh/known_hosts_mgmt

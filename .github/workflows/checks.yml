@@ -57,7 +57,7 @@ jobs:
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
           cp config.example.yaml "$d/config.yaml"
-          sed -i 's/^  passphrase: ""/  passphrase: ci pass/' "$d/config.yaml"
+          sed -i 's/^  backup_passphrase:$/  backup_passphrase: ci pass/' "$d/config.yaml"
           export PYTHONPATH=infra/vpn2/src VPN2_CONFIG="$d/config.yaml" VPN2_STATE_DIR="$d/state"
           python3 -B infra/ansible/inventory.py --prepare
           python3 -B infra/ansible/inventory.py --env ru > "$d/ru.env"
@@ -91,7 +91,7 @@ jobs:
           docker build -q -t vpn2-backup-restore - <<'EOF'
           FROM debian:13
           RUN timeout 300 apt-get update -qq && timeout 300 apt-get install -y -qq --no-install-recommends \
-            python3 python3-yaml sqlite3 age expect curl git wireguard-tools openssl iproute2
+            python3 python3-yaml sqlite3 age expect curl git wireguard-tools openssl iproute2 systemd
           EOF
           wait "$keys"
       - name: SQLite WAL, полный цикл backup/restore и перенос ключей на чистый хост

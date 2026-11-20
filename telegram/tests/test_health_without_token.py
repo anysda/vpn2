@@ -96,9 +96,10 @@ class HealthWithoutTokenTests(unittest.TestCase):
 
     def start(self, token, chat_id, env=None):
         runtime = self.root / 'telegram-runtime.json'
-        runtime.write_text(json.dumps(
-            {'bot_token': token, 'chat_id': chat_id, 'admin_username': ''}))
-        env = dict(env or self.env, TELEGRAM_BOT_TOKEN=token, TELEGRAM_CHAT_ID=chat_id)
+        (self.root / 'secrets').mkdir(exist_ok=True)
+        (self.root / 'secrets/telegram_bot_token').write_text(token)
+        runtime.write_text(json.dumps({'chat_id': chat_id, 'admin_username': ''}))
+        env = dict(env or self.env, TGBOT_SECRETS_DIR=str(self.root / 'secrets'), TELEGRAM_CHAT_ID=chat_id)
         output = self.output.open('a')
         self.addCleanup(output.close)
         process = subprocess.Popen(
@@ -162,8 +163,8 @@ class HealthWithoutTokenTests(unittest.TestCase):
         self.assertIs(body.get('waiting_token'), True, body)
         self.assertIsNone(process.poll(), 'бот завершился на паузе:\n' + self.log())
         runtime = self.root / 'telegram-runtime.json'
-        runtime.write_text(json.dumps(
-            {'bot_token': '2:new', 'chat_id': '42', 'admin_username': ''}))
+        (self.root / 'secrets/telegram_bot_token').write_text('2:new')
+        runtime.write_text(json.dumps({'chat_id': '42', 'admin_username': ''}))
         later = time.time() + 1
         os.utime(runtime, (later, later))
         try:

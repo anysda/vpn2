@@ -390,7 +390,7 @@ def main(argv=None):
     parser.add_argument('--prepare', action='store_true', help='write config and Caddy snippets')
     parser.add_argument('--initial', action='store_true', help='wait for the first certificate')
     parser.add_argument('--wait', type=int, default=60, help='seconds for --initial')
-    parser.add_argument('--bot-secret', default='/etc/anysda/tgbot-secret.txt')
+    parser.add_argument('--bot-secret', default='/run/vpn2-secrets/root/tgbot_secret')
     parser.add_argument('--role', choices=('panel', 'exit'), default='panel')
     parser.add_argument('--host')
     parser.add_argument('--output-dir', default='/etc/vpn2/tls/ip')

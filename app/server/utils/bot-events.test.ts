@@ -5,7 +5,8 @@ import { botSecretOrThrow, notifyBackupFailed, retryBotEvents, sendBotEvent } fr
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
 vi.mock('./api', async importOriginal => ({
   ...await importOriginal<object>(),
-  readJsonFile: () => configured.value ? { bot_token: 't', chat_id: 1 } : null,
+  readJsonFile: () => configured.value ? { chat_id: 1 } : null,
+  readSecret: (name: string) => configured.value && name === 'telegram_bot_token' ? 't' : '',
 }))
 
 const configured = vi.hoisted(() => ({ value: true }))

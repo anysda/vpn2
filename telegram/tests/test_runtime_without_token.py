@@ -74,6 +74,7 @@ class RuntimeWithoutTokenTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         self.runtime = self.root / 'telegram-runtime.json'
+        self.secrets = self.root / 'secrets'
         self.calls = self.root / 'calls.jsonl'
         self.output = self.root / 'bot.log'
         self.exits = 0
@@ -81,14 +82,15 @@ class RuntimeWithoutTokenTests(unittest.TestCase):
         self.process = None
 
     def save(self, token, chat_id):
-        """Так «Сохранить» в панели пишет telegram-runtime.json."""
-        self.runtime.write_text(json.dumps(
-            {'bot_token': token, 'chat_id': chat_id, 'admin_username': ''}))
+        """Так «Сохранить» в панели: токен - в хранилище (файл вида бота), затем telegram-runtime.json."""
+        self.secrets.mkdir(exist_ok=True)
+        (self.secrets / 'telegram_bot_token').write_text(token)
+        self.runtime.write_text(json.dumps({'chat_id': chat_id, 'admin_username': ''}))
 
     def start(self):
         # Окружение как у контейнера, поставленного без токена в config.yaml.
         env = dict(os.environ, TELEGRAM_BOT_TOKEN='', TELEGRAM_CHAT_ID='',
-                   TELEGRAM_ADMIN_USERNAME='', TGBOT_SECRET='evt-secret',
+                   TELEGRAM_ADMIN_USERNAME='', TGBOT_SECRET='evt-secret', TGBOT_SECRETS_DIR=str(self.secrets),
                    TGBOT_EVENT_PORT=str(ports.event_port(self)), ANYSDA_URL='http://127.0.0.1:9',
                    TG_PROXY='http://127.0.0.1:9', TGBOT_INVALID_TOKEN_PAUSE_SEC='0',
                    TGBOT_OUTBOX_PATH=str(self.root / 'outbox.sqlite'))

@@ -22,7 +22,7 @@ spec.loader.exec_module(inventory)
 
 # Имена, похожие на секрет, но открытые: ключ публичный, переключатель и подсказка.
 PUBLIC = {'ADMIN_SSH_PUBKEY', 'SSO_PASSWORD_LOGIN'}
-JINJA = MINIMAL + 'admin:\n  password: "a{{ 1 + 1 }}b{% x %}"\n'
+JINJA = 'a{{ 1 + 1 }}b{% x %}'
 
 
 def plain(value):
@@ -88,21 +88,22 @@ def test_entry_config_does_not_reach_exit_through_run_environment():
     with tempfile.TemporaryDirectory() as tmp:
         _, _, clean = build(FULL, tmp)
     entry = envs(clean)['ru']
-    leaked = {name: value for name, value in entry.items() if name not in envs(clean)['nl']}
-    assert {'ADMIN_PASSWORD', 'TELEGRAM_BOT_TOKEN', 'BACKUP_PASSPHRASE', 'SSO_CLIENT_SECRET'} <= set(leaked)
+    assert {name for name in entry if name not in envs(clean)['nl']}, 'положительный контроль: у entry свои имена'
+    # Секреты из config.yaml в значения узлов не идут вовсе; пароль админа - только из окружения деплоя и только entry.
+    assert not {'ADMIN_PASSWORD', 'TELEGRAM_BOT_TOKEN', 'BACKUP_PASSPHRASE', 'SSO_CLIENT_SECRET'} & set(entry)
+    run = dict(entry, VPN2_INFRA='/srv/infra', EMERGENCY_IMAGE='img:run', ADMIN_PASSWORD='run-pw')
     with tempfile.TemporaryDirectory() as tmp:
-        _, _, result = build(FULL, tmp, environ=dict(entry, VPN2_INFRA='/srv/infra', EMERGENCY_IMAGE='img:run'))
+        _, _, result = build(FULL, tmp, environ=run)
     for tag, env in envs(result).items():
         expected = dict(envs(clean)[tag], VPN2_INFRA='/srv/infra', EMERGENCY_IMAGE='img:run')
-        assert env == expected, tag
+        assert env == (dict(expected, ADMIN_PASSWORD='run-pw') if tag == 'ru' else expected), tag
 
 
 def test_preserved_admin_password_is_absent():
-    text = MINIMAL + 'admin:\n  password: "s3"\n'
     with tempfile.TemporaryDirectory() as tmp:
-        _, _, kept = build(text, tmp)
+        _, _, kept = build(MINIMAL, tmp, environ={'ADMIN_PASSWORD': 's3'})
     with tempfile.TemporaryDirectory() as tmp:
-        _, _, dropped = build(text, tmp, environ={'VPN2_PRESERVE_ADMIN': '1'})
+        _, _, dropped = build(MINIMAL, tmp, environ={'ADMIN_PASSWORD': 's3', 'VPN2_PRESERVE_ADMIN': '1'})
     assert envs(kept)['ru']['ADMIN_PASSWORD'] == 's3'
     assert 'ADMIN_PASSWORD' not in envs(dropped)['ru']
 
@@ -135,12 +136,14 @@ def test_hidden_secrets_leave_no_value_in_output():
             f'sso:\n  enabled: true\n  base_url: https://sso.example.org\n  client_secret: "{secrets[4]}"\n'
             f'backup:\n  enabled: true\n  backend: s3\n  passphrase: "{secrets[5]}"\n  s3:\n    bucket: b\n'
             f'    access_key: "{secrets[6]}"\n    secret_key: "{secrets[7]}"\n')
+    run = {'ADMIN_PASSWORD': 'run-S3CRET'}
     with tempfile.TemporaryDirectory() as tmp:
-        _, _, shown = build(text, tmp)
+        _, _, shown = build(text, tmp, environ=run)
     with tempfile.TemporaryDirectory() as tmp:
-        _, _, hidden = build(text, tmp, hide_secrets=True)
-    assert all(secret in json.dumps(shown) for secret in secrets[2:]), 'положительный контроль: секреты в выводе есть'
-    assert not any(secret in json.dumps(shown) for secret in secrets[:2])
+        _, _, hidden = build(text, tmp, environ=run, hide_secrets=True)
+    assert 'run-S3CRET' in json.dumps(shown), 'положительный контроль: пароль из окружения в открытом выводе есть'
+    assert envs(shown)['ru']['SSO_ENABLED'] == 'true' and envs(shown)['ru']['TELEGRAM_CHAT_ID'] == '5'
+    assert not any(secret in json.dumps(shown) for secret in secrets)
     assert 'S3CRET' not in json.dumps(hidden) and envs(hidden)['ru']['ADMIN_PASSWORD'] == inventory.HIDDEN
     assert not any('password' in name for host in shown['_meta']['hostvars'].values() for name in host)
 
@@ -155,7 +158,7 @@ def run_script(tmp, text, **extra):
 
 def test_script_shows_secrets_only_on_request():
     with tempfile.TemporaryDirectory() as tmp:
-        env = run_script(tmp, MINIMAL + 'admin:\n  password: entry-S3CRET\n')
+        env = run_script(tmp, MINIMAL, ADMIN_PASSWORD='entry-S3CRET')
         outputs = [subprocess.run([sys.executable, str(SCRIPT), '--list'], env=dict(env, **mode), check=True,
                                   capture_output=True, text=True, timeout=30).stdout
                    for mode in ({'VPN2_INVENTORY_SECRETS': 'show'}, {})]
@@ -165,7 +168,7 @@ def test_script_shows_secrets_only_on_request():
 @pytest.mark.skipif(not shutil.which('ansible-inventory'), reason='нужен ansible')
 def test_ansible_reads_values_verbatim_and_inventory_listing_is_masked():
     with tempfile.TemporaryDirectory() as tmp:
-        env = run_script(tmp, JINJA, ANSIBLE_LOCALHOST_WARNING='False')
+        env = run_script(tmp, MINIMAL, ADMIN_PASSWORD=JINJA, ANSIBLE_LOCALHOST_WARNING='False')
         launcher = Path(tmp) / 'inventory.sh'
         launcher.write_text(f'#!/bin/sh\ntr "\\0" " " < /proc/$PPID/cmdline >> {tmp}/asked\necho >> {tmp}/asked\n'
                             f'exec {sys.executable} {SCRIPT} "$@"\n', encoding='utf-8')

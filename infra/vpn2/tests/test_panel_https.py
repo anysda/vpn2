@@ -333,3 +333,19 @@ def test_extra_routes_answer_before_the_panel_and_survive_the_stage(tmp_path):
         assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard'), 'стадия 30 сняла маршрут мастера'
         assert routes('').returncode == 0
         proxy.assert_https_open()
+
+
+def test_pair_swapped_by_the_timer_restarts_nothing_on_the_next_stage():
+    """Отпечаток перезапуска Caddy без пары сайта: её меняет таймер, повторный деплой не видит правки."""
+    from unittest.mock import patch
+    from vpn2 import firewall, svc
+    from vpn2.containers import panel
+    calls = []
+    with patch.object(firewall, 'ufw_reconcile'), patch.object(svc, 'restart_if_changed', return_value=False) as restart, \
+            patch.object(panel.subprocess, 'run', side_effect=lambda argv, **_: calls.append(argv)
+                         or subprocess.CompletedProcess(argv, 0)):
+        assert panel.caddy() is False
+        assert ['systemctl', 'reload', 'caddy'] not in calls
+        assert panel.caddy(pair=True) is True
+    assert not [path for path in restart.call_args[0][1] if tls.SITE_CERT in path or tls.SITE_KEY in path]
+    assert calls.count(['systemctl', 'reload', 'caddy']) == 1

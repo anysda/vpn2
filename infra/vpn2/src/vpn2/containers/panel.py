@@ -312,7 +312,8 @@ class Openvpn:
 
 
 def host_tls(environ, tx):
-    """Caddyfile, вставки и пара сайта (vpn2 tls --prepare) под охраной выпуска панели; вернуть, менялся ли Caddyfile."""
+    """Caddyfile, вставки и пара сайта (vpn2 tls --prepare) под охраной выпуска панели;
+    вернуть, менялись ли Caddyfile и пара сайта."""
     domain, entry = environ.get('PANEL_DOMAIN') or '', environ['ENTRY_HOST']
     if domain:
         host, out = domain, f'{TLS_DIR}/domain'
@@ -321,23 +322,29 @@ def host_tls(environ, tx):
         host, out = entry, f'{TLS_DIR}/ip'
         say(f"  домен не задан — HTTPS на IP {entry} (Let's Encrypt, ~6 дней)")
     tx.guard_files([*CADDY, TLS_CONFIG, SECURE, MANAGED, OVPN_CONF])
-    before = _read(CADDY[0])
+    before = [_read(path) for path in CADDY[:4]]
     subprocess.run(
         [*TLS, '--prepare', '--role', 'panel', '--config', TLS_CONFIG, '--host', host,
          '--secure-file', SECURE, '--output-dir', out,
          '--acme-url', environ.get('TLS_ACME_URL') or 'https://acme-v02.api.letsencrypt.org/directory',
          '--acme-root', environ.get('TLS_ACME_ROOT') or ''], check=True)
-    return _read(CADDY[0]) != before
+    after = [_read(path) for path in CADDY[:4]]
+    return after[0] != before[0], after[2:] != before[2:]
 
 
-def caddy():
-    """Правила ufw и перезапуск Caddy при смене входов; пару сайта дальше меняет сам vpn2 tls."""
+def caddy(pair=False):
+    """Правила ufw; перезапуск Caddy при смене Caddyfile или окна выпуска, новая пара сайта -
+    перезагрузкой: её меняет и таймер vpn2 tls, отпечаток перезапуска её не помнит."""
     from vpn2 import firewall
     firewall.ufw_reconcile('caddy HTTP + ACME challenge', ['80/tcp'], ['caddy HTTP панель'])
     firewall.ufw_reconcile('caddy HTTPS панель', ['443/tcp'])
     if subprocess.run(['caddy', 'validate', '--config', CADDY[0]], check=False, capture_output=True).returncode:
         raise StageError('конфиг caddy невалиден')
-    return svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', *CADDY[:4]])
+    if svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', *CADDY[:2]]):
+        return True
+    if pair:
+        subprocess.run(['systemctl', 'reload', 'caddy'], check=True)
+    return pair
 
 
 def diagnose(docker, http_up, kept):
@@ -409,8 +416,9 @@ def stage(environ, docker, tx, image):
     tx.files_restored = openvpn.restored
     # Флаг Secure панель читает только при старте: прежнее false требует перезапуска.
     secure = _read(SECURE)
-    changed |= host_tls(environ, tx)
-    changed |= caddy()
+    caddyfile, pair = host_tls(environ, tx)
+    changed |= caddyfile
+    changed |= caddy(pair)
 
     say('[4/4] run container')
     stamp = compose.prepare_host(STAGE)

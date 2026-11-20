@@ -15,7 +15,8 @@ def root_with(tmp_path, text):
 
 
 def config(tags):
-    exits = ''.join(f'  - {{tag: {tag}, host: 203.0.113.{n}}}\n' for n, tag in enumerate(tags, 1))
+    # Экзит пишется и `root@адрес`: наблюдателю нужен сам адрес.
+    exits = ''.join(f'  - {{tag: {tag}, host: {"root@" * (n % 2 == 0)}203.0.113.{n}}}\n' for n, tag in enumerate(tags, 1))
     return 'entry: {host: 198.51.100.1}\nexits:' + (' []\n' if not tags else '\n' + exits)
 
 

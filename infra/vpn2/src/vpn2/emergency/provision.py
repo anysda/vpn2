@@ -30,7 +30,8 @@ def provision(root):
         entry_id = '__entry__'
         nodes = {entry_id: {'host': config['entry']['host'], 'port': 51821}}
         for item in config['exits']:
-            nodes[item['tag']] = {'host': item['host'], 'port': 51821}
+            # config.yaml уже проверен деплоем: экзит `root@адрес` - тот же адрес.
+            nodes[item['tag']] = {'host': item['host'].rpartition('@')[2], 'port': 51821}
         if len(nodes) != len(config['exits']) + 1 or len(nodes) > 65:
             raise ValueError('invalid observer membership')
         for node in nodes:

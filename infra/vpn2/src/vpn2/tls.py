@@ -34,15 +34,16 @@ DAY = 86400
 SHORTLIVED = 160 * 3600
 IP_RENEW_AFTER = 5 * DAY
 DOMAIN_RENEW_BEFORE = 7 * DAY
-# The pair the panel site serves; extra routes (the install wizard) go before the panel.
-SITE_CERT, SITE_KEY, ROUTES = 'vpn2-site.crt', 'vpn2-site.key', 'vpn2-site.d'
+# The pair the panel site serves; extra routes (the install wizard) go before the panel. With a domain the
+# entry IP may have a site of its own (the wizard keeps its IP pair while the panel moves to the domain).
+SITE_CERT, SITE_KEY, ROUTES, SITES = 'vpn2-site.crt', 'vpn2-site.key', 'vpn2-site.d', 'vpn2-sites.d'
 PANEL_CADDYFILE = '''{
     # :80 только переадресует на HTTPS. Сайт панели без имени отдаёт выгруженную пару (CA или
     # самоподписанную); ACME - на сайте loopback: два сайта с одним именем Caddy не принимает,
     # а без ignore_loaded_certs не выпускает имя, для которого пара уже загружена. Одной строкой:
-    # второй auto_https заменил бы первый.
+    # второй auto_https заменил бы первый. Без SNI (браузер по IP) - имя рукопожатия IP entry.
     auto_https disable_redirects ignore_loaded_certs
-    default_sni @HOST@
+    default_sni @SNI@
     # Без HTTP/3: Caddy держал бы *:443/udp, нужный sing-box для возврата UDP через tproxy.
     servers {
         protocols h1 h2
@@ -139,9 +140,11 @@ def exit_caddyfile(config):
 
 
 def panel_caddyfile(config):
-    replace = {'@HOST@': config['host'], '@AUTHORITY@': authority(config['host']),
+    replace = {'@HOST@': config['host'], '@SNI@': config.get('sni') or config['host'], '@AUTHORITY@': authority(config['host']),
                '@PORT@': str(config.get('local_port', 8443)), '@DIR@': config['caddy_dir']}
-    return re.sub('|'.join(replace), lambda match: replace[match[0]], PANEL_CADDYFILE)
+    text = re.sub('|'.join(replace), lambda match: replace[match[0]], PANEL_CADDYFILE)
+    # На IP сайт IP - это сайт панели (второй с тем же именем Caddy не принимает: у ACME уже есть).
+    return text if is_ip(config['host']) else f"{text}import {config['caddy_dir']}/{SITES}/*.conf\n"
 
 
 def certificate(cert, key, host, now):
@@ -417,7 +420,7 @@ def prepare(args):
     config = {'role': args.role, 'host': args.host, 'output_dir': args.output_dir,
               'acme_url': args.acme_url, 'acme_root': args.acme_root, 'storage': args.storage,
               'caddy_dir': str(caddy_dir), 'notify_hours': 6, 'cert_group': args.cert_group,
-              'local_port': args.local_port}
+              'local_port': args.local_port, 'sni': args.sni or args.host}
     if args.role == 'panel':
         config.update(secure_file=args.secure_file, bot_secret=args.bot_secret)
     atomic(args.config, json.dumps(config))
@@ -452,21 +455,24 @@ def ip_certificate(host, wait=60, acme_url=LE, acme_root=''):
     return read_json('/etc/vpn2/tls/state.json', {}).get('self_signed', '')
 
 
-def serve_routes(name, routes, caddy_dir='/etc/caddy'):
+def serve_routes(name, routes, caddy_dir='/etc/caddy', site=''):
     """Routes ahead of the panel on its HTTPS site, kept by stage 30's Caddyfile; '' removes them.
-    Write `route { ... }` / `handle { ... }` blocks: Caddy orders them before the panel proxy."""
+    Write `route { ... }` / `handle { ... }` blocks: Caddy orders them before the panel proxy.
+    site - a site block of its own (`https://<entry IP> { ... }`), live only while the panel is on a domain;
+    the Caddyfile snippets (to_panel) work in both."""
     if not re.fullmatch(r'[a-z0-9-]+', name):
         raise ValueError('invalid routes name')
-    path = Path(caddy_dir) / ROUTES / f'{name}.conf'
-    previous = read_text(path)
-    if previous == routes:
+    paths = {Path(caddy_dir) / ROUTES / f'{name}.conf': routes, Path(caddy_dir) / SITES / f'{name}.conf': site}
+    previous = {path: read_text(path) for path in paths}
+    if previous == paths:
         return
 
-    def write(text):
-        path.parent.mkdir(exist_ok=True)
-        atomic(path, text, 0o644) if text else path.unlink(missing_ok=True)
+    def write(texts):
+        for path, text in texts.items():
+            path.parent.mkdir(exist_ok=True)
+            atomic(path, text, 0o644) if text else path.unlink(missing_ok=True)
 
-    write(routes)
+    write(paths)
     try:
         subprocess.run(['caddy', 'validate', '--config', str(Path(caddy_dir) / 'Caddyfile')],
                        capture_output=True, check=True, timeout=20)
@@ -485,6 +491,7 @@ def main(argv=None):
     parser.add_argument('--bot-secret', default='/run/vpn2-secrets/root/tgbot_secret')
     parser.add_argument('--role', choices=('panel', 'exit'), default='panel')
     parser.add_argument('--host')
+    parser.add_argument('--sni', default='', help='entry IP: the name of a handshake without SNI')
     parser.add_argument('--output-dir', default='/etc/vpn2/tls/ip')
     parser.add_argument('--acme-url', default=LE)
     parser.add_argument('--acme-root', default='')

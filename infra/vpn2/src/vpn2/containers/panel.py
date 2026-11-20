@@ -324,7 +324,7 @@ def host_tls(environ, tx):
     tx.guard_files([*CADDY, TLS_CONFIG, SECURE, MANAGED, OVPN_CONF])
     before = [_read(path) for path in CADDY[:4]]
     subprocess.run(
-        [*TLS, '--prepare', '--role', 'panel', '--config', TLS_CONFIG, '--host', host,
+        [*TLS, '--prepare', '--role', 'panel', '--config', TLS_CONFIG, '--host', host, '--sni', entry,
          '--secure-file', SECURE, '--output-dir', out,
          '--acme-url', environ.get('TLS_ACME_URL') or 'https://acme-v02.api.letsencrypt.org/directory',
          '--acme-root', environ.get('TLS_ACME_ROOT') or ''], check=True)

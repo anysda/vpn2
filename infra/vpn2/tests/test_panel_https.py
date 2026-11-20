@@ -313,25 +313,43 @@ def test_fallback_is_in_the_unit_journal_once(installed, tmp_path):
     assert not (entry.dir / 'logger.log').exists()
 
 
-def test_extra_routes_answer_before_the_panel_and_survive_the_stage(tmp_path):
-    """Мастер установки: свой маршрут на сайте панели до стадии 30 и после неё; неверный откатывается."""
+@pytest.mark.parametrize('domain', ['', DOMAIN], ids=['ip', 'domain'])
+def test_own_site_on_the_ip_survives_the_stage_with_its_pair(domain, tmp_path):
+    """Мастер установки: свой сайт на IP entry со своей парой до стадии 30 и после неё, в том числе когда стадия
+    перевела панель на домен (браузер по IP приходит без SNI); неверный откатывается; /api/version - панели."""
     entry = Entry(tmp_path, '')
     entry.tick(initial=True)
+    caddy_dir = entry.dir / 'etc/caddy'
+    for suffix in ('crt', 'key'):
+        shutil.copy(caddy_dir / f'vpn2-site.{suffix}', caddy_dir / f'wizard.{suffix}')
 
-    def routes(text):
-        code = f'from vpn2 import tls; tls.serve_routes("wizard", {text!r}, {str(entry.dir / "etc/caddy")!r})'
+    def serve(routes, site=''):
+        code = (f'from vpn2 import tls; tls.serve_routes("wizard", {routes!r}, {str(caddy_dir)!r}, {site!r})')
         return subprocess.run([sys.executable, '-c', code], env=entry.env, capture_output=True, text=True, timeout=60)
 
-    wizard = 'route {\n    respond "wizard" 200\n}\n'
+    routes = '@wizard not path /api/version\nroute @wizard {\n    respond "wizard" 200\n}\n'
+    site = (f'https://{IP} {{\n    tls {caddy_dir}/wizard.crt {caddy_dir}/wizard.key\n'
+            '    handle /api/version {\n        import to_panel\n    }\n    respond "wizard" 200\n}\n')
+
+    def served(proxy):
+        with socket.create_connection(('127.0.0.1', proxy.https), timeout=5) as sock, \
+                ssl._create_unverified_context().wrap_socket(sock) as wrapped:
+            return wrapped.getpeercert(True)
+
     with entry.serve() as proxy:
-        assert routes(wizard).returncode == 0
+        assert serve(routes, site).returncode == 0
         assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard')
-        assert routes('route {\n    respond "wizard" 200\n').returncode != 0, 'неверный блок принят'
+        assert serve(routes[:-2], site).returncode != 0, 'неверный блок принят'
         assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard')
+    entry.domain, entry.host = domain, domain or IP
     entry.deploy()
     with entry.serve() as proxy:
-        assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard'), 'стадия 30 сняла маршрут мастера'
-        assert routes('').returncode == 0
+        assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard'), 'стадия 30 сняла сайт мастера'
+        assert proxy.get(IP, '/api/version', tls_on=True)[::2] == (200, MARK)
+        assert served(proxy) == ssl.PEM_cert_to_DER_cert((caddy_dir / 'wizard.crt').read_text()), 'не пара IP'
+        if domain:
+            assert proxy.get(DOMAIN, '/api/version', tls_on=True, sni=DOMAIN)[::2] == (200, MARK)
+        assert serve('').returncode == 0
         proxy.assert_https_open()
 
 

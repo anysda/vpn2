@@ -55,7 +55,7 @@ def test_ip_without_domain_gets_https_site_with_shortlived_profile(tmp_path):
     assert f'https://192.0.2.1:8443 {{\n    bind 127.0.0.1\n    import {caddy_dir}/vpn2-tls.conf' in caddyfile
     assert (f'https://:443 {{\n    tls {caddy_dir}/vpn2-site.crt {caddy_dir}/vpn2-site.key\n'
             f'    import {caddy_dir}/vpn2-site.d/*.conf\n    @foreign not host 192.0.2.1\n    abort @foreign\n') in caddyfile
-    assert ':80 {\n    redir https://192.0.2.1{uri} permanent' in caddyfile
+    assert ':80 {\n    redir https://192.0.2.1{uri} permanent' in caddyfile and 'vpn2-sites.d' not in caddyfile
     adapted = json.loads(subprocess.run([caddy(), 'adapt', '--config', str(caddy_dir / 'Caddyfile')],
                                         capture_output=True, text=True, check=True).stdout)
     for server in adapted['apps']['http']['servers'].values():
@@ -80,6 +80,9 @@ def test_domain_window_is_seven_days_before_expiry(tmp_path):
     caddyfile = (tmp_path / 'etc/caddy/Caddyfile').read_text()
     assert f'https://vpn.example.test:8443 {{\n    bind 127.0.0.1\n    import {tmp_path}/etc/caddy/vpn2-tls.conf' in caddyfile
     assert '@foreign not host vpn.example.test\n' in caddyfile and 'redir https://vpn.example.test{uri}' in caddyfile
+    # Браузер по IP приходит без SNI: имя рукопожатия - IP entry, у него может быть свой сайт (мастер установки).
+    assert 'default_sni 192.0.2.1\n' in caddyfile
+    assert caddyfile.endswith(f'}}\nimport {tmp_path}/etc/caddy/vpn2-sites.d/*.conf\n')
     assert 'profile' not in policy
     assert window(policy) * 90 == pytest.approx(7, abs=1e-6)
     validate(tmp_path / 'etc/caddy/Caddyfile')

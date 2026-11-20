@@ -783,6 +783,7 @@ backup_key_shown() {  # <имя прогона entry_run>
 }
 
 # Опись состояния entry для отказов restore: данные и ключи, клиенты в базе, наши службы и контейнеры.
+# ikev2-status.json пишет служба синхронизации IKEv2 сама, по расписанию.
 # entry_fingerprint <имя> - опись в $STAND_DIR/fp-<имя>; same_fingerprint <до> <после> - равны, иначе разница в лог.
 same_fingerprint() {
   diff "$STAND_DIR/fp-$1" "$STAND_DIR/fp-$2" | head -20 | sed 's/^/    /' >&2
@@ -792,7 +793,7 @@ same_fingerprint() {
 entry_fingerprint() {
   ssh_node "$ENTRY" 'set -o pipefail
     { find /etc/anysda /etc/wireguard /etc/openvpn /etc/swanctl /var/lib/vpn2-secrets /var/lib/caddy /var/lib/anysda-vpn2 \
-        /opt/anysda-vpn2/config.yaml -xdev -type f ! -name "db.sqlite*" -print0 2>/dev/null | sort -z | xargs -0 sha256sum
+        /opt/anysda-vpn2/config.yaml -xdev -type f ! -name "db.sqlite*" ! -name "ikev2-status.json*" -print0 2>/dev/null | sort -z | xargs -0 sha256sum
       sqlite3 -readonly /var/lib/anysda-vpn2/db.sqlite "SELECT id, name FROM clients ORDER BY id; SELECT id, client_id, name FROM devices ORDER BY id"
       systemctl list-units --type=service,timer --state=active --no-legend --plain | awk "{print \$1}" \
         | grep -E "^(anysda|vpn2|sing-box|openvpn|strongswan|wg-quick|caddy|docker)" | sort

@@ -7,8 +7,8 @@ import type { State } from '../api'
 const props = defineProps<{ state: State }>()
 const panel = props.state.draft.panel
 
-const byDomain = ref(panel.domain !== null)
-const domain = ref(panel.domain ?? '')
+const byDomain = ref(!!panel.domain)
+const domain = ref(panel.domain)
 const user = ref(panel.admin_user)
 const password = ref('')
 const reveal = ref(false)
@@ -18,7 +18,7 @@ const ready = computed(() => (!byDomain.value || !!domain.value.trim()) && !!use
 defineExpose({
   ready,
   collect: () => ({
-    patch: { panel: { domain: byDomain.value ? domain.value.trim() : null, admin_user: user.value.trim() } },
+    patch: { panel: { domain: byDomain.value ? domain.value.trim() : '', admin_user: user.value.trim() } },
     secrets: password.value ? { admin_password: password.value } : {},
   }),
 })

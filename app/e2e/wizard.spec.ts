@@ -50,6 +50,8 @@ test('мастер установки: экраны, отказы, ход уст
     await exitForm().getByPlaceholder('de').fill('nl')
     await exitForm().getByRole('button', { name: 'Проверить', exact: true }).click()
     await expect(exitForm().getByRole('alert')).toContainText('нет ключа оркестратора')
+    // Проверенная строка уже в черновике: пока не выбран путь, дальше нельзя.
+    await expect(page.getByTestId('exit-row')).toContainText('не годен')
     await shot('1-check-failed')
     await page.getByRole('button', { name: 'Продолжить без него' }).click()
     await expect(page.getByTestId('exit-row')).toHaveCount(1)
@@ -74,10 +76,11 @@ test('мастер установки: экраны, отказы, ход уст
       await exitForm().getByPlaceholder('root@203.0.113.10').fill(host!)
       await exitForm().getByPlaceholder('de').fill(tag!)
       await exitForm().getByRole('button', { name: 'Проверить', exact: true }).click()
+      if (host === 'root@203.0.113.13') break
       await expect(exitForm().getByText('сервер годен')).toBeVisible()
       await page.getByRole('button', { name: 'Добавить' }).click()
     }
-    await expect(page.getByRole('alert').filter({ hasText: 'Тег «de» уже занят другим экзитом' })).toBeVisible()
+    await expect(exitForm().getByText('Тег «de» уже есть в списке экзитов')).toBeVisible()
     await expect(page.getByTestId('exit-row')).toHaveCount(2)
     await shot('1-duplicate-tag')
     // Третий экзит без ключа остаётся пропущенным до установки.
@@ -222,9 +225,9 @@ test('мастер установки: экраны, отказы, ход уст
     await page.close()
     const systems = [
       { name: 'Экзит DE', state: 'ok', detail: 'работает' }, { name: 'Экзит NL', state: 'ok', detail: 'работает' },
-      { name: 'Экзит FI', state: 'warn', detail: 'пропущен при установке - добавьте в настройках панели' },
+      { name: 'Экзит FI', state: 'warning', detail: 'пропущен при установке - добавьте в настройках панели' },
       { name: 'VLESS, Hysteria2, WireGuard, OpenVPN, IKEv2', state: 'ok', detail: 'работают' },
-      { name: 'Панель', state: 'warn', detail: 'сертификат самоподписанный, отпечаток SHA-256 AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89' },
+      { name: 'Панель', state: 'warning', detail: 'сертификат самоподписанный, отпечаток SHA-256 AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89' },
       { name: 'Telegram-бот', state: 'ok', detail: 'на связи' }, { name: 'Бэкапы', state: 'ok', detail: 'каждую ночь на этом сервере' },
       { name: 'Мониторинг', state: 'ok', detail: 'все узлы на связи' },
     ]
@@ -237,7 +240,7 @@ test('мастер установки: экраны, отказы, ход уст
     await expect(page.locator('code.wzwarn')).toHaveCount(2)
     await expect(page.getByRole('link', { name: 'Открыть панель' })).toHaveAttribute('href', 'https://vpn.example.com/')
     await shot('8-done-warnings')
-    await set({ status: { panel_url: 'https://203.0.113.1/', systems: [...systems.slice(0, 6), { name: 'Бэкапы', state: 'fail', detail: 'S3 не принял ключи: проверьте access key' }, systems[7]] } })
+    await set({ status: { panel_url: 'https://203.0.113.1/', systems: [...systems.slice(0, 6), { name: 'Бэкапы', state: 'failed', detail: 'S3 не принял ключи: проверьте access key' }, systems[7]] } })
     await page.reload()
     await expect(page.locator('code.wzbad')).toHaveCount(1)
     await shot('8-done-failure')
@@ -249,7 +252,7 @@ test('мастер установки: экраны, отказы, ход уст
     await page.reload()
     await expect(page.getByRole('button', { name: 'Повторить' })).toBeVisible()
     await shot('7-phone')
-    await set({ phase: 'filling', job: null, screen: 1 })
+    await set({ phase: 'filling', job: null, draft: { step: 1 } })
     await page.reload()
     await expect(page.getByTestId('exit-row')).toHaveCount(3)
     await shot('1-phone')

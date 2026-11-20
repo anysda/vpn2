@@ -15,8 +15,8 @@ onMounted(async () => {
   }
 })
 
-const COLOR = { ok: 'var(--green)', warn: 'var(--amber)', fail: 'var(--red)' }
-const failed = computed(() => status.value?.systems.some(s => s.state === 'fail'))
+const COLOR = { ok: 'var(--green)', warning: 'var(--amber)', failed: 'var(--red)' }
+const failed = computed(() => status.value?.systems.some(s => s.state === 'failed'))
 </script>
 
 <template>
@@ -27,7 +27,7 @@ const failed = computed(() => status.value?.systems.some(s => s.state === 'fail'
       <p class="mt">{{ failed ? 'Установка закончилась, но не всё работает: что не так - в строках ниже.' : 'Установка закончилась, всё работает.' }}</p>
       <div v-for="s in status.systems" :key="s.name" class="fld wzsys" data-testid="system">
         <span><i class="dot" :style="{ background: COLOR[s.state] }" />{{ s.name }}</span>
-        <code :class="{ wzwarn: s.state === 'warn', wzbad: s.state === 'fail' }">{{ s.detail }}</code>
+        <code :class="{ wzwarn: s.state === 'warning', wzbad: s.state === 'failed' }">{{ s.detail }}</code>
       </div>
       <div class="mf">
         <a class="pill w" :href="status.panel_url" rel="noopener">Открыть панель</a>

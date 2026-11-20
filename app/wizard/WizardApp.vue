@@ -2,7 +2,7 @@
 // Мастер установки: одна карточка, шаги сверху. Всё состояние - на сервере: страница читает его
 // при открытии и открывает нужный экран; назад/вперёд браузера ходят по шагам черновика.
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { call, expired, offlineSince, readState, refusal, start, type Patch, type State } from './api'
+import { call, exitsReady, expired, offlineSince, putDraft, readState, refusal, start, type Patch, type State } from './api'
 import StepExits from './steps/StepExits.vue'
 import StepPanel from './steps/StepPanel.vue'
 import StepTelegram from './steps/StepTelegram.vue'
@@ -24,11 +24,13 @@ const error = ref('')
 const now = ref(Date.now())
 const lost = computed(() => offlineSince.value !== null && now.value - offlineSince.value >= 10_000)
 
-/** Дальше этого экрана черновик не пускает: на нём ещё не всё нужное. */
-function firstIncomplete({ draft, secrets, backup_key }: State) {
-  if (!draft.admin_ssh_key.trim() || !draft.exits.some(e => !e.skipped)) return 1
-  if (!draft.panel.admin_user || !secrets.admin_password) return 2
-  if (backup_key !== 'seen') return 4
+/** Дальше этого экрана черновик не пускает: на нём ещё не всё, без чего сервер не начнёт установку. */
+function firstIncomplete({ draft: d, secrets: s, backup_key }: State) {
+  if (!d.admin_ssh_key.trim() || !exitsReady(d.exits)) return 1
+  if (!d.panel.admin_user || !s.admin_password) return 2
+  if (d.telegram.enabled && (!d.telegram.chat_id || !s.telegram_bot_token)) return 3
+  const s3 = d.backup.s3
+  if (backup_key !== 'seen' || (d.backup.target === 's3' && !(s3.endpoint && s3.bucket && s.s3_access_key && s.s3_secret_key))) return 4
   return 6
 }
 const reachable = computed(() => state.value?.phase === 'filling' ? firstIncomplete(state.value) : 0)
@@ -47,14 +49,14 @@ async function load() {
   if (!next) return
   const first = !screen.value
   state.value = next
-  const wanted = first ? next.screen : screen.value
+  const wanted = first ? next.draft.step : screen.value
   if (next.phase !== 'filling') show(next.phase === 'installing' ? 7 : 8, !first)
   else show(Math.min(Math.max(wanted, 1), 6, firstIncomplete(next)), !first)
 }
 
 function go(n: number) {
   show(n)
-  call('PUT', '/api/draft', { screen: n }).catch(() => {})
+  putDraft({ step: n }).catch(() => {})
 }
 
 async function next() {
@@ -65,7 +67,7 @@ async function next() {
     if (screen.value === 6) await call('POST', '/api/install')
     else {
       for (const [name, value] of Object.entries(secrets ?? {})) await call('PUT', `/api/secret/${name}`, { value })
-      await call('PUT', '/api/draft', { ...patch, screen: screen.value + 1 })
+      await putDraft({ ...patch, step: screen.value + 1 })
       await then?.()
     }
     const done = screen.value

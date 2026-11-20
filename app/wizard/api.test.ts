@@ -32,9 +32,9 @@ describe('транспорт мастера', () => {
 
   it('401 - ссылка устарела, отказ - текст сервера как есть', async () => {
     vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(reply(409, { message: 'Тег «de» уже занят другим экзитом' }))
-      .mockResolvedValueOnce(reply(401, { message: 'нет сессии' })))
-    await expect(call('PUT', '/api/draft', { exits: [] })).rejects.toEqual(new Refused('Тег «de» уже занят другим экзитом'))
+      .mockResolvedValueOnce(reply(409, { refused: 'Тег «de» уже есть в списке экзитов' }))
+      .mockResolvedValueOnce(reply(401, { refused: 'Ссылка устарела - запустите ./deploy.sh ещё раз' })))
+    await expect(call('PUT', '/api/draft', { exits: [] })).rejects.toEqual(new Refused('Тег «de» уже есть в списке экзитов'))
     await expect(call('GET', '/api/state')).rejects.not.toBeInstanceOf(Refused)
     expect(expired.value).toBe(true)
   })
@@ -43,7 +43,7 @@ describe('транспорт мастера', () => {
     const job = { id: 1, state: 'interrupted', actions: ['retry', 'forget'] }
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(reply(200, { phase: 'installing', job }))
-      .mockResolvedValueOnce(reply(200, job)))
+      .mockResolvedValueOnce(reply(200, { job })))
     expect((await readState()).job?.actions).toEqual(['retry'])
     expect((await transport.job(1)).actions).toEqual(['retry'])
   })

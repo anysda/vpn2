@@ -2,6 +2,8 @@
 _ = None
 
 _.do_POST  # http.server: обработчик метода запроса (infra/tests/backup-restore.py)
+_.do_PUT  # http.server: обработчик метода запроса (vpn2/wizard.py)
+_.daemon_threads  # socketserver.ThreadingMixIn: потоки запросов не держат выход (vpn2/wizard.py)
 _.log_message  # http.server: журнал запросов обработчика (backup-restore.py, test_emergency_parts.py)
 _.read_timeout  # telegram.request.BaseRequest: свойство транспорта (telegram/tests/harness.py)
 _.initialize  # telegram.request.BaseRequest: запуск транспорта (telegram/tests/harness.py)

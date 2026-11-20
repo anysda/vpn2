@@ -436,7 +436,6 @@ def site(ip):
 
 class Handler(http.server.BaseHTTPRequestHandler):
     wizard = None
-    server_version, sys_version = 'vpn2', ''
 
     def log_message(self, *_args):
         """Журнала запросов нет: ни адресов, ни путей."""

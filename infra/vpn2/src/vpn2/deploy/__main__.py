@@ -15,7 +15,7 @@ import sys
 from vpn2 import creds
 from vpn2.config import STATE_DIR, drop_passwords
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, E, admin_key_check, die, finish_secrets, install_prereqs,
-                         migrate_state, ok, orchestrator_key, pub, read, report, step, svc, take_secrets)
+                         installed, migrate_state, ok, orchestrator_key, pub, read, report, step, svc, take_secrets)
 from vpn2.deploy.run import EXIT_FIRST, EXIT_STAGES, Deploy, Interrupted
 from vpn2.manager import Progress
 
@@ -29,13 +29,18 @@ def interrupted(code):
     return handler
 
 
-def dispatch(deploy, argv):
+def dispatch(deploy, argv, new_server=None):
     action, scope = (argv[0] if argv else ''), ''
     # Ошибка в аргументах выпуск не открывает: иначе журнал остался бы в applying до recover.
     if action == 'backup':
         return report.backup()
     if action == 'backup-list':
         return subprocess.run(['/usr/local/bin/anysda-backup-list.sh']).returncode
+    if action == 'restore' and '--dry-run' not in argv[1:] and (not installed() if new_server is None else new_server):
+        # Новый сервер: ключи и секреты архива - до ключа оркестратора, затем деплой и restore архива поверх.
+        found = report.fresh_secrets(argv[1:])
+        flags = [arg for arg in argv[1:] if arg.startswith('-') and arg != '--force']
+        return dispatch(deploy, []) or dispatch(deploy, ['restore', found, '--force', *flags], new_server=False)
     if action == 'restore':
         if '--dry-run' in argv[1:]:
             return report.restore(deploy, argv[1:])[0]
@@ -141,6 +146,9 @@ def main(argv):
     # Пароль админа доходит до стадии панели окружением. Не задан, а базы панели ещё нет - новый.
     if not password and argv[:1] in ([], ['recover']) and not panel_admin():
         password = generated = secrets.token_urlsafe(13)[:18]
+    # restore нового сервера: панели деплоя нужен пароль, админ с паролем придёт из архива - этот не показывается.
+    if not password and argv[:1] == ['restore'] and not installed():
+        password = secrets.token_urlsafe(13)[:18]
     if password:
         os.environ['ADMIN_PASSWORD'] = password
     deploy, code, progress = None, 1, Progress.from_env()

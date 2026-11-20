@@ -275,9 +275,10 @@ def apt_have(*packages):
     return found.returncode == 0 and all(line == 'installed' for line in found.stdout.splitlines())
 
 
-def install_prereqs():
+def install_prereqs(*extra):
+    """Программы, нужные деплою на этой машине; extra - ещё команды, пакет зовётся как команда."""
     step('проверяю локальные зависимости')
-    commands = ('ssh', 'curl', 'python3', 'openssl')
+    commands = ('ssh', 'curl', 'python3', 'openssl', *extra)
     missing = [name for name in commands if not shutil.which(name)]
     packages = ['openssh-client' if name == 'ssh' else name for name in missing]
     if not apt_have('python3-venv'):
@@ -344,16 +345,28 @@ def orchestrator_key(create=False):
             subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', 'anysda-orchestrator', '-f', f'{work}/key', '-q'],
                            check=True)
             creds.write('orchestrator_key', Path(work, 'key').read_text())
-        public.unlink(missing_ok=True)
         key = creds.key_file('orchestrator_key')
-    if not public.is_file():
-        public.write_text(subprocess.run(['ssh-keygen', '-y', '-f', key], check=True, capture_output=True, text=True).stdout)
+    derive_pub(key, public)
     authorized = public.parent / 'authorized_keys'
     if key_id(public.read_text()) not in map(key_id, read_raw(authorized).splitlines()):
         with open(authorized, 'a') as keys:
             keys.write(public.read_text())
         authorized.chmod(0o600)
     return key
+
+
+def derive_pub(key, public):
+    """Открытая часть - из ключа хранилища: restore мог сменить ключ. Строку прежнего ключа authorized_keys
+    entry теряет, иначе она сошла бы за ключ человека (human_keys)."""
+    text = subprocess.run(['ssh-keygen', '-y', '-f', key], check=True, capture_output=True, text=True).stdout
+    old = key_id(read_raw(public))
+    if old == key_id(text):
+        return
+    authorized = public.parent / 'authorized_keys'
+    if old and authorized.is_file():
+        authorized.write_text(''.join(line for line in authorized.read_text().splitlines(keepends=True)
+                                      if key_id(line) != old))
+    public.write_text(text)
 
 
 def ssh_options(state=STATE_DIR):
@@ -426,10 +439,7 @@ def prep_keys():
             subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-C', 'anysda-entry-mgmt', '-f', f'{work}/key'],
                            check=True)
             creds.write('mgmt_key', Path(work, 'key').read_text())
-        mgmt.unlink(missing_ok=True)
-    if not mgmt.is_file():
-        mgmt.write_text(subprocess.run(['ssh-keygen', '-y', '-f', creds.key_file('mgmt_key')], check=True,
-                                       capture_output=True, text=True).stdout)
+    derive_pub(creds.key_file('mgmt_key'), mgmt)
     shutil.copyfile(mgmt, out / 'entry_mgmt_key')
     (out / 'entry_mgmt_key').chmod(0o600)
     # Ключ человека на entry - не свой ключ узла: заданный у хостера или админом.

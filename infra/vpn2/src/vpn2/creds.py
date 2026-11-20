@@ -29,7 +29,7 @@ SHARED = {'panel': ('vpn2-panel', ('session_secret', 'tgbot_secret', 'adguard_pa
 CLASH = Path('/etc/anysda/clash-secret.txt')
 # Секреты, которые задают в панели: она кладёт файл в inbox/, юнит vpn2-secrets-inbox переносит его в хранилище.
 INBOX = ('telegram_bot_token', 'sso_client_secret')
-# Ключи ssh самой entry: в бэкап не идут, restore их не меняет - ими эта entry ходит на экзиты.
+# Ключи ssh entry: их знают экзиты, поэтому ключи из архива сильнее ключей этого сервера.
 MACHINE = ('orchestrator_key', 'mgmt_key')
 # Места 1.2.0: секрет переезжает в хранилище, файл удаляется. Пароль админа не переезжает никуда.
 LEGACY_FILES = {'session_secret': '/etc/anysda/session-secret.txt', 'tgbot_secret': '/etc/anysda/tgbot-secret.txt',
@@ -209,16 +209,27 @@ def adopt(root='/'):
 
 
 def bundle(target):
-    """Секреты открытым JSON в набор бэкапа: архив целиком зашифрован, restore шифрует их ключом нового сервера."""
-    values = {name: read(name) for name in NAMES if name not in MACHINE}
+    """Секреты и ключи ssh entry открытым JSON в набор бэкапа: архив целиком зашифрован, restore шифрует их
+    ключом нового сервера."""
+    values = {name: read(name) for name in NAMES}
     fsutil.write_json(target, {name: value for name, value in values.items() if value})
 
 
 def unbundle(source):
-    """Секреты из набора бэкапа - в хранилище этого сервера."""
+    """Секреты из набора бэкапа - в хранилище этого сервера. Вернуть ключи ssh, которые архив сменил."""
+    replaced = []
     for name, value in fsutil.read_json(source).items():
-        if name in NAMES and name not in MACHINE and isinstance(value, str):
-            write(name, value)
+        if name in NAMES and isinstance(value, str) and value:
+            before = read(name)
+            if write(name, value) and name in MACHINE and before:
+                replaced.append(name)
+    return replaced
+
+
+def replaced_note(replaced):
+    """Строка оператору: ключ этого сервера заменён ключом из архива."""
+    return (f'ключи ssh из архива ({", ".join(replaced)}) заменили ключи этого сервера: экзиты знают ключи из архива'
+            if replaced else '')
 
 
 def main(argv):

@@ -893,7 +893,8 @@ def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE):
         mark_good(rb)
         # Секреты - ключом этого сервера; архив 1.2.0 вернул их в прежние места, они переезжают в хранилище.
         if (Path(bundle) / run_backup.SECRETS).is_file():
-            creds.unbundle(Path(bundle) / run_backup.SECRETS)
+            if note := creds.replaced_note(creds.unbundle(Path(bundle) / run_backup.SECRETS)):
+                print(f'anysda-restore: {note}', flush=True)
         creds.adopt(root)
         stages_env = stage_env(source_root, work)
         fail = resync(source_root, stages_env, work)

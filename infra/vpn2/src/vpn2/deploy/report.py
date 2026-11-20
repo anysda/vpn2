@@ -5,11 +5,14 @@ import os
 import re
 import subprocess
 import sys
+import tarfile
+import tempfile
 import urllib.request
 from pathlib import Path
 
-from vpn2 import creds
-from vpn2.deploy import B, E, G, elapsed, read, warn
+from vpn2 import config, creds
+from vpn2.backup import archive, env as backup_env, restore as node_restore
+from vpn2.deploy import B, E, G, CONFIG, die, elapsed, install_prereqs, prep_keys, read, warn
 
 ETC = Path('/etc/anysda')
 BACKUP, RESTORE = '/usr/local/bin/anysda-backup.sh', '/usr/local/bin/anysda-restore.sh'
@@ -134,10 +137,55 @@ def restore(deploy, args, capture=False):
         return done.returncode, done.stdout or ''
     # Пароль панели - в восстановленной базе: стадии после restore его не задают.
     os.environ['VPN2_PRESERVE_ADMIN'] = '1'
+    # Ключи ssh из архива: открытые части и authorized_keys entry - по ним.
+    prep_keys()
     deploy.load_nodes()
     for stage in RESTAGES:
         deploy.run_stage(stage, 'ru')
     return 0, ''
+
+
+def fresh_settings(cfg):
+    """Настройки бэкапа нового сервера: backup.env ещё нет, всё - из config.yaml и хранилища."""
+    backup = cfg.raw.get('backup') or {}
+    s3, local = backup.get('s3') or {}, backup.get('local') or {}
+    return backup_env.Settings(backend=backup.get('backend') or 'local',
+                               local_dir=local.get('dir') or backup_env.Settings.local_dir,
+                               passphrase=creds.read('backup_passphrase'), s3_endpoint=s3.get('endpoint') or '',
+                               s3_bucket=s3.get('bucket') or '', s3_region=s3.get('region') or backup_env.Settings.s3_region,
+                               s3_access_key=creds.read('s3_access_key'), s3_secret_key=creds.read('s3_secret_key'))
+
+
+def fresh_secrets(args):
+    """restore на новом сервере, до деплоя: секреты и ключи ssh архива - в хранилище. Экзиты знают только ключ
+    из архива, поэтому деплой нового сервера входит на них им, без строки ./deploy.sh -key. Вернуть путь к архиву."""
+    settings = fresh_settings(config.load(CONFIG))
+    install_prereqs('age', *(['rclone'] if settings.backend == 's3' else []))
+    name = args[0] if args and not args[0].startswith('-') else 'latest'
+    try:
+        if os.path.isfile(name):
+            path = Path(name).resolve()
+        else:
+            if name == 'latest':
+                name, _ = node_restore.resolve_latest(settings)
+            path = Path(settings.local_dir) / os.path.basename(name)
+            if not path.is_file():
+                node_restore.s3_pull(settings, path.name)
+        with tempfile.TemporaryDirectory() as work:
+            plain = Path(work) / 'archive.tar.gz'
+            archive.decrypt(path, plain, settings.passphrase)
+            with tarfile.open(plain) as tar:
+                member = next((item for item in tar.getmembers() if item.name.endswith('/secrets.json')), None)
+                if member is not None:
+                    (Path(work) / 'secrets.json').write_bytes(tar.extractfile(member).read())
+            # Архив 1.2.0 без secrets.json: ключ оркестратора уже взят из orchestrator_key config.yaml 1.2.0.
+            if member is not None:
+                print(f'  секреты и ключи ssh из {path.name} - в хранилище нового сервера', flush=True)
+                if note := creds.replaced_note(creds.unbundle(Path(work) / 'secrets.json')):
+                    print(f'  {note}', flush=True)
+    except (node_restore.RestoreError, archive.ArchiveError) as error:
+        die(str(error).removeprefix('anysda-restore: '))
+    return str(path)
 
 
 def restore_preflight(deploy, args):

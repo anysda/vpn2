@@ -1,9 +1,13 @@
 """Хранилище секретов entry (vpn2.creds) и область secrets config.yaml: запись, виды, перенос мест 1.2.0, стирание."""
+import contextlib
 import grp
+import io
 import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -11,6 +15,7 @@ from unittest import mock
 from vpn2 import config, creds, deploy
 
 GROUP = grp.getgrgid(os.getgid()).gr_name
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class Store(unittest.TestCase):
@@ -75,18 +80,23 @@ class WriteReadTests(Store):
         self.assertEqual(len(first), 64)
         self.assertEqual(creds.ensure('session_secret', 64), first)
 
-    def test_bundle_carries_secrets_but_not_machine_keys(self):
+    def test_bundle_carries_machine_keys_and_they_win_on_a_new_server(self):
         creds.write('backup_passphrase', 'pass')
         creds.write('orchestrator_key', 'OLD\n')
+        creds.write('mgmt_key', 'MGMT\n')
         creds.bundle(self.root / 'secrets.json')
-        self.assertEqual(json.loads((self.root / 'secrets.json').read_text()), {'backup_passphrase': 'pass'})
-        # Новый сервер: своё хранилище и свой ключ; restore шифрует секреты им, ключ ssh остаётся новым.
+        self.assertEqual(json.loads((self.root / 'secrets.json').read_text()),
+                         {'backup_passphrase': 'pass', 'orchestrator_key': 'OLD\n', 'mgmt_key': 'MGMT\n'})
+        # Новый сервер: своё хранилище, ./deploy.sh -key уже создал свой ключ; экзиты знают только ключ архива.
         shutil.rmtree(self.root / 'store')
         shutil.rmtree(self.root / 'run')
         creds.write('orchestrator_key', 'NEW\n')
-        (self.root / 'secrets.json').write_text(json.dumps({'backup_passphrase': 'pass', 'orchestrator_key': 'OLD\n'}))
-        creds.unbundle(self.root / 'secrets.json')
-        self.assertEqual((creds.read('backup_passphrase'), creds.read('orchestrator_key')), ('pass', 'NEW\n'))
+        replaced = creds.unbundle(self.root / 'secrets.json')
+        self.assertEqual([creds.read(name) for name in ('backup_passphrase', 'orchestrator_key', 'mgmt_key')],
+                         ['pass', 'OLD\n', 'MGMT\n'])
+        self.assertEqual(replaced, ['orchestrator_key'], 'mgmt_key не было - заменять нечего')
+        self.assertIn('экзиты знают ключи из архива', creds.replaced_note(replaced))
+        self.assertEqual((creds.unbundle(self.root / 'secrets.json'), creds.replaced_note([])), ([], ''))
 
 
 class InboxTests(Store):
@@ -239,3 +249,83 @@ class TakeSecretsTests(Store):
         self.assertNotIn('admin_password', [path.stem for path in (self.root / 'store').iterdir()])
         self.assertEqual(self.take(WIPED), '')
         self.assertEqual(creds.read('telegram_bot_token'), '2:new', 'пустая область - прежний секрет')
+
+
+def keypair(folder, name):
+    """Настоящий ключ ed25519: открытую часть деплой выводит ssh-keygen -y."""
+    subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-C', name, '-f', folder / name], check=True)
+    return (folder / name).read_text(), (folder / f'{name}.pub').read_text()
+
+
+class KeysFollowTheStoreTests(Store):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.dict(os.environ, {'HOME': str(self.root / 'home')})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.keys = self.root / 'keys'
+        self.keys.mkdir()
+
+    def test_restored_key_replaces_the_public_part_and_its_old_line(self):
+        deploy.orchestrator_key(create=True)
+        fresh = deploy.key_id(deploy.pub().read_text())
+        authorized = deploy.pub().parent / 'authorized_keys'
+        authorized.write_text(authorized.read_text() + 'ssh-ed25519 AAAAhuman admin\n')
+        old, old_pub = keypair(self.keys, 'old')
+        creds.write('orchestrator_key', old)
+        deploy.orchestrator_key(create=True)
+        self.assertEqual(deploy.key_id(deploy.pub().read_text()), deploy.key_id(old_pub))
+        lines = authorized.read_text()
+        self.assertIn(deploy.key_id(old_pub), lines)
+        self.assertIn('AAAAhuman', lines, 'ключ человека остаётся')
+        self.assertNotIn(fresh, lines, 'строка прежнего ключа не сойдёт за ключ человека')
+
+
+class NewServerRestoreTests(Store):
+    """restore на новом сервере: ключи архива - в хранилище до деплоя, деплой входит ими на экзиты."""
+    def archive(self, folder, members):
+        name = folder / 'anysda-vpn2-2026-11-20T000000Z.tar.gz.age'
+        with tarfile.open(name, 'w:gz') as tar:
+            for member, data in members.items():
+                info = tarfile.TarInfo(f'anysda-vpn2-2026-11-20T000000Z/{member}')
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        return name
+
+    def fresh(self, members, *args):
+        from vpn2.deploy import report
+        local = self.root / 'backups'
+        local.mkdir(exist_ok=True)
+        cfg = self.root / 'config.yaml'
+        cfg.write_text(ROOT.joinpath('config.example.yaml').read_text().replace(
+            '    dir: /var/backups/anysda-vpn2', f'    dir: {local}'))
+        name = self.archive(local, members)
+        out = io.StringIO()
+        with mock.patch.object(report, 'CONFIG', cfg), mock.patch.object(report, 'install_prereqs'), \
+                mock.patch.object(report.archive, 'decrypt', lambda src, dst, word: word == 'pass' and shutil.copy(src, dst)), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(report.fresh_secrets(list(args)), str(name))
+        return out.getvalue()
+
+    def test_archive_keys_win_over_a_key_from_deploy_key(self):
+        creds.write('backup_passphrase', 'pass')
+        creds.write('orchestrator_key', 'NEW\n')
+        said = self.fresh({'secrets.json': json.dumps({'orchestrator_key': 'OLD\n', 'mgmt_key': 'M\n'}).encode()}, 'latest')
+        self.assertEqual((creds.read('orchestrator_key'), creds.read('mgmt_key')), ('OLD\n', 'M\n'))
+        self.assertEqual(said.count('экзиты знают ключи из архива'), 1)
+
+    def test_archive_of_1_2_0_keeps_the_key_from_its_config(self):
+        creds.write('backup_passphrase', 'pass')
+        creds.write('orchestrator_key', 'KEY\n')
+        self.fresh({'manifest.json': b'{}'})
+        self.assertEqual(creds.read('orchestrator_key'), 'KEY\n')
+
+    def test_new_server_takes_secrets_then_deploys_then_restores(self):
+        from vpn2.deploy import __main__ as main
+        calls, real = [], main.dispatch
+        with mock.patch.object(main.report, 'fresh_secrets', lambda args: calls.append(args) or '/x/a.age'), \
+                mock.patch.object(main, 'installed', lambda: False), \
+                mock.patch.object(main, 'dispatch', lambda _d, argv, new_server=None: calls.append((argv, new_server)) or 0):
+            self.assertEqual(real(None, ['restore', 'latest', '--force', '--allow-incompatible']), 0)
+        self.assertEqual(calls, [['latest', '--force', '--allow-incompatible'], ([], None),
+                                 (['restore', '/x/a.age', '--force', '--allow-incompatible'], False)])

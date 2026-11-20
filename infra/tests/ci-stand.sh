@@ -23,6 +23,7 @@
 #   sudo infra/tests/ci-stand.sh bot-fake-token         боту поддельный токен: пауза, не цикл перезапусков
 #   sudo infra/tests/ci-stand.sh backup-fixture <каталог> эталонный архив бэкапа и etalon.expect.json
 #   sudo infra/tests/ci-stand.sh restore-check [--foreign-pass] restore эталонного архива и сверка; с флагом - чужой пароль, шаг обязан упасть
+#   sudo infra/tests/ci-stand.sh recover-fresh          потеря entry: архив, новая ВМ entry, restore без ключа на экзите
 #   sudo infra/tests/ci-stand.sh collect <каталог>      отчёты и журналы
 #   sudo infra/tests/ci-stand.sh down                   снести всё
 #   infra/tests/ci-stand.sh image-key                    ключ кэша образа и ядра (stand.yml)
@@ -459,6 +460,30 @@ vm_wait_ready() {
     "$(test -e /var/lib/man-db/auto-update && echo обновляется || echo не обновляется)"')"
 }
 
+# ВМ узла <строка NODES> на одноразовом диске поверх <базы> (пусто - образ Ubuntu): seed, tap и qemu.
+vm_boot() {
+  local name ip cpus mem mac tap base=${2:-$IMAGE_DIR/$IMAGE_NAME} t0=${3:-$SECONDS} vhost='' boot=()
+  read -r name ip cpus mem mac <<<"$1"
+  [[ -c /dev/vhost-net ]] && vhost=,vhost=on
+  if [[ -f $IMAGE_DIR/vmlinuz ]]; then
+    boot=(-kernel "$IMAGE_DIR/vmlinuz"
+      -append 'root=/dev/vda1 rootwait ro console=tty1 console=ttyS0 mitigations=off systemd.mask=snapd.service systemd.mask=snapd.socket systemd.mask=snapd.seeded.service')
+  fi
+  tap=$BRIDGE-$name
+  seed "$name" "$ip" "$mac" "$(cat "$STAND_DIR/root-password")"
+  # Диск одноразовый: fsync гостя (dpkg на каждый пакет) хосту не нужен.
+  qemu-img create -q -f qcow2 -F qcow2 -b "$base" "$STAND_DIR/$name.qcow2" 20G
+  ip link show "$tap" >/dev/null 2>&1 || ip tuntap add dev "$tap" mode tap
+  ip link set "$tap" master "$BRIDGE" up
+  qemu-system-x86_64 -name "vpn2-$name" -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" \
+    -drive "file=$STAND_DIR/$name.qcow2,if=virtio,discard=unmap,cache=unsafe" \
+    -drive "file=$STAND_DIR/$name-seed.iso,if=virtio,format=raw,readonly=on" \
+    -netdev "tap,id=lan,ifname=$tap,script=no,downscript=no$vhost" -device "virtio-net-pci,netdev=lan,mac=$mac" \
+    -device virtio-rng-pci -display none -serial "file:$STAND_DIR/$name-console.log" \
+    -daemonize -pidfile "$STAND_DIR/$name.pid" "${boot[@]}"
+  log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ, запущена через $((SECONDS - t0)) с${boot:+, ядро без GRUB}${vhost:+, vhost-net}"
+}
+
 cmd_up() {
   [[ -e /dev/kvm ]] || die '/dev/kvm нет: нужна машина с аппаратной виртуализацией'
   local from=''
@@ -476,7 +501,7 @@ cmd_up() {
     fetch_image "$image" &
     fetch=$!
   fi
-  local kfetch='' boot=()
+  local kfetch=''
   if [[ -f "$kernel" ]]; then
     log "ядро из кэша: $kernel"
   else
@@ -494,10 +519,6 @@ cmd_up() {
   fi
   if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
   if [[ -n "$kfetch" ]] && ! wait "$kfetch"; then log 'ядро образа не скачано: загрузка через GRUB'; fi
-  if [[ -f "$kernel" ]]; then
-    boot=(-kernel "$kernel"
-      -append 'root=/dev/vda1 rootwait ro console=tty1 console=ttyS0 mitigations=off systemd.mask=snapd.service systemd.mask=snapd.socket systemd.mask=snapd.seeded.service')
-  fi
   if [[ -n $from ]]; then
     [[ -f $from/entry.qcow2 ]] || die "в $from нет сохранённого выпуска"
     install -d -m 700 "$STAND_DIR/acme"
@@ -510,28 +531,13 @@ cmd_up() {
   net_up
   apt_proxy_up
   acme_up
-  local node name ip cpus mem mac tap disk vhost=''
+  local node name ip
   # Сеть ВМ в ядре хоста (vhost-net), а не в потоке qemu: меньше CPU раннера
   # на образ панели, пакеты и трафик 99-verify.
   modprobe vhost_net 2>/dev/null || true
-  [[ -c /dev/vhost-net ]] && vhost=,vhost=on
   for node in "${NODES[@]}"; do
-    read -r name ip cpus mem mac <<<"$node"
-    tap=$BRIDGE-$name
-    seed "$name" "$ip" "$mac" "$(cat "$STAND_DIR/root-password")"
-    # Диск одноразовый: fsync гостя (dpkg на каждый пакет) хосту не нужен.
-    disk=$image
-    [[ -z $from ]] || disk=$from/$name.qcow2
-    qemu-img create -q -f qcow2 -F qcow2 -b "$disk" "$STAND_DIR/$name.qcow2" 20G
-    ip link show "$tap" >/dev/null 2>&1 || ip tuntap add dev "$tap" mode tap
-    ip link set "$tap" master "$BRIDGE" up
-    qemu-system-x86_64 -name "vpn2-$name" -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" \
-      -drive "file=$STAND_DIR/$name.qcow2,if=virtio,discard=unmap,cache=unsafe" \
-      -drive "file=$STAND_DIR/$name-seed.iso,if=virtio,format=raw,readonly=on" \
-      -netdev "tap,id=lan,ifname=$tap,script=no,downscript=no$vhost" -device "virtio-net-pci,netdev=lan,mac=$mac" \
-      -device virtio-rng-pci -display none -serial "file:$STAND_DIR/$name-console.log" \
-      -daemonize -pidfile "$STAND_DIR/$name.pid" "${boot[@]}"
-    log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ, запущена через $((SECONDS - up_t0)) с от начала up${boot:+, ядро без GRUB}${vhost:+, vhost-net}"
+    read -r name _ <<<"$node"
+    vm_boot "$node" "${from:+$from/$name.qcow2}" "$up_t0"
   done
   # Узлы ждём параллельно: последовательно второй замечали на ~3 с позже.
   local waits=()
@@ -1396,6 +1402,42 @@ PY
   log "restore: совпало, $summary"
 }
 
+# Потеря entry: архив живой entry, вместо неё ВМ с чистого образа (свои ключи хоста и systemd-creds),
+# ./deploy.sh restore <архив> без строки ./deploy.sh -key на экзите. Экзит не трогается: его authorized_keys
+# до и после совпадают, новая entry входит на него только ключом из архива.
+cmd_recover_fresh() {
+  local archive key mgmt authorized host loader rc=0 started=$SECONDS
+  local mgmt_pub="ssh-keygen -y -f /run/vpn2-secrets/root/mgmt_key | cut -d' ' -f1,2"
+  entry_run backup './deploy.sh --development backup' || die 'recover: бэкап живой entry не снят'
+  archive=$(ssh_node "$ENTRY" 'ls -t /var/backups/anysda-vpn2/anysda-vpn2-*.tar.gz.age | head -1') \
+    || die 'recover: архива живой entry нет'
+  ssh_node "$ENTRY" "cat $archive" > "$STAND_DIR/recover.tar.gz.age" || die 'recover: архив не скопирован с entry'
+  key=$(ssh_node "$ENTRY" '/opt/anysda-vpn2/deploy.sh -key 2>/dev/null') && mgmt=$(ssh_node "$ENTRY" "$mgmt_pub") \
+    && authorized=$(ssh_node "$EXIT" 'sha256sum /root/.ssh/authorized_keys') \
+    && host=$(ssh_node "$ENTRY" 'cat /etc/ssh/ssh_host_ed25519_key.pub') || die 'recover: ключи живой entry не прочитаны'
+  kill "$(cat "$STAND_DIR/entry.pid")" || die 'recover: ВМ entry не остановлена'
+  while kill -0 "$(cat "$STAND_DIR/entry.pid")" 2>/dev/null; do sleep 1; done
+  vm_boot "${NODES[0]}"
+  vm_wait_ready entry "$ENTRY" "$started"
+  [[ $(ssh_node "$ENTRY" 'cat /etc/ssh/ssh_host_ed25519_key.pub') != "$host" ]] && ssh_node "$ENTRY" 'test ! -e /var/lib/vpn2-secrets' \
+    || die 'recover: новая entry не чистая - ключ хоста или хранилище секретов прежние'
+  push_tree
+  ssh_node "$ENTRY" 'umask 077; cat > /root/recover.tar.gz.age' < "$STAND_DIR/recover.tar.gz.age" \
+    || die 'recover: архив не лёг на новую entry'
+  load_panel "$PANEL_REF" & loader=$!
+  entry_run recover './deploy.sh --development restore /root/recover.tar.gz.age' || rc=$?
+  wait "$loader" || (( rc )) || rc=1
+  log "recover: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  (( rc == 0 )) || die "recover: ./deploy.sh restore на новой entry - код $rc"
+  [[ $(ssh_node "$ENTRY" '/opt/anysda-vpn2/deploy.sh -key 2>/dev/null') == "$key" ]] \
+    || die 'recover: ./deploy.sh -key новой entry - не ключ из архива'
+  [[ $(ssh_node "$ENTRY" "$mgmt_pub") == "$mgmt" ]] || die 'recover: ключ mgmt новой entry - не из архива'
+  [[ $(ssh_node "$EXIT" 'sha256sum /root/.ssh/authorized_keys') == "$authorized" ]] \
+    || die 'recover: authorized_keys экзита изменились - ключ лёг не из архива'
+  ssh_node "$ENTRY" "ssh -o BatchMode=yes $EXIT_TAG true" || die "recover: ssh $EXIT_TAG с новой entry не прошёл"
+  log "recover: новая entry с ключами из архива ($key), ssh $EXIT_TAG проходит, экзит не тронут"
+}
+
 # Состояние apt каждого узла и журнал прокси раннера - в отчёт при любом исходе.
 collect_apt() {
   local out=$1 node name ip
@@ -1484,6 +1526,7 @@ case "${1:-}" in
   bot-fake-token) cmd_bot_fake_token ;;
   backup-fixture) cmd_backup_fixture "${@:2}" ;;
   restore-check) cmd_restore_check "${@:2}" ;;
+  recover-fresh) cmd_recover_fresh ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
   image-key) echo "$IMAGE_KEY" ;;

@@ -23,6 +23,14 @@ if [[ -n $packages ]]; then
   DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq $packages >/dev/null 2>&1 || left "пакеты: $packages"
 fi
 
+# Автообновления ОС, что деплой поставил на паузу маской --runtime, - сразу назад, без таймера возврата.
+systemctl stop anysda-apt-resume.timer >/dev/null 2>&1
+systemctl unmask --runtime apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
+  unattended-upgrades.service >/dev/null 2>&1
+for unit in apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service; do
+  if systemctl is-enabled --quiet "$unit"; then systemctl start "$unit" || left "служба $unit не запустилась"; fi
+done
+
 for table in $(nft list tables 2>/dev/null | awk '$3 ~ /^(vpn2|anysda)_/ {print $2 " " $3}' | tr ' ' ':'); do
   nft delete table "${table%%:*}" "${table#*:}" || left "таблица nft ${table#*:}"
 done
@@ -67,9 +75,9 @@ fi
 
 # Вход по паролю - как до установки: без нашей вставки и с умолчанием Ubuntu в основном конфиге.
 rm -f /etc/ssh/sshd_config.d/00-anysda.conf /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
-sed -i -e 's/^PasswordAuthentication no$/#PasswordAuthentication yes/' -e 's/^PermitRootLogin prohibit-password$/#PermitRootLogin prohibit-password/' \
-  -e 's/^KbdInteractiveAuthentication no$/#KbdInteractiveAuthentication no/' \
-  -e 's/^ChallengeResponseAuthentication no$/#ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
+# KbdInteractiveAuthentication no - и умолчание Ubuntu, его не трогаем.
+sed -i -e 's/^PasswordAuthentication no$/#PasswordAuthentication yes/' \
+  -e 's/^PermitRootLogin prohibit-password$/#PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
 if sshd -t; then systemctl try-reload-or-restart ssh >/dev/null 2>&1 || left 'sshd не перечитал конфиг'; else left 'sshd: конфиг не проходит sshd -t'; fi
 
 # Ключи entry (оркестратор, прежний RSA, служебный mgmt): их тела entry передаёт строкой ENTRY_KEYS перед скриптом.

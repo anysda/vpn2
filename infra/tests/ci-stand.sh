@@ -782,7 +782,13 @@ backup_key_shown() {  # <имя прогона entry_run>
   secrets_absent "$1: закрытый ключ бэкапов" "$key"
 }
 
-# Отпечаток состояния entry для отказов restore: данные и ключи, клиенты в базе, наши службы и контейнеры.
+# Опись состояния entry для отказов restore: данные и ключи, клиенты в базе, наши службы и контейнеры.
+# entry_fingerprint <имя> - опись в $STAND_DIR/fp-<имя>; same_fingerprint <до> <после> - равны, иначе разница в лог.
+same_fingerprint() {
+  diff "$STAND_DIR/fp-$1" "$STAND_DIR/fp-$2" | head -20 | sed 's/^/    /' >&2
+  [[ ${PIPESTATUS[0]} == 0 ]]
+}
+
 entry_fingerprint() {
   ssh_node "$ENTRY" 'set -o pipefail
     { find /etc/anysda /etc/wireguard /etc/openvpn /etc/swanctl /var/lib/vpn2-secrets /var/lib/caddy /var/lib/anysda-vpn2 \
@@ -790,7 +796,7 @@ entry_fingerprint() {
       sqlite3 -readonly /var/lib/anysda-vpn2/db.sqlite "SELECT id, name FROM clients ORDER BY id; SELECT id, client_id, name FROM devices ORDER BY id"
       systemctl list-units --type=service,timer --state=active --no-legend --plain | awk "{print \$1}" \
         | grep -E "^(anysda|vpn2|sing-box|openvpn|strongswan|wg-quick|caddy|docker)" | sort
-      docker ps --format "{{.Names}} {{.ID}}" | sort; } | sha256sum'
+      docker ps --format "{{.Names}} {{.ID}}" | sort; }' > "$STAND_DIR/fp-$1"
 }
 
 cmd_deploy() {
@@ -1404,9 +1410,10 @@ cmd_restore_check() {
   [[ -f $expect ]] || die "фикстуры нет: $expect"
   ssh_node "$ENTRY" 'cat > /root/etalon.tar.gz.age' < "$archive" || die "архив не загружен на entry"
   # Архив 1.2.0 зашифрован паролем: restore спрашивает его, без терминала читает из stdin.
-  local password=stand-etalon before=''
+  local password=stand-etalon
   if (( foreign )); then
-    password=stand-foreign before=$(entry_fingerprint) || die 'отпечаток entry не снят'
+    password=stand-foreign
+    entry_fingerprint foreign-before || die 'опись entry не снята'
     log 'отрицательный контроль: чужой пароль архива'
   fi
   printf '%s\n' "$password" | ssh_node "$ENTRY" 'umask 077; cat > /run/vpn2-restore.pass' || die 'пароль архива не лёг на entry'
@@ -1430,7 +1437,7 @@ PY
   ssh_node "$ENTRY" 'rm -f /run/vpn2-restore.pass'
   log "restore: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   if (( foreign )); then
-    [[ $(entry_fingerprint) == "$before" ]] || die 'чужой пароль: restore изменил entry'
+    entry_fingerprint foreign-after && same_fingerprint foreign-before foreign-after || die 'чужой пароль: restore изменил entry'
     ssh_node "$ENTRY" "grep -q 'неверный пароль или архив повреждён; ничего не изменено' /root/restore.log" \
       || die 'чужой пароль: отказ restore без понятной причины'
     log "чужой пароль: отказ кодом $rc, состояние entry не изменилось"
@@ -1474,13 +1481,13 @@ cmd_recover_fresh() {
   ssh_node "$ENTRY" "cat $archive" > "$STAND_DIR/recover.tar.gz.age" || die 'recover: архив не скопирован с entry'
   [[ -s $STAND_DIR/backup-key ]] || die 'recover: ключа бэкапов от деплоя стенда нет'
   # Чужой ключ (пара другой установки): отказ кодом 4 до любых изменений.
-  local before public
-  before=$(entry_fingerprint) && public=$(ssh_node "$ENTRY" 'cat /etc/anysda/backup.pub') || die 'recover: отпечаток entry не снят'
+  local public
+  entry_fingerprint key-before && public=$(ssh_node "$ENTRY" 'cat /etc/anysda/backup.pub') || die 'recover: опись entry не снята'
   close_entry_mux
   ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" || die 'замок деплоя на entry не освободился за 70 с'
   entry_run restore-foreign "age-keygen 2>/dev/null | ./deploy.sh --development restore $archive --force" || rc=$?
   (( rc == 4 )) || die "recover: restore с чужим ключом - код $rc, ждём 4"
-  [[ $(entry_fingerprint) == "$before" ]] || die 'recover: restore с чужим ключом изменил entry'
+  entry_fingerprint key-after && same_fingerprint key-before key-after || die 'recover: restore с чужим ключом изменил entry'
   ssh_node "$ENTRY" "grep -q 'неверный ключ бэкапов или архив повреждён; ничего не изменено' /root/restore-foreign.log" \
     || die 'recover: отказ на чужой ключ без понятной причины'
   log 'recover: чужой ключ - отказ кодом 4, состояние entry не изменилось'

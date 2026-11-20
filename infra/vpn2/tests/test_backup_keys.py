@@ -66,7 +66,8 @@ def test_unseen_pair_of_an_interrupted_run_is_replaced(entry, capsys):
 
 
 @needs_age
-def test_manager_run_makes_a_pair_but_shows_nothing(entry):
+@pytest.mark.usefixtures('entry')
+def test_manager_run_makes_a_pair_but_shows_nothing():
     assert report.backup_key_start(manager=True) is False
     assert keys.recipient() and keys.unseen()
     public = keys.recipient()

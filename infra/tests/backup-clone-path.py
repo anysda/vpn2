@@ -110,7 +110,7 @@ class ClonePath(unittest.TestCase):
         self.manifest()
         stages = OUT / 'stages'
         stages.unlink(missing_ok=True)
-        result = fixture.run('/usr/local/bin/anysda-restore.sh', 'latest', '--force', env=self.env)
+        result = fixture.run('/usr/local/bin/anysda-restore.sh', 'latest', '--force', env=self.env, input=fixture.KEY + '\n')
         self.assertEqual(result.returncode, 0, result.stdout[-1500:])
         self.assertIn('anysda-restore: SUCCESS', result.stdout)
         host = root.name + '.example.test'

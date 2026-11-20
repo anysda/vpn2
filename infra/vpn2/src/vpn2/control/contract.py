@@ -41,6 +41,8 @@ openvpn.disconnect: {device_id}; traffic.read: {protocol} -> typed counters.
 settings.read: {resource: routes|preferences|disabled-exits}
 settings.apply: {resource, version, config: resource-specific schema}
     Fixed JSON resources consumed by existing host route/watchdog services.
+manager.<method>: the install manager's API (vpn2/manager.py) as is, relayed to its
+    root socket; params are validated by the manager's own validator.
 routes.plan: {offset: 0..32 MiB, revision: empty or returned revision}
     Fixed public routing snapshot, base64 chunks <=256 KiB; offset 0 with the
     current revision returns empty data, a later offset rejects a changed
@@ -73,6 +75,8 @@ import json
 from pathlib import Path
 import re
 
+from .. import manager
+
 API = 1
 LIMIT = 1024 * 1024
 MAX_DEVICES = 2000
@@ -80,7 +84,7 @@ METHODS = ('wg.apply', 'openvpn.apply', 'ikev2.apply', 'state.read',
            'config.apply', 'check.run', 'profile.read', 'traffic.read',
            'openvpn.issue', 'openvpn.revoke', 'openvpn.disconnect',
            'openvpn.certificate', 'settings.read', 'settings.apply', 'api.describe', 'routes.plan',
-           'expiry.run')
+           'expiry.run', *('manager.' + name for name in manager.METHODS))
 
 
 class Fault(Exception):
@@ -146,6 +150,12 @@ def validate(request, pools):
     require(type(request['api']) is int and request['api'] == API)
     method, params = request['method'], request['params']
     choice(method, METHODS)
+    if method.startswith('manager.'):
+        try:
+            manager.validate({'api': API, 'method': method.removeprefix('manager.'), 'params': params})
+        except manager.Invalid:
+            raise Fault('validation') from None
+        return method, params
     if method == 'config.apply':
         fields(params, 'resource schema version config')
         require(type(params['schema']) is int and params['schema'] == 1)

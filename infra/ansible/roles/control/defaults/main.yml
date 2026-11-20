@@ -11,6 +11,7 @@ control_units:
   - vpn2-control.socket
   - vpn2-control-expiry.service
   - vpn2-control-expiry.timer
+  - vpn2-manager.service
 # Данные панели: служба и резервная копия читают их и при остановленной панели.
 control_panel_files:
   - db.sqlite

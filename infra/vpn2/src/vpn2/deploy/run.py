@@ -13,10 +13,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from vpn2 import ports, release, stages
+from vpn2 import fsutil, ports, release, stages
 from vpn2.config import STATE_DIR
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, installed, log, ok, orchestrator_key, prep_keys,
-                         read, report, step, warn)
+                         key_id, own_keys, read, report, ssh_options, step, warn)
 from vpn2.deploy.plays import Plays
 
 PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
@@ -44,6 +44,10 @@ TOGETHER = (
 )
 # Окружение стадии в полном деплое: панель ставится следом и сама берёт новый секрет бота.
 FULL_ENV = {'35-telegram': {'VPN2_PANEL_FOLLOWS': 'true'}}
+# Смена состава экзитов: стадии нового экзита, затем стадии entry, что читают список экзитов (маршруты,
+# наблюдатели аварийки на всех узлах, цели мониторинга, панель) и проверка всех узлов.
+EXIT_FIRST = ('00-bootstrap', '05-mgmt-mesh', '10-foreign')
+EXIT_STAGES = ('20-ru-router', '23-emergency', '25-monitoring', '30-frontend', '99-verify')
 
 
 class Interrupted(SystemExit):
@@ -59,6 +63,8 @@ class Deploy:
         self.mutating = self.opened = self.staged = self.guard_warned = self.closing = self.old_layout = False
         self.plays, self.beat, self.nodes, self.logins = None, None, {}, {}
         self.outside = self.pulled = False
+        # Ход задания менеджера установки (vpn2.manager.Progress), если деплой идёт заданием.
+        self.progress = self.result = None
         self.lock = threading.Lock()
         self.load_nodes()
 
@@ -268,6 +274,14 @@ class Deploy:
         return result
 
     def run_stage(self, stage, group, extra=(), held=False, env=None):
+        """Стадия на группе; задание менеджера установки (VPN2_JOB) видит её ход."""
+        if not self.progress:
+            return self.stage_on(stage, group, extra, held, env)
+        nodes = self.stage_nodes(stage, self.expand(group))
+        with self.progress.stage(stage, nodes.split(',') if nodes else []):
+            return self.stage_on(stage, group, extra, held, env)
+
+    def stage_on(self, stage, group, extra, held, env):
         t0, code = time.time(), 0
         nodes = self.stage_nodes(stage, self.expand(group))
         if not nodes:
@@ -419,6 +433,30 @@ class Deploy:
         report.announce(self)
         return verify
 
+    def add_exit(self, tag):
+        """Новый экзит в config.yaml: его стадии, затем стадии entry, что читают состав экзитов."""
+        if tag in self.skipped:
+            die(f'{tag}: нет входа по ssh, экзит не добавлен')
+        for stage in EXIT_FIRST:
+            self.run_stage(stage, tag)
+        return self.exits_changed(tag)
+
+    def remove_exit(self, tag, host):
+        """Экзит уже убран из config.yaml: entry перестраивается без него, затем убираются его следы."""
+        code = self.exits_changed()
+        with self.progress.stage('cleanup', [tag]) if self.progress else contextlib.nullcontext():
+            self.result = forget_exit(self, tag, host)
+        return code
+
+    def exits_changed(self, new=None):
+        code = 0
+        for stage in EXIT_STAGES:
+            code = self.run_stage(stage, 'all' if stage in ('23-emergency', '99-verify') else 'ru') or code
+            if stage == '20-ru-router' and new:
+                self.stage_log += ports.check([new], self.rerun)
+        self.release_complete()
+        return code
+
     def release_cli(self, *args):
         if release.main(['--manifest', self.manifest, *args, str(REPO)]):
             raise SystemExit(1)
@@ -445,7 +483,7 @@ class Deploy:
         self.opened = self.staged = True
         if self.service('--tags', 'release', '-e', self.bundle(), '-e', f'out={self.tmp}', '-e', f'scope={scope}',
                         '-e', f'partial={action not in ("", "recover")}', '-e', f'journal={action != "recover"}',
-                        '-e', f'bootstrap={action in ("", "recover", "00-bootstrap")}'):
+                        '-e', f'bootstrap={action in ("", "recover", "00-bootstrap", "exit-add")}'):
             if found := sorted(self.tmp.glob('*.journal')):
                 self.opened = False
                 die(found[0].read_text().strip())
@@ -564,9 +602,15 @@ class Deploy:
         host-key останавливают деплой одним списком узлов. Экзит без связи пропускается только при обновлении:
         у него есть секреты прошлого деплоя; в чистой установке это тоже отказ."""
         step('pre-flight: вход по ключу на узлы')
-        nodes, deadline = self.expand('all'), time.time() + int(os.environ.get('PREFLIGHT_BUDGET') or 90)
+        nodes = self.expand('all')
+        with self.progress.stage('preflight', nodes) if self.progress else contextlib.nullcontext({}) as record:
+            self.logins_ok(nodes, record)
+
+    def logins_ok(self, nodes, record):
+        deadline = time.time() + int(os.environ.get('PREFLIGHT_BUDGET') or 90)
         with ThreadPoolExecutor(len(nodes)) as pool:
             found = dict(zip(nodes, pool.map(lambda node: self.knock(node, deadline), nodes)))
+        record['failed'] = [host for host, reason in found.items() if reason]
         reasons, fixes, auth, net = [], [], False, False
         for host, reason in found.items():
             if not reason:
@@ -604,6 +648,45 @@ class Deploy:
                       '  3. firewall / geo-блок на стороне провайдера ноды']
         print(f'\n{R}✗ Не пускают по ключу:{E}\n' + ''.join(f'  {line}\n' for line in lines), end='', flush=True)
         die(f'pre-flight: узлов без входа по ключу: {len(reasons)}, на серверах ничего не менялось')
+
+
+def forget_exit(deploy, tag, host):
+    """Убранный экзит: если сервер отвечает - наши службы, файлы и ключи на нём (lib/exit-forget.sh), затем его
+    следы на entry. Итог: server cleaned, partial (left - что осталось на сервере) или forgotten (не ответил)."""
+    command = ['ssh', '-o', 'BatchMode=yes', *ssh_options(), '-i', str(orchestrator_key()), f'root@{host}', 'bash -s']
+    try:
+        keys = '\n'.join(filter(None, (key_id(text) for text in own_keys())))
+        done = subprocess.run(command, input=f'ENTRY_KEYS={shlex.quote(keys)}\n' + (INFRA / 'lib/exit-forget.sh').read_text(),
+                              capture_output=True,
+                              text=True, timeout=600)
+        out, code = done.stdout, done.returncode
+    except subprocess.TimeoutExpired as error:
+        out, code = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or '', 255
+    print(out, end='', flush=True)
+    left = [line.removeprefix('left: ') for line in out.splitlines() if line.startswith('left: ')]
+    if 'vpn2-forget: start' not in out:
+        server = 'forgotten'
+        warn(f'{tag} ({host}) не ответил по ssh: экзит забыт, на сервере ничего не менялось')
+    else:
+        if 'vpn2-forget: done' not in out:
+            left.append('очистка оборвалась на середине')
+        server = 'partial' if left or code else 'cleaned'
+    secrets = INFRA / 'secrets'
+    for path in (secrets / f'exit-certs/{tag}.pem', secrets / f'exit-certs/{tag}.reality',
+                 secrets / f'exit-hostkeys/{tag}.pub', secrets / f'emergency/{tag}.json'):
+        path.unlink(missing_ok=True)
+    for path in (STATE_DIR / 'mgmt-ips.txt', STATE_DIR / 'excluded-exits.txt'):
+        if path.is_file():
+            path.write_text(''.join(line for line in path.read_text().splitlines(True) if line.split()[:1] != [tag]))
+    for path, drop in ((Path('/etc/anysda/exits-disabled.json'), lambda data: {'disabled': [
+            item for item in data.get('disabled', []) if item != tag]}),
+                       (Path('/etc/anysda/client-prefs.json'), lambda data: {
+                           name: ips for name, ips in data.items() if name != tag})):
+        if path.is_file():
+            fsutil.atomic(path, json.dumps(drop(json.loads(path.read_text())), sort_keys=True) + '\n', 0o644)
+    subprocess.run(['ssh-keygen', '-R', host, '-f', STATE_DIR / 'known_hosts'], capture_output=True)
+    deploy.deploy_warnings += [f'{tag}: на сервере осталось: {item}' for item in left]
+    return {'exit': tag, 'server': server, 'left': left}
 
 
 def refused(reason):

@@ -1,0 +1,19 @@
+[Unit]
+Description=VPN2 install manager: install and exit set changes
+After=network-online.target
+
+[Service]
+Type=simple
+# Задания идут службой vpn2-manager-job через systemd-run: перезапуск менеджера их не обрывает.
+Environment=DEPLOY_ROOT={{ control_infra }}
+ExecStart={{ control_vpn2 }} manager serve
+RuntimeDirectory=vpn2-manager
+RuntimeDirectoryMode=0755
+StateDirectory=vpn2-manager
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -21,7 +21,9 @@ PEER = {'key': KEY, 'preshared_key': PSK, 'ip': '10.66.66.2'}
 CLIENT = {'device_id': 7, 'username': 'dev_7', 'password': 'Passw0rd-1234', 'ip': '10.68.68.2'}
 METHODS = ('wg.apply', 'openvpn.apply', 'ikev2.apply', 'state.read', 'config.apply', 'check.run',
            'profile.read', 'traffic.read', 'openvpn.issue', 'openvpn.revoke', 'openvpn.disconnect',
-           'openvpn.certificate', 'settings.read', 'settings.apply', 'api.describe', 'routes.plan', 'expiry.run')
+           'openvpn.certificate', 'settings.read', 'settings.apply', 'api.describe', 'routes.plan', 'expiry.run',
+           'manager.exit.check', 'manager.install.run', 'manager.exit.add', 'manager.exit.remove', 'manager.job.read',
+           'manager.job.retry', 'manager.job.skip', 'manager.job.forget', 'manager.status.read')
 # Метод -> параметры, которые сервис принимает (по одному полному примеру на метод).
 VALID = {
     'wg.apply': {'version': 3, 'peers': [PEER, {**PEER, 'key': PSK, 'ip': '10.66.64.9', 'expires_at': WHEN}]},
@@ -43,6 +45,15 @@ VALID = {
     'api.describe': {},
     'routes.plan': {'offset': 0, 'revision': ''},
     'expiry.run': {},
+    'manager.exit.check': {'tag': 'nl', 'host': 'root@192.0.2.9'},
+    'manager.install.run': {},
+    'manager.exit.add': {'tag': 'nl', 'host': '192.0.2.9'},
+    'manager.exit.remove': {'tag': 'nl'},
+    'manager.job.read': {'job': 0},
+    'manager.job.retry': {'job': 3},
+    'manager.job.skip': {'job': 3, 'tag': 'nl'},
+    'manager.job.forget': {'job': 3},
+    'manager.status.read': {},
 }
 
 
@@ -57,7 +68,7 @@ def refused(method, params):
 
 
 def test_method_names_and_limits_are_the_published_ones():
-    assert contract.METHODS == METHODS and len(set(METHODS)) == 17
+    assert contract.METHODS == METHODS and len(set(METHODS)) == 26
     assert (contract.API, contract.LIMIT, contract.MAX_DEVICES) == (1, 1024 * 1024, 2000)
     assert set(VALID) == set(METHODS)
 

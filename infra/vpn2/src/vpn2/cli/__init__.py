@@ -19,6 +19,7 @@ COMMANDS = (
     ('control', 'vpn2.cli:control'),
     ('emergency', 'vpn2.emergency.__main__:main'),
     ('host', 'vpn2.cli.host:main'),
+    ('manager', 'vpn2.manager:main'),
     ('nft', 'vpn2.cli:nft'),
     ('ports', 'vpn2.ports:main'),
     ('release', 'vpn2.release:main'),

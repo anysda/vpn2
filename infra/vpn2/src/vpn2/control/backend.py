@@ -15,7 +15,7 @@ import time
 
 from ..fsutil import LockBusy, atomic, lock, read_json
 # wg0.conf is read one way: vpn2-apply's.
-from .. import pki, wg
+from .. import manager, pki, wg
 from .contract import API, Fault, LIMIT, METHODS, key as validate_key, load_pools, require
 
 # C isspace() within a line, as openvpn and wg read their configs; not Python's \s.
@@ -220,6 +220,10 @@ class Backend:
         self.deadline = time.monotonic() + 30
         if method == 'api.describe':
             return {'api': API, 'methods': list(METHODS)}
+        if method.startswith('manager.'):
+            reply = manager.call(method.removeprefix('manager.'), params, timeout=25)
+            require(reply.get('ok') is True, reply.get('error') if reply.get('error') == 'validation' else 'unavailable')
+            return reply['result']
         if method == 'routes.plan':
             # A fixed public resource may exceed the per-response limit.
             # Open once per chunk; an atomic router replacement changes revision.

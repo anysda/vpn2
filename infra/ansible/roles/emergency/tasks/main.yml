@@ -16,6 +16,22 @@
   register: emergency_ufw_peers
   changed_when: "'Skipping' not in emergency_ufw_peers.stdout"
 
+# Узел убран из установки (менеджер установки): его адрес больше не наблюдатель.
+- name: Наблюдатели убранных узлов не слышны
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for ip in $(ufw status | awk -v rule="$PORT/udp" '$1 == rule && $2 == "ALLOW" && $3 != "Anywhere" &&
+                /# vpn2 emergency observer$/ {print $3}' | sort -u); do
+      case " $KEEP " in *" $ip "*) ;; *) ufw delete allow proto udp from "$ip" to any port "$PORT"; echo "removed $ip" ;; esac
+    done
+  args:
+    executable: /bin/bash
+  environment:
+    KEEP: "{{ emergency_peers | join(' ') }}"
+    PORT: "{{ emergency_node.port }}"
+  register: emergency_ufw_stale
+  changed_when: "'removed' in emergency_ufw_stale.stdout"
+
 # На экзите Docker только хранит образ: без моста и правил iptables он не
 # трогает ни файрвол экзита, ни пересылку.
 - name: Docker экзита без сети

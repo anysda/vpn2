@@ -643,6 +643,7 @@ def entry(stage):
          'http://127.0.0.1:80/'),
         ('frontend: панель отвечает через Caddy по HTTPS', panel),
         ('vmsingle: 127.0.0.1:8428 healthy', command, *curl, 'http://127.0.0.1:8428/-/healthy'),
+        ('менеджер установки отвечает', command, str(VENV / 'bin/vpn2'), 'manager', 'status.read'),
         ('tproxy: правило fwmark 0x42 → table 101', grep, ('ip', 'rule', 'list'), r'fwmark 0x42 lookup 101(\s|$)'),
         ('tproxy: local default dev lo в table 101', grep, ('ip', 'route', 'show', 'table', '101'),
          r'^local default dev lo(\s|$)'),

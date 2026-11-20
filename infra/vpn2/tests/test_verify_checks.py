@@ -25,6 +25,7 @@ ENTRY = [
     'frontend: Caddy слушает :80',
     'frontend: панель отвечает через Caddy по HTTPS',
     'vmsingle: 127.0.0.1:8428 healthy',
+    'менеджер установки отвечает',
     'tproxy: правило fwmark 0x42 → table 101',
     'tproxy: local default dev lo в table 101',
     'tproxy: wg0 цепочка и TCP/UDP правила',

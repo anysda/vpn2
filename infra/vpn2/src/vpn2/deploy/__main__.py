@@ -12,7 +12,11 @@ import sys
 from vpn2.config import STATE_DIR, drop_passwords
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, admin_key_check, die, install_prereqs, migrate_state, ok,
                          orchestrator_key, read, report, step, svc)
-from vpn2.deploy.run import Deploy, Interrupted
+from vpn2.deploy.run import EXIT_FIRST, EXIT_STAGES, Deploy, Interrupted
+from vpn2.manager import Progress
+
+# Действия заданий менеджера установки и число их аргументов с действием: exit-add <тег>, exit-remove <тег> <адрес>.
+EXIT_ACTIONS = {'exit-add': 2, 'exit-remove': 3}
 
 
 def interrupted(code):
@@ -33,6 +37,10 @@ def dispatch(deploy, argv):
             return report.restore(deploy, argv[1:])[0]
         if code := report.restore_preflight(deploy, argv[1:]):
             return code
+    elif action in EXIT_ACTIONS:
+        # Задание менеджера установки (vpn2.manager): config.yaml уже с новым составом экзитов.
+        if len(argv) != EXIT_ACTIONS[action] or (action == 'exit-add') != (argv[1] in deploy.exit_tags()):
+            die(f'{action}: задание менеджера установки, не для запуска руками')
     elif action not in ('', 'recover', 'rollback'):
         if len(argv) < 2:
             die('использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)')
@@ -43,7 +51,10 @@ def dispatch(deploy, argv):
     if action not in ('restore', 'rollback'):
         admin_key_check(deploy.env())
     orchestrator_key(create=True)
-    if action in ('', 'recover'):
+    if deploy.progress:
+        deploy.progress.plan(['preflight', *({'exit-add': (*EXIT_FIRST, *EXIT_STAGES), 'exit-remove': (*EXIT_STAGES, 'cleanup')}
+                                             .get(action) or [stage.name for stage in deploy.stages])])
+    if action in ('', 'recover', *EXIT_ACTIONS):
         report.banner(deploy)
         deploy.preflight()
     # Автообновления свежей ОС стартуют в первые минуты после загрузки: пауза - до любого apt деплоя.
@@ -55,9 +66,13 @@ def dispatch(deploy, argv):
             return code
     install_prereqs()
     if action != '99-verify':
-        deploy.release_start(action, scope)
+        deploy.release_start(action, argv[1] if action == 'exit-add' else scope)
     if action in ('', 'recover'):
         code = deploy.do_all()
+    elif action == 'exit-add':
+        return deploy.add_exit(argv[1])
+    elif action == 'exit-remove':
+        return deploy.remove_exit(argv[1], argv[2])
     elif action == 'restore':
         code = report.restore(deploy, argv[1:])[0]
     elif action == 'rollback':
@@ -99,9 +114,10 @@ def main(argv):
         return 1
     # Каталог окружений прежних выпусков (с секретами) не читается никем.
     shutil.rmtree(REPO / 'infra/envs', ignore_errors=True)
-    deploy, code = None, 1
+    deploy, code, progress = None, 1, Progress.from_env()
     try:
         deploy = Deploy(os.environ.get('VPN2_DEVELOPMENT') == 'true', manifest)
+        deploy.progress = progress
         code = dispatch(deploy, argv)
     except subprocess.CalledProcessError as error:
         code = error.returncode
@@ -112,6 +128,8 @@ def main(argv):
     finally:
         if deploy:
             deploy.close(code)
+        if progress:
+            progress.finish(code, deploy and deploy.result)
     return code
 
 

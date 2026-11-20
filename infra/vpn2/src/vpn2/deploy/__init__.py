@@ -345,6 +345,12 @@ def orchestrator_key(create=False):
     return key
 
 
+def ssh_options(state=STATE_DIR):
+    """Параметры входа оркестратора на узлы: у ansible (inventory.py), у pre-flight и у менеджера установки."""
+    return ['-o', f'UserKnownHostsFile={state}/known_hosts', '-o', 'StrictHostKeyChecking=accept-new',
+            '-o', 'PreferredAuthentications=publickey', '-o', 'ConnectTimeout=10']
+
+
 def admin_key_check(env):
     """Вход по паролю закрывается всегда, поэтому без ключа человека деплой не начинается. На установленной entry
     (обновление с 1.2.0) хватает ключа, что уже лежит в /root/.ssh/authorized_keys."""

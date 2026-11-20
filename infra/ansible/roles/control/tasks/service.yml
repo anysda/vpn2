@@ -72,6 +72,28 @@
     argv: ["{{ control_vpn2 }}", control, serve, --probe]
   changed_when: false
 
+# Менеджер установки: его задание идёт своей службой, перезапуск менеджера посреди задания его не рвёт.
+- name: Менеджер установки запущен
+  ansible.builtin.systemd_service:
+    name: vpn2-manager.service
+    enabled: true
+    state: started
+
+- name: Менеджер установки перезапущен на новом коде  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    name: vpn2-manager.service
+    state: restarted
+  when: control_unit_files is changed or control_package is changed
+
+- name: Менеджер установки отвечает
+  ansible.builtin.command:
+    argv: ["{{ control_vpn2 }}", manager, status.read]
+  register: control_manager
+  retries: 5
+  delay: 1
+  until: control_manager.rc == 0
+  changed_when: false
+
 # Срок доступа исполняется и здесь: остановленная панель не держит его открытым.
 - name: Таймер срока доступа
   ansible.builtin.systemd_service:

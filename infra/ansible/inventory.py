@@ -18,7 +18,7 @@ from pathlib import Path
 
 from vpn2 import nodevars
 from vpn2.config import STATE_DIR, Config, ConfigError, load
-from vpn2.deploy import orchestrator_key
+from vpn2.deploy import orchestrator_key, ssh_options
 
 HIDDEN = '***'
 TEMPLATE_MARKS = ('{{', '{%', '{#')
@@ -63,12 +63,7 @@ def exits_list(env):
 def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_secrets=False) -> dict:
     """Инвентарь в формате ansible --list: root по ключу оркестратора, без пароля."""
     environ = os.environ if environ is None else environ
-    common_args = ' '.join((
-        f'-o UserKnownHostsFile={state}/known_hosts',
-        '-o StrictHostKeyChecking=accept-new',
-        '-o PreferredAuthentications=publickey',
-        '-o ConnectTimeout=10',
-    ))
+    common_args = ' '.join(ssh_options(state))
 
     def hostvars(host):
         return {

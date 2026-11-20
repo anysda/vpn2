@@ -285,13 +285,16 @@ def test_full_deploy_follows_site_yml(tree, inproc):
 
 def test_exits_without_key_stop_the_deploy_before_any_change(tree, inproc):
     """Оба экзита без ключа оркестратора названы одним списком; ни плеев, ни шагов на entry."""
-    done = inproc(FAKE_SSH_RULES=json.dumps([['5.6.7.8 true', 255, 'root@5.6.7.8: Permission denied (publickey).'],
+    # Первый вход ssh пишет «Warning: Permanently added»: в причину отказа это не идёт.
+    added = "Warning: Permanently added '5.6.7.8' (ED25519) to the list of known hosts.\n"
+    done = inproc(FAKE_SSH_RULES=json.dumps([['5.6.7.8 true', 255, added + 'root@5.6.7.8: Permission denied (publickey).'],
                                              ['9.10.11.12 true', 255, 'root@9.10.11.12: Permission denied (publickey).']]))
     assert done.returncode == 1
     assert 'нода us (5.6.7.8) не пускает по ключу' in done.stdout and 'нода gb (9.10.11.12) не пускает по ключу' in done.stdout
     key = (tree / 'home/.ssh/id_ed25519.pub').read_text().strip()
     assert f'в /root/.ssh/authorized_keys есть строка из ./deploy.sh -key: {key}' in done.stdout and 'порт 22' in done.stdout
     assert 'узлов без входа по ключу: 2, на серверах ничего не менялось' in done.stderr
+    assert 'с entry: root@5.6.7.8: Permission denied' in done.stdout and 'Permanently added' not in done.stdout
     assert not plays(tree) and not inproc.services and {call['command'] for call in plays(tree, 'ssh')} == {'true'}
 
 

@@ -551,7 +551,8 @@ class Deploy:
         while True:
             try:
                 done = subprocess.run(self.ssh(node, 'true'), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
-                reason = '' if done.returncode == 0 else done.stderr.strip() or f'ssh: код {done.returncode}'
+                said = '\n'.join(line for line in done.stderr.splitlines() if not line.startswith('Warning: Permanently added'))
+                reason = '' if done.returncode == 0 else said.strip() or f'ssh: код {done.returncode}'
             except subprocess.TimeoutExpired:
                 reason = 'нет ответа за 30 с'
             if not reason or refused(reason) or time.time() >= deadline:

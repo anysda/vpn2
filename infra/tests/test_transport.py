@@ -77,8 +77,8 @@ class HysteriaTests(unittest.TestCase):
                 root = Path(tmp)
                 base = (ROOT / 'config.example.yaml').read_text().replace(
                     '  passphrase: ""', '  passphrase: test pass')
-                (root / 'config.yaml').write_text(base.replace('    host: 5.6.7.8\n',
-                    f'    host: 5.6.7.8\n    hy2_up_mbps: {up}\n    hy2_down_mbps: {down}\n'))
+                (root / 'config.yaml').write_text(base.replace('    host: root@5.6.7.8   # root@адрес или просто адрес\n',
+                    f'    host: root@5.6.7.8\n    hy2_up_mbps: {up}\n    hy2_down_mbps: {down}\n'))
                 result = write_envs(tmp)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('нужны обе скорости', result.stderr)

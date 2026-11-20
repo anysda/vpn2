@@ -19,6 +19,9 @@ from vpn2 import fsutil, tls, wizard
 from vpn2.deploy import G, Y, E, INFRA, REPO, die, docker_install, orchestrator_key, ok, step, svc
 
 UNITS = Path(os.environ.get('VPN2_UNIT_DIR') or '/etc/systemd/system')
+# Стадии обновляют openssh с NEEDRESTART_MODE=a: needrestart перезапустил бы менеджер и задание установки
+# (python системы обновлён тем же apt), задание стало бы прерванным.
+NEEDRESTART = Path('/etc/needrestart/conf.d')
 UNIT = '''[Unit]
 Description={description}
 After=network-online.target
@@ -112,6 +115,8 @@ def units(environ):
         if name == 'vpn2-manager' and path.exists():
             continue
         fsutil.atomic(path, UNIT.format(description=description, infra=INFRA, extra=extra, module=module), 0o644)
+    if NEEDRESTART.is_dir():
+        fsutil.atomic(NEEDRESTART / 'vpn2.conf', '$nrconf{override_rc}{qr(^vpn2-(manager|wizard))} = 0;\n', 0o644)
     subprocess.run(['systemctl', 'daemon-reload'], check=True)
     subprocess.run(['systemctl', 'enable', '--now', 'vpn2-manager.service', f'{wizard.UNIT}.service'], check=True,
                    capture_output=True)

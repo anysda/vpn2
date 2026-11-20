@@ -49,6 +49,8 @@ def test_wizard_keeps_a_copy_of_the_ip_pair_and_not_a_domain_one(caddy, monkeypa
 
 def test_units_run_from_the_tree_and_leave_the_venv_manager_alone(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, 'UNITS', tmp_path)
+    monkeypatch.setattr(bootstrap, 'NEEDRESTART', tmp_path / 'conf.d')
+    (tmp_path / 'conf.d').mkdir()
     calls = []
     monkeypatch.setattr(bootstrap.subprocess, 'run', lambda argv, **_: calls.append(argv))
     bootstrap.units({'VPN2_DEVELOPMENT': 'true', 'TLS_ACME_URL': 'https://198.18.0.1:14000/dir'})
@@ -56,6 +58,8 @@ def test_units_run_from_the_tree_and_leave_the_venv_manager_alone(tmp_path, monk
     assert 'ExecStart=/usr/bin/python3 -B -m vpn2.manager serve' in manager and '-m vpn2.wizard serve' in own
     assert 'Environment="TLS_ACME_URL=https://198.18.0.1:14000/dir"\nEnvironment="VPN2_DEVELOPMENT=true"\n' in manager
     assert ['systemctl', 'enable', '--now', 'vpn2-manager.service', 'vpn2-wizard.service'] in calls
+    # apt стадий с NEEDRESTART_MODE=a (openssh до сторожа фаервола) не перезапускает задание установки.
+    assert (tmp_path / 'conf.d/vpn2.conf').read_text() == '$nrconf{override_rc}{qr(^vpn2-(manager|wizard))} = 0;\n'
     # Повтор после 29-control: служба менеджера уже из venv - не трогается.
     (tmp_path / 'vpn2-manager.service').write_text('venv unit\n')
     bootstrap.units({})

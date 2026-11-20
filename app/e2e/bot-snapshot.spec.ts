@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test'
 import * as outbounds from '../shared/outbounds'
 import { apiRoute, serverModule } from './support/server-module'
+import { nodesFile } from './support/nodes-file'
+
+const RU_NODE = nodesFile([{ tag: 'ru', mgmt: '192.0.2.1' }])
 
 test.describe('bot-metrics', () => {
   test('бот получает отсутствие CPU/RAM, а не сохранённую нагрузку прошлого опроса', async () => {
@@ -8,7 +11,7 @@ test.describe('bot-metrics', () => {
     const metrics = serverModule<typeof import('../server/utils/metrics')>(
       new URL('../server/utils/metrics.ts', import.meta.url), {}, {
         useLogger: () => ({ warn: () => {} }),
-        useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', mgmtIps: 'ru:192.0.2.1' }),
+        useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', nodesFilePath: RU_NODE }),
         $fetch: async () => ({
           status: 'success',
           data: { resultType: 'vector', result: missing ? [] : [{ metric: { instance: '192.0.2.1:9100' }, value: [0, '95'] }] },
@@ -50,7 +53,7 @@ test.describe('bot-node-size', () => {
     const metrics = serverModule<typeof import('../server/utils/metrics')>(
       new URL('../server/utils/metrics.ts', import.meta.url), {}, {
         useLogger: () => ({ warn: () => {} }),
-        useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', mgmtIps: 'ru:192.0.2.1' }),
+        useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', nodesFilePath: RU_NODE }),
         $fetch: async (_url: string, options: { query: { query: string } }) => {
           const promql = options.query.query
           const cores = promql === CORES

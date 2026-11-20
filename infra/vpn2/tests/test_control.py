@@ -811,10 +811,10 @@ class ControlTests(unittest.TestCase):
     def test_image_probe_requires_every_method_the_panel_calls(self):
         # A panel on an older service must stop at the probe, not fail its applies.
         probe = (ROOT / 'app/scripts/control-probe.mjs').read_text()
-        required = set(re.findall(r"'([a-z0-9]+\.[a-z]+)'", probe.split(']')[0]))
+        required = set(re.findall(r"'([a-z0-9]+(?:\.[a-z]+)+)'", probe.split(']')[0]))
         called = set()
         for path in (ROOT / 'app/server').rglob('*.ts'):
-            called |= set(re.findall(r"control(?:Apply)?(?:<[^>(]*>)?\('([a-z0-9]+\.[a-z]+)'", path.read_text()))
+            called |= set(re.findall(r"control(?:Apply)?(?:<[^(]*>)?\(\s*'([a-z0-9]+(?:\.[a-z]+)+)'", path.read_text()))
         self.assertIn('wg.apply', called)
         self.assertEqual(called - required, set())
 
@@ -829,7 +829,7 @@ class ControlTests(unittest.TestCase):
         called = set()
         for path in (ROOT / 'app/server').rglob('*.ts'):
             if not path.name.endswith('.test.ts'):
-                called |= set(re.findall(r"control(?:Apply)?(?:<[^(]*>)?\(\s*'([a-z0-9]+\.[a-z]+)'", path.read_text()))
+                called |= set(re.findall(r"control(?:Apply)?(?:<[^(]*>)?\(\s*'([a-z0-9]+(?:\.[a-z]+)+)'", path.read_text()))
         self.assertEqual({example['method'] for example in examples}, called)
 
 

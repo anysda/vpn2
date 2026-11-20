@@ -1,17 +1,13 @@
 // Подставные VictoriaMetrics (:8428) и clash API sing-box (:9090) для локального
 // прогона e2e. Запускается внутри контейнера панели, поэтому слушает только
-// 127.0.0.1. Ноды и выходы — из тех же NUXT_MGMT_IPS / NUXT_EXIT_TAGS, что у панели.
+// 127.0.0.1. Ноды и выходы — из того же runtime/nodes.json, что у панели.
 import { readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
-const mgmt = Object.fromEntries(
-  (process.env.NUXT_MGMT_IPS || 'ru:10.99.0.1')
-    .split(',')
-    .map(p => p.split(':'))
-    .filter(([t, ip]) => t && ip),
-)
-const tags = (process.env.NUXT_EXIT_TAGS || '').split(/\s+/).filter(Boolean)
+const nodes = JSON.parse(readFileSync('/var/lib/anysda-vpn2/runtime/nodes.json', 'utf8'))
+const mgmt = Object.fromEntries(nodes.filter(n => n.mgmt).map(n => [n.tag, n.mgmt]))
+const tags = nodes.map(n => n.tag).filter(tag => tag !== 'ru')
 const instances = Object.values(mgmt).map(ip => `${ip}:9100`)
 
 // Число ядер узла: запрос тоже по node_cpu_seconds_total, поэтому стоит раньше

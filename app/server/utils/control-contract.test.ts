@@ -16,6 +16,7 @@ import { accessAdapter } from './access-adapter'
 import { collectTraffic } from './traffic'
 import { syncClientPrefsFile } from './client-prefs'
 import routes from '../resources/routes'
+import exits from '../resources/exits'
 
 vi.hoisted(() => vi.stubGlobal('defineEventHandler', (h: unknown) => h))
 
@@ -40,7 +41,7 @@ vi.mock('./access-lock', () => ({ withAccessLock: (action: () => Promise<void>) 
 vi.mock('./bot', async importOriginal => ({ ...(await importOriginal<object>()), recordEvent: vi.fn(async () => true) }))
 
 const sent: Example[] = []
-const label = (e: Example) => e.method === 'settings.apply' || e.method.endsWith('.read')
+const label = (e: Example) => (e.method === 'settings.apply' || e.method.endsWith('.read')) && (e.params.resource ?? e.params.protocol)
   ? `${e.method}:${e.params.resource ?? e.params.protocol}`
   : e.method
 
@@ -288,6 +289,21 @@ describe('контракт control: живые вызовы панели шлю�
     expect(JSON.stringify(reply)).toContain('direct-ru')
   })
 
+  it('manager.*: страница экзитов отдаёт ответы менеджера браузеру как есть', async () => {
+    vi.stubGlobal('setResponseStatus', () => {})
+    const call = (key: keyof typeof exits, params: Record<string, string> = {}, body?: object) => {
+      vi.stubGlobal('readBody', async () => body)
+      return (exits[key] as (event: never) => Promise<unknown>)(fakeEvent(params)).then(reply => JSON.stringify(reply))
+    }
+    expect(await call('GET /exits')).toContain('"key":"ssh-ed25519 AAAA root@entry"')
+    expect(await call('POST /exits/check', {}, { tag: 'se', host: '192.0.2.9' })).toContain('тег se уже занят')
+    await call('POST /exits', {}, { tag: 'nl', host: '192.0.2.9' })
+    await call('DELETE /exits/:tag', { tag: 'at' })
+    for (const key of ['GET /exits/jobs/:id', 'POST /exits/jobs/:id/retry', 'POST /exits/jobs/:id/forget'] as const) await call(key, { id: '3' })
+    expect(sentMethods()).toEqual(['manager.status.read', 'manager.key.read', 'manager.exit.check', 'manager.exit.add',
+      'manager.exit.remove', 'manager.job.read', 'manager.job.retry', 'manager.job.forget'])
+  })
+
   it('settings.apply: предпочтения экзитов уходят отсортированными адресами по узлам', async () => {
     dbResults.push([
       { node: 'fra', wg: '10.67.67.2', ovpn: null, ikev2: null },
@@ -355,7 +371,26 @@ describe('контракт control: каждое поле записанных �
   const b = 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA='
   // Поля ответов, как их знает панель: путь и тип. Минус перед типом - панель поле не читает
   // (служба его отдаёт, форму держит infra/vpn2/tests/test_control_replies.py).
+  // Задание менеджера целиком (job.read); после запуска - без стадий, действий и итога.
+  const job = {
+    'id': 'number', 'kind': 'string', 'tag': 'string', 'host': 'string', 'state': 'string', 'skipped[]': 'string',
+    'stages[].name': 'string', 'stages[].nodes[]': 'string', 'stages[].failed[]': 'string', 'stages[].state': 'string',
+    'log': 'string', 'error': 'string', 'actions[]': 'string', 'result.exit': 'string', 'result.server': 'string', 'result.left[]': 'string',
+  }
+  const { 'actions[]': _actions, ...closed } = job
+  const started = { id: 'number', kind: 'string', tag: 'string', host: 'string', state: 'string', log: 'string', error: 'string', result: '-null' }
+  const under = (prefix: string, value: Record<string, string>) => Object.fromEntries(Object.entries(value).map(([k, v]) => [`${prefix}.${k}`, v]))
   const fields: Record<string, Record<string, string>> = {
+    'manager.status.read': {
+      'deploy': 'string', ...under('job', job), 'nodes[].tag': 'string', 'nodes[].role': 'string', 'nodes[].host': 'string', 'nodes[].monitoring': 'string',
+    },
+    'manager.key.read': { key: 'string' },
+    'manager.exit.check': { 'problems[]': 'string' },
+    'manager.exit.add': started,
+    'manager.exit.remove': started,
+    'manager.job.read': job,
+    'manager.job.retry': closed,
+    'manager.job.forget': closed,
     'profile.read:wg': { publicKey: 'string' },
     'profile.read:openvpn': { ready: 'boolean', ca: 'string', tlsCrypt: 'string' },
     'profile.read:ikev2': { ready: 'boolean', mode: 'string', host: 'string', domain: 'string', ca: 'string' },

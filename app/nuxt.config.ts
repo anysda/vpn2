@@ -109,13 +109,9 @@ export default defineNuxtConfig({
     aghUrl: 'http://127.0.0.1:3000',
     aghUser: '',
     aghPassword: '',
-    exitTags: '',
     mgmtMeshIpPrefix: '10.99.0.',
-    // Stable tag→mgmt_ip mapping, "tag:ip,tag:ip,...". Source of truth for
-    // nodeInstances() — индексы не пересчитываются при exclusion экзитов
-    // (см. vm-client.ts комментарий). Заполняется стадией 30-frontend из
-    // envs/all.env (MGMT_IP_*).
-    mgmtIps: '',
+    // Узлы установки (тег, публичный и mgmt-адрес); пишет стадия 30-frontend, панель читает на ходу.
+    nodesFilePath: '/var/lib/anysda-vpn2/runtime/nodes.json',
     tgbotEventPort: 8877,
     tgbotSecret: '',
     wgEnabled: true,
@@ -123,9 +119,6 @@ export default defineNuxtConfig({
     wgServerIp: '10.66.66.1',
     wgSubnetPrefix: '10.66.66.',
     wgPublicHost: '',
-    // Публичные адреса нод для карточек мониторинга: «ru=1.2.3.4,uz=5.6.7.8»
-    // (стадия 30 собирает из config.yaml). Также узнаём переименование экзитов.
-    nodeHosts: '',
     // Только для первого обновления: карта из контейнера предыдущей панели.
     previousNodeHosts: '',
     wgMtu: 1420,

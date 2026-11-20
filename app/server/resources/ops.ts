@@ -60,11 +60,7 @@ export default {
 
   'GET /ops/nodes': admin(async () => {
     const nodes = nodeInstances()
-    const hosts = new Map(
-      String(useRuntimeConfig().nodeHosts || '').split(',')
-        .map(kv => kv.split('=').map(s => s.trim()))
-        .filter((kv): kv is [string, string] => kv.length === 2 && !!kv[0] && !!kv[1]),
-    )
+    const hosts = new Map(panelNodes().filter(n => n.host).map(n => [n.tag, n.host]))
     const instances = nodes.map(n => n.instance)
     const [metrics, daily, disabled, proxies, conns] = await Promise.all([
       fetchNodeMetrics(instances),

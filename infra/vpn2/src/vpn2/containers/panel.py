@@ -40,6 +40,7 @@ APPLY = '/usr/local/sbin/vpn2-apply'
 STATE = Path('/var/lib/vpn2-deploy/panel')
 INSTALLED = Path('/var/lib/vpn2-deploy/installed.json')
 DATA = '/var/lib/anysda-vpn2'
+NODES = f'{DATA}/runtime/nodes.json'
 LEGACY_PREVIOUS = 'anysda-vpn2-previous'
 HEALTH = 'http://127.0.0.1:51821/api/version'
 NO_PREVIOUS = 'rollback refused: no previous release; repair the current installation'
@@ -429,6 +430,8 @@ def stage(environ, docker, tx, image):
     admin_user = environ.get('ADMIN_USER') or 'anysda'
     facts = sso(environ)
     changed = write_config(admin_user)
+    Path(NODES).parent.mkdir(parents=True, exist_ok=True)
+    fsutil.publish(NODES, json.dumps(compose.nodes(environ)) + '\n', 0o644)
     changed |= not creds.read('session_secret')
     creds.ensure('session_secret', 64)
     handed = hand_over(environ.get('ADMIN_PASSWORD') or '')

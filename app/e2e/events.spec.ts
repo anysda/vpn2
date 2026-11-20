@@ -4,6 +4,9 @@ import { container, inside } from './support/openvpn-ca'
 import { waitAccess } from './support/access'
 import * as outbounds from '../shared/outbounds'
 import { serverModule } from './support/server-module'
+import { nodesFile } from './support/nodes-file'
+
+const DE_NODE = nodesFile([{ tag: 'de', mgmt: '192.0.2.2' }])
 
 test.describe('events', () => {
   interface FeedRow { id: number, at: number, type: string, level: string, title: string, detail: string }
@@ -251,7 +254,7 @@ test.describe('events-nodes', () => {
       '../../shared/outbounds': outbounds,
     }, {
       useLogger: () => ({ warn: () => {} }),
-      useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', clashApiUrl: 'http://clash.invalid', mgmtIps: 'de:192.0.2.2', exitTags: 'de' }),
+      useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', clashApiUrl: 'http://clash.invalid', nodesFilePath: DE_NODE }),
       $fetch: async (url: string, opts: { query: { query: string } }) => url.endsWith('/proxies')
         ? { proxies: { 'foreign-best': { name: 'foreign-best', type: 'Selector', now: foreignBest.now } } }
         : vm.fetch(url, opts),

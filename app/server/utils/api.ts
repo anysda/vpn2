@@ -113,6 +113,8 @@ export const FIELD_LABELS: Record<string, string> = {
   bot_token: 'Token',
   chat_id: 'Chat ID',
   admin_username: 'Никнейм админа бота',
+  tag: 'Тег',
+  host: 'Адрес',
 }
 // Чего ждёт поле, когда по подписи не понять.
 const FIELD_HINTS: Record<string, string> = { chat_id: 'только цифры' }

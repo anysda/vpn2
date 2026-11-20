@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as schema from '../server/database/schema'
 import { serverModule } from './support/server-module'
+import { nodesFile } from './support/nodes-file'
 import { noHorizontalOverflow } from './support/overflow'
 
 test.describe('clients', () => {
@@ -817,7 +818,8 @@ test.describe('client-prefs', () => {
         const directory = await mkdtemp(join(tmpdir(), 'vpn2-client-prefs-'))
         const client = createClient({ url: ':memory:' })
         const db = drizzle(client, { schema })
-        const cfg = { exitTags: initial.join(' '), nodeHosts: before, previousNodeHosts: '', clientPrefsFilePath: join(directory, 'prefs.json') }
+        const nodes = (hosts: string) => hosts.split(',').map(pair => ({ tag: pair.split('=')[0]!, host: pair.split('=')[1] }))
+        const cfg = { nodesFilePath: nodesFile(nodes(before), join(directory, 'nodes.json')), previousNodeHosts: '', clientPrefsFilePath: join(directory, 'prefs.json') }
         const logs: { oldTag: string, newTag: string | null }[] = []
         const load = () => serverModule<typeof import('../server/utils/client-prefs')>(
           new URL('../server/utils/client-prefs.ts', import.meta.url), {
@@ -835,8 +837,7 @@ test.describe('client-prefs', () => {
           }
           if (upgrade) cfg.previousNodeHosts = before
           else await load().syncClientPrefsFile()
-          cfg.nodeHosts = scenario.hosts
-          cfg.exitTags = scenario.hosts.split(',').map(pair => pair.split('=')[0]).join(' ')
+          nodesFile(nodes(scenario.hosts), cfg.nodesFilePath)
           if (!upgrade) {
             // Ошибка сохранения карты должна откатить и переносы клиентов.
             await client.execute("CREATE TRIGGER fail_map BEFORE INSERT ON collector_state BEGIN SELECT RAISE(ABORT, 'disk is full'); END")

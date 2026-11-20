@@ -101,15 +101,12 @@ def bot_service(environ, image, values, *, user, panel_gid):
         environment=env)
 
 
-def node_hosts(environ):
-    """Публичные адреса нод для карточек мониторинга: «ru=<entry>,<тег>=<адрес>»."""
-    return ','.join(['ru=' + environ['ENTRY_HOST'], *(f'{tag}={environ.get("DOMAIN_" + env_tag(tag)) or ""}'
-                                                      for tag in exit_tags(environ))])
-
-
-def mgmt_ips(environ):
-    pairs = [(tag, environ.get('MGMT_IP_' + env_tag(tag)) or '') for tag in exit_tags(environ)]
-    return ','.join(['ru:' + (environ.get('MGMT_IP_RU') or '10.99.0.1'), *(f'{tag}:{ip}' for tag, ip in pairs if ip)])
+def nodes(environ):
+    """Состав узлов для панели (runtime/nodes.json): entry первой, публичный адрес и mgmt-адрес. Панель читает
+    файл на ходу: смена экзитов не меняет её запуск и не перезапускает контейнер."""
+    return [{'tag': 'ru', 'host': environ['ENTRY_HOST'], 'mgmt': environ.get('MGMT_IP_RU') or '10.99.0.1'},
+            *({'tag': tag, 'host': environ.get('DOMAIN_' + env_tag(tag)) or '',
+               'mgmt': environ.get('MGMT_IP_' + env_tag(tag)) or ''} for tag in exit_tags(environ))]
 
 
 def panel_environment(environ, facts):
@@ -123,14 +120,13 @@ def panel_environment(environ, facts):
         'NUXT_WG_SERVER_IP': get('WG_SERVER_IP') or '10.66.66.1',
         'NUXT_WG_SUBNET_PREFIX': get('WG_SUBNET_PREFIX') or '10.66.66.',
         'NUXT_WG_PUBLIC_HOST': get('WG_PUBLIC_HOST') or entry, 'NUXT_WG_ENDPOINT_IP': entry,
-        'NUXT_NODE_HOSTS': node_hosts(environ), 'NUXT_PREVIOUS_NODE_HOSTS': facts.get('previous_node_hosts', ''),
+        'NUXT_PREVIOUS_NODE_HOSTS': facts.get('previous_node_hosts', ''),
         'NUXT_WG_MTU': get('WG_MTU') or '1420', 'NUXT_WG_SPLIT_LOCAL': get('WG_SPLIT_LOCAL') or 'true',
         'NUXT_OVPN_ENABLED': 'true', 'NUXT_OVPN_PORT': get('OVPN_PORT') or '1194',
         'NUXT_OVPN_PROTO': get('OVPN_PROTO') or 'udp', 'NUXT_OVPN_PUBLIC_HOST': get('OVPN_PUBLIC_HOST') or entry,
         'NUXT_CLASH_API_URL': f'http://{get("MGMT_IP") or ""}:9090',
         'NUXT_AGH_URL': f'http://127.0.0.1:{environ["AGH_PORT"]}', 'NUXT_AGH_USER': facts['admin_user'],
-        'NUXT_EXIT_TAGS': get('EXIT_TAGS') or '',
-        'NUXT_MGMT_MESH_IP_PREFIX': '10.99.0.', 'NUXT_MGMT_IPS': mgmt_ips(environ),
+        'NUXT_MGMT_MESH_IP_PREFIX': '10.99.0.',
         'NUXT_VM_URL': 'http://127.0.0.1:8428', 'NUXT_TGBOT_EVENT_PORT': '8877',
         'NUXT_PUBLIC_SSO_ENABLED': facts['sso_enabled'], 'NUXT_PUBLIC_SSO_AUTO_REDIRECT': facts['sso_auto_redirect'],
         'NUXT_PUBLIC_SSO_LABEL': get('SSO_LABEL') or 'Authentik', 'NUXT_SSO_ALLOWED_SUBS': get('SSO_ALLOWED_SUBS') or '',

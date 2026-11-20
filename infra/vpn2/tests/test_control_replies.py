@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from vpn2 import containers, fsutil, manager
 from vpn2.control import backend as executor, contract, server
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -26,6 +27,10 @@ SERIAL = '1234ABCD'
 FAR = '2031-05-06T07:08:09.000Z'
 DUE = '2026-11-01T00:00:00.000Z'
 INDEX = '{status}\t300101000000Z\t\t' + SERIAL + '\tunknown\t/CN=dev_12\n'
+CONFIG = ('entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: root@192.0.2.2\n'
+          '  - tag: at\n    host: 192.0.2.3\nadmin:\n  user: a\n')
+# Задание сразу после запуска или «забыть»: стадий, действий и пропусков ещё нет; их форма - в job.read.
+STARTED = ('manager.exit.add', 'manager.exit.remove', 'manager.job.retry', 'manager.job.forget')
 
 
 def name(example):
@@ -54,6 +59,40 @@ def hollow(value, path='result'):
     return found if value else [path]
 
 
+class Manager(manager.Manager):
+    """Менеджер установки в каталоге хоста: процесс задания только отмечается, вход по ssh не проверяется."""
+
+    started = False
+
+    def alive(self):
+        return self.started
+
+    def spawn(self, _folder, _argv, _recover):
+        self.started = True
+
+    def login_problems(self, _address):
+        return []
+
+
+def orchestrator_key(_host):
+    key = Path(os.environ['HOME'], '.ssh/id_ed25519.pub')
+    key.parent.mkdir(parents=True)
+    key.write_text('ssh-ed25519 AAAA root@entry\n')
+
+
+def failed_job(host):
+    """Последнее задание 3: удаление упало на маршрутах entry, сервер почищен не весь."""
+    folder = host.manager.folder(3)
+    folder.mkdir(parents=True)
+    fsutil.write_json(folder / 'job.json', {'id': 3, 'kind': 'remove', 'tag': 'nl', 'host': '192.0.2.9',
+                                            'state': 'failed', 'skipped': ['de']})
+    fsutil.write_json(folder / 'progress.json', {'exit': 1, 'result': {'exit': 'nl', 'server': 'partial', 'left': ['x']},
+                                                 'stages': [{'name': '20-ru-router', 'state': 'failed', 'nodes': ['ru'],
+                                                             'failed': ['ru'], 'offset': 0}]})
+    (folder / 'log').write_text('FATAL: x\n')
+    (folder / 'config.orig').write_text(CONFIG)
+
+
 class Host:
     """Хост службы в каталоге: файлы настоящие, wg, swanctl, openssl и management подставные."""
 
@@ -67,6 +106,9 @@ class Host:
         self.sas = {}       # номер SA -> логин
         self.sessions = {}  # CN -> виртуальный адрес
         self.broken = ''
+        (directory / 'config.yaml').write_text(CONFIG)
+        self.manager = Manager(directory / 'manager', directory / 'config.yaml', directory / 'deploy.lock', directory)
+        self.manager.journal = directory / 'operation.json'
         self.file('/etc/wireguard/wg0.conf', '[Interface]\nPrivateKey = server-secret\nListenPort = 51820\n')
         self.file('/etc/swanctl/conf.d/anysda-clients.conf', '')
         self.file('/etc/openvpn/server/ccd/dev_12', 'ifconfig-push 10.67.67.2 255.255.255.0\n')
@@ -232,6 +274,14 @@ PREPARE = {
     'settings.apply:preferences': bare,
     'routes.plan': lambda host: host.file('/etc/anysda/route-plan.json', '{"rules":[],"final":"direct-ru","rule_set":{}}'),
     'expiry.run': expiry,
+    'manager.status.read': failed_job,
+    'manager.key.read': orchestrator_key,
+    'manager.exit.check': bare,
+    'manager.exit.add': bare,
+    'manager.exit.remove': lambda host: host.manager.folder(3).mkdir(parents=True),
+    'manager.job.read': failed_job,
+    'manager.job.retry': failed_job,
+    'manager.job.forget': failed_job,
 }
 
 
@@ -240,13 +290,22 @@ def host(tmp_path, monkeypatch):
     # OpenVPN читает CRL и ccd чужим пользователем: права файлов не должны зависеть от umask запуска.
     previous = os.umask(0o022)
     made = Host(tmp_path)
+    # Панель ходит к менеджеру через vpn2-control: здесь его сокет - сам менеджер в каталоге хоста.
+    monkeypatch.setattr(manager, 'call', lambda method, params, **_options: manager.answer(
+        made.manager, json.dumps({'api': 1, 'method': method, 'params': params})))
+    monkeypatch.setattr(manager, 'local_addresses', set)
+    monkeypatch.setattr(containers, 'targets', lambda: {'data': {'activeTargets': [{'labels': {'host': 'ru'}, 'health': 'up'}]}})
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setattr(executor, 'utc_now', lambda: made.now)
     yield made
     os.umask(previous)
 
 
 def test_every_recorded_reply_shows_its_nested_fields():
-    assert {name(example): hollow(example['result']) for example in EXAMPLES if hollow(example['result'])} == {}
+    found = {name(example): [path for path in hollow(example['result'])
+                             if example['method'] not in STARTED or path not in ('result.stages', 'result.actions', 'result.skipped')]
+             for example in EXAMPLES}
+    assert {key: paths for key, paths in found.items() if paths} == {}
 
 
 def test_recorded_requests_are_distinct():

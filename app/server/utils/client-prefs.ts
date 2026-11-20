@@ -4,11 +4,13 @@ import { clients, collectorState, devices } from '../database/schema'
 
 const EXIT_MAP_STATE = 'client-exit-hosts'
 
+const plainHost = (host: string) => host.trim().toLowerCase().replace(/\.$/, '')
+
 function exitHosts(value: string): Record<string, string> {
   return Object.fromEntries(value.split(',').flatMap((pair) => {
     const at = pair.indexOf('=')
     const tag = pair.slice(0, at).trim()
-    const host = pair.slice(at + 1).trim().toLowerCase().replace(/\.$/, '')
+    const host = plainHost(pair.slice(at + 1))
     return at > 0 && tag !== 'ru' && host ? [[tag, host]] : []
   }))
 }
@@ -16,12 +18,12 @@ function exitHosts(value: string): Record<string, string> {
 /** Карта и предпочтения меняются вместе; обновляем по id, чтобы обмен тегами не сливал клиентов. */
 async function reconcileExits(): Promise<void> {
   const cfg = useRuntimeConfig()
-  const tags = String(cfg.exitTags || '').trim().split(/\s+/).filter(Boolean)
+  const exits = exitNodes()
   // Без списка экзитов (например, отдельный запуск панели) перенос невозможен.
-  if (!tags.length) return
-  const hosts = exitHosts(String(cfg.nodeHosts || ''))
-  if (tags.some(tag => !Object.hasOwn(hosts, tag))) throw new Error('client exit map incomplete: missing exit address')
-  const current = Object.fromEntries(tags.sort().map(tag => [tag, hosts[tag]!]))
+  if (!exits.length) return
+  if (exits.some(n => !plainHost(n.host))) throw new Error('client exit map incomplete: missing exit address')
+  const hosts = new Map(exits.map(n => [n.tag, plainHost(n.host)]))
+  const current = Object.fromEntries([...hosts.keys()].sort().map(tag => [tag, hosts.get(tag)!]))
   const value = JSON.stringify(current)
   const db = useDb()
   // Обычная синхронизация не должна брать write-lock: карта меняется только при деплое.
@@ -30,7 +32,7 @@ async function reconcileExits(): Promise<void> {
   const changes = await db.transaction(async (tx) => {
     const [saved] = await tx.select().from(collectorState).where(eq(collectorState.name, EXIT_MAP_STATE))
     if (saved?.value === value) return []
-    // Пока карты в базе нет, её засевает NUXT_NODE_HOSTS.
+    // Пока карты в базе нет, её засевает карта прежней панели (NUXT_PREVIOUS_NODE_HOSTS).
     const previous: Record<string, string> = saved ? JSON.parse(saved.value) : exitHosts(String(cfg.previousNodeHosts || ''))
     const rows = await tx.select({ id: clients.id, name: clients.name, oldTag: clients.preferredExit }).from(clients).where(isNotNull(clients.preferredExit))
     const changed = []

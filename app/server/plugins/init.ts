@@ -22,7 +22,6 @@ export default defineNitroPlugin((nitroApp) => {
 
 async function initPanel() {
   const log = useLogger()
-  const cfg = useRuntimeConfig()
 
   // 1. Verify the deploy executor's migration history before any application write.
   const localDb = useDb()
@@ -43,7 +42,7 @@ async function initPanel() {
     if (vacuumed) log.info('database compacted')
   }, err => log.warn({ err }, 'database not compacted'))
 
-  if (cfg.exitTags) await syncClientPrefsFile().catch((error) => {
+  if (exitNodes().length) await syncClientPrefsFile().catch((error) => {
     if (!(error instanceof ControlUnavailable)) throw error
     log.warn(error.message)
   })

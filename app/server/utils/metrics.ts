@@ -139,18 +139,12 @@ export async function fetchDailyTraffic(instances: string[]): Promise<Map<string
   }]))
 }
 
-/** Ноды из NUXT_EXIT_TAGS и их mgmt-адреса из NUXT_MGMT_IPS ("tag:ip,tag:ip"). */
+/** Узлы для метрик: entry и экзиты с mgmt-адресом (panelNodes). */
 export function nodeInstances(): Array<{ tag: string, instance: string, label: string }> {
-  const cfg = useRuntimeConfig()
-  const tags = String(cfg.exitTags || '').trim().split(/\s+/).filter(Boolean)
-  const ipByTag = new Map<string, string>()
-  for (const pair of String(cfg.mgmtIps || '').split(',')) {
-    const [tag, ip] = pair.split(':').map(s => s.trim())
-    if (tag && ip) ipByTag.set(tag, ip)
-  }
+  const nodes = panelNodes()
   return [
-    { tag: 'ru', instance: `${ipByTag.get('ru') ?? '10.99.0.1'}:9100`, label: 'RU entry' },
-    ...tags.filter(tag => ipByTag.has(tag)).map(tag => ({ tag, instance: `${ipByTag.get(tag)}:9100`, label: `${tag.toUpperCase()} exit` })),
+    { tag: 'ru', instance: `${nodes.find(n => n.tag === 'ru')?.mgmt || '10.99.0.1'}:9100`, label: 'RU entry' },
+    ...nodes.filter(n => n.tag !== 'ru' && n.mgmt).map(n => ({ tag: n.tag, instance: `${n.mgmt}:9100`, label: `${n.tag.toUpperCase()} exit` })),
   ]
 }
 

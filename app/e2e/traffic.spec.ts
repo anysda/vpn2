@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { serverModule } from './support/server-module'
+import { nodesFile } from './support/nodes-file'
 import { createClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
 import { migrate } from 'drizzle-orm/libsql/migrator'
@@ -89,13 +90,13 @@ test.describe('overview-traffic', () => {
       const values = instant[calls.instant.length - 1] ?? new Map()
       return { status: 'success', data: { result: [...values].map(([instance, v]) => ({ metric: { instance }, value: [0, String(v)] })) } }
     }
+    const nodesFilePath = nodesFile(exits.map(x => ({ tag: x.tag, mgmt: x.instance.split(':')[0] })))
     const mod = serverModule<typeof import('../server/utils/metrics')>(
       new URL('../server/utils/metrics.ts', import.meta.url), {}, {
         useLogger: () => ({ warn: () => {} }),
         useRuntimeConfig: () => ({
           vmUrl: 'http://metrics.invalid',
-          mgmtIps: exits.map(x => `${x.tag}:${x.instance.split(':')[0]}`).join(','),
-          exitTags: exits.filter(x => x.tag !== 'ru').map(x => x.tag).join(' '),
+          nodesFilePath,
         }),
         $fetch: vm,
       },

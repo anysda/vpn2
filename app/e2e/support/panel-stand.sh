@@ -11,7 +11,8 @@ STAND_REPO_DIR=$(cd "$STAND_APP_DIR/.." && pwd)
 read -r -a DK <<< "${DOCKER:-docker}"
 PUBLIC_HOST=vpn.example.test
 EXIT_TAGS="nl fi us"
-MGMT_IPS="ru:10.99.0.1,nl:10.99.0.2,fi:10.99.0.3,us:10.99.0.4"
+# runtime/nodes.json, как его пишет стадия 30: тег, публичный и mgmt-адрес узла.
+NODES_JSON='[{"tag":"ru","host":"192.0.2.1","mgmt":"10.99.0.1"},{"tag":"nl","host":"192.0.2.2","mgmt":"10.99.0.2"},{"tag":"fi","host":"192.0.2.3","mgmt":"10.99.0.3"},{"tag":"us","host":"192.0.2.4","mgmt":"10.99.0.4"}]'
 
 dk() { "${DK[@]}" "$@"; }
 
@@ -41,14 +42,15 @@ stand_up() {
     -e NUXT_ADMIN_USER=admin -e NUXT_ADMIN_PASSWORD="$pass" \
     -e NUXT_WG_ENABLED=true -e NUXT_WG_PUBLIC_HOST=$PUBLIC_HOST \
     -e NUXT_OVPN_ENABLED=true -e NUXT_OVPN_PUBLIC_HOST=$PUBLIC_HOST \
-    -e NUXT_EXIT_TAGS="$EXIT_TAGS" -e NUXT_MGMT_IPS="$MGMT_IPS" \
-    -e NUXT_NODE_HOSTS='ru=192.0.2.1,nl=192.0.2.2,fi=192.0.2.3,us=192.0.2.4' \
+    -e NODES_JSON="$NODES_JSON" \
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
     "${vpn_args[@]}" "$@" "$image" sh -ec \
-    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; mkdir -p /var/lib/anysda-vpn2/runtime /run/secrets /run/secrets-inbox; chown -R 10001:10001 /var/lib/anysda-vpn2 /run/secrets-inbox; exec setpriv --reuid 10001 --regid 10001 --clear-groups "$@"' \
+    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; mkdir -p /var/lib/anysda-vpn2/runtime /run/secrets /run/secrets-inbox; printf %s "$NODES_JSON" > /var/lib/anysda-vpn2/runtime/nodes.json; chown -R 10001:10001 /var/lib/anysda-vpn2 /run/secrets-inbox; exec setpriv --reuid 10001 --regid 10001 --clear-groups "$@"' \
     -- "${command[@]}" >/dev/null
 
+  # nodes.json пишет команда запуска контейнера: подставные бэкенды читают его при старте.
+  dk exec "$name" sh -c 'for _ in $(seq 100); do [ -s /var/lib/anysda-vpn2/runtime/nodes.json ] && exit; sleep 0.1; done; exit 1'
   dk exec -i "$name" sh -c 'cat > /tmp/fake-backends.mjs' < "$STAND_APP_DIR/e2e/support/fake-backends.mjs"
   dk exec -d "$name" node /tmp/fake-backends.mjs
 

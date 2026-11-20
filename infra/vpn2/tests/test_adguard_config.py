@@ -282,12 +282,14 @@ class AdguardLiteralTests(unittest.TestCase):
 
 
 class FrontendLiteralTests(unittest.TestCase):
-    def test_management_pairs(self):
+    def test_nodes_file(self):
         for value in [*VALUES, '*', 'two  words']:
             with self.subTest(value=value):
-                environ = {'EXIT_TAGS': 'test tail', 'MGMT_IP_RU': '192.0.2.1', 'MGMT_IP_TEST': value,
-                           'MGMT_IP_TAIL': '192.0.2.3'}
-                self.assertEqual(compose.mgmt_ips(environ), f'ru:192.0.2.1,test:{value},tail:192.0.2.3')
+                environ = {'ENTRY_HOST': '198.51.100.1', 'EXIT_TAGS': 'test tail', 'MGMT_IP_RU': '192.0.2.1',
+                           'MGMT_IP_TEST': value, 'DOMAIN_TEST': value, 'MGMT_IP_TAIL': '192.0.2.3'}
+                nodes = json.loads(json.dumps(compose.nodes(environ)))
+                self.assertEqual([(n['tag'], n['host'], n['mgmt']) for n in nodes], [
+                    ('ru', '198.51.100.1', '192.0.2.1'), ('test', value, value), ('tail', '', '192.0.2.3')])
 
 
 class TelegramLiteralTests(unittest.TestCase):

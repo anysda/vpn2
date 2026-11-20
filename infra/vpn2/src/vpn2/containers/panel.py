@@ -405,6 +405,8 @@ def stage(environ, docker, tx, image):
     changed = write_config(admin_user)
     Path(NODES).parent.mkdir(parents=True, exist_ok=True)
     fsutil.publish(NODES, json.dumps(compose.nodes(environ)) + '\n', 0o644)
+    # Каталог runtime роль control отдаёт панели целиком; файл root повторный деплой перевладел бы.
+    shutil.chown(NODES, 'vpn2-panel', 'vpn2-panel')
     changed |= not creds.read('session_secret')
     creds.ensure('session_secret', 64)
     handed = hand_over(environ.get('ADMIN_PASSWORD') or '')

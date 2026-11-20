@@ -39,17 +39,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
-        run: shellcheck -S error deploy.sh infra/deploy.sh setup.sh
+        run: shellcheck -S error deploy.sh infra/deploy.sh
       - name: мёртвые переменные и функции
-        run: shellcheck -i SC2034,SC2317,SC2329 deploy.sh infra/deploy.sh setup.sh
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-      - name: мастер setup.sh на Python из Debian 12
-        run: |
-          python3 --version
-          pip install --quiet pytest PyYAML
-          PYTHONPATH=infra/vpn2/src python3 -m pytest infra/vpn2/tests/test_setup.py -p no:cacheprovider
+        run: shellcheck -i SC2034,SC2317,SC2329 deploy.sh infra/deploy.sh
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'

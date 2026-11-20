@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import { z } from 'zod'
-import type { ExitJob } from '../../shared/exits/transport'
+import type { ExitJob } from '../../ui/transport'
 
 // Состав экзитов - задания менеджера установки через vpn2-control (manager.*); правила тега и адреса - его.
 const Tag = z.string().regex(/^[!-~]{1,64}$/)

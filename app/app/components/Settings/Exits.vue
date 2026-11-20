@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import ExitAdd from '#shared/exits/ExitAdd.vue'
-import ExitJobView from '#shared/exits/ExitJob.vue'
+import ExitAdd from '~~/ui/ExitAdd.vue'
+import ExitJobView from '~~/ui/ExitJob.vue'
 import { failedStatus } from '#shared/error-text'
-import { OPEN_STATES, Refused, type ExitJob, type ExitTransport } from '#shared/exits/transport'
+import { OPEN_STATES, Refused, type ExitJob, type ExitTransport } from '~~/ui/transport'
 
 type Status = Api<'/api/exits'>
 const { data: status, error, refresh } = usePolledFetch('/api/exits', 3000, 10_000, null as Status | null)

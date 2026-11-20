@@ -1,5 +1,5 @@
 // Задание менеджера установки (infra/vpn2/src/vpn2/manager.py, job.read) и путь до него. Экраны
-// shared/exits/*.vue - обычный Vue без Nuxt: панель и мастер установки передают свой транспорт.
+// ui/*.vue - обычный Vue без Nuxt: панель и мастер установки передают свой транспорт.
 
 interface ExitStage { name: string, state: 'pending' | 'running' | 'done' | 'failed', nodes: string[], failed: string[] }
 

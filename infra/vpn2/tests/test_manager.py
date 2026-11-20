@@ -306,6 +306,18 @@ def test_forget_exit_cleans_entry_whatever_the_server_says(tmp_path, monkeypatch
     assert calls[1][0][:3] == ['ssh-keygen', '-R', '192.0.2.9']
 
 
+def test_exit_change_marks_router_config_last_good(monkeypatch):
+    deploy, done = deploy_run.Deploy.__new__(deploy_run.Deploy), []
+    deploy.stage_log = []
+    deploy.run_stage = lambda stage, group: done.append(f'{stage}@{group}')
+    deploy.release_complete = lambda: done.append('complete')
+    monkeypatch.setattr(deploy_run.ports, 'check', lambda tags, _rerun: done.append(f'ports {tags}') or [])
+    monkeypatch.setattr(deploy_run.subprocess, 'run', lambda argv, **_kw: done.append(' '.join(argv[1:])))
+    assert deploy.exits_changed('nl') == 0
+    assert done == ['20-ru-router@ru', "ports ['nl']", 'mark sing-box', '23-emergency@all', '25-monitoring@ru',
+                    '30-frontend@ru', '99-verify@all', 'complete']
+
+
 def test_socket_refuses_other_users(monkeypatch):
     monkeypatch.setattr(manager, 'callers', lambda: {12345})
     root = Path(f'/tmp/vpn2-manager-uid-{os.getpid()}')

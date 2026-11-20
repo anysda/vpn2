@@ -48,6 +48,7 @@ FULL_ENV = {'35-telegram': {'VPN2_PANEL_FOLLOWS': 'true'}}
 # наблюдатели аварийки на всех узлах, цели мониторинга, панель) и проверка всех узлов.
 EXIT_FIRST = ('00-bootstrap', '05-mgmt-mesh', '10-foreign')
 EXIT_STAGES = ('20-ru-router', '23-emergency', '25-monitoring', '30-frontend', '99-verify')
+APPLY = '/usr/local/sbin/vpn2-apply'
 
 
 class Interrupted(SystemExit):
@@ -452,8 +453,11 @@ class Deploy:
         code = 0
         for stage in EXIT_STAGES:
             code = self.run_stage(stage, 'all' if stage in ('23-emergency', '99-verify') else 'ru') or code
-            if stage == '20-ru-router' and new:
-                self.stage_log += ports.check([new], self.rerun)
+            if stage == '20-ru-router':
+                if new:
+                    self.stage_log += ports.check([new], self.rerun)
+                # Откат apply панели не вернёт прежний состав: работающий конфиг - последний годный, как в 29-control.
+                subprocess.run([APPLY, 'mark', 'sing-box'], check=True, stdout=subprocess.DEVNULL)
         self.release_complete()
         return code
 

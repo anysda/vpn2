@@ -51,7 +51,7 @@ def must(method, path, body=None):
 
 
 def served():
-    with socket.create_connection((ADDRESS, 443), timeout=10) as sock, CONTEXT.wrap_socket(sock) as wrapped:
+    with socket.create_connection((ADDRESS, 443), timeout=10) as sock, CONTEXT.wrap_socket(sock, server_hostname=ADDRESS) as wrapped:
         return ':'.join(f'{byte:02X}' for byte in hashlib.sha256(wrapped.getpeercert(True)).digest())
 
 

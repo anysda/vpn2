@@ -121,8 +121,12 @@ def test_add_job_failure_restores_config_then_retry_and_forget(fake):
     fake.end(1, [{'name': '10-foreign', 'state': 'done', 'nodes': ['nl'], 'failed': []},
                  {'name': '20-ru-router', 'state': 'failed', 'nodes': ['ru'], 'failed': ['ru'], 'offset': 0}])
     (fake.folder(1) / 'log').write_text('[deploy] FATAL: стадия 20-ru-router: одна или несколько нод завершились с ошибкой\n')
+    # Копия ключа оркестратора, что деплой дописал за задание, переживает возврат состава.
+    with open(fake.config, 'a') as text:
+        text.write('orchestrator_key: QUJD\n')
     job = call(fake, 'job.read', job=0)
-    assert (job['state'], job['actions'], fake.config.read_text()) == ('failed', ['retry', 'forget'], CONFIG)
+    assert (job['state'], job['actions']) == ('failed', ['retry', 'forget'])
+    assert fake.config.read_text() == CONFIG + 'orchestrator_key: QUJD\n'
     assert job['error'] == 'стадия 20-ru-router: одна или несколько нод завершились с ошибкой'
     assert job['stages'][1] == {'name': '20-ru-router', 'state': 'failed', 'nodes': ['ru'], 'failed': ['ru']}
     assert 'не закрыто' in call(fake, 'exit.add', tag='de', host='192.0.2.8')['refused']
@@ -136,6 +140,7 @@ def test_add_job_failure_restores_config_then_retry_and_forget(fake):
     assert fake.load(1)['state'] == 'forgotten'
     fake.end(0)
     assert call(fake, 'job.read', job=2)['state'] == 'done' and tags(fake) == ['se', 'at']
+    assert config.load(fake.config).raw['orchestrator_key'] == 'QUJD'
 
 
 def test_forget_of_add_that_laid_nothing_closes_it(fake):

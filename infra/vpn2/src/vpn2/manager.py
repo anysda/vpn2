@@ -188,9 +188,12 @@ class Manager:
         return job
 
     def restore(self, job):
-        original = (self.folder(job['id']) / 'config.orig').read_text()
-        if self.config.read_text() != original:
-            config.replace(self.config, original)
+        """config.yaml до задания; копия ключа оркестратора, что деплой дописал за задание, остаётся."""
+        original, current = (self.folder(job['id']) / 'config.orig').read_text(), self.config.read_text()
+        if current == original:
+            return
+        keys = [line for line in current.splitlines() if re.match(r'orchestrator_(pub)?key:', line) and line not in original]
+        config.replace(self.config, original.rstrip('\n') + ''.join(f'\n{line}' for line in keys) + '\n')
 
     def exits(self, text=None):
         return [(node.tag, node.host) for node in config.loads(text or self.config.read_text()).exits]

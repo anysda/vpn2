@@ -301,6 +301,7 @@ async function walk(page: Page, mobile: boolean, onShot: (name: string) => Promi
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
   await expect(page.getByText('1.2.0', { exact: true })).toBeVisible()
+  await expect(page.locator('section.sexits .xrow')).toHaveCount(3)
   await snap('settings')
 }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 useHead({ title: 'Настройки — anysda-vpn2' })
-definePageMeta({ title: 'Настройки', sub: 'Бот, профиль и вход в панель' })
+definePageMeta({ title: 'Настройки', sub: 'Экзиты, бот, профиль и вход в панель' })
 </script>
 
 <template>
@@ -8,13 +8,14 @@ definePageMeta({ title: 'Настройки', sub: 'Бот, профиль и в
     <div class="head">
       <div>
         <h1>Настройки</h1>
-        <p>Бот, профиль и вход в панель</p>
+        <p>Экзиты, бот, профиль и вход в панель</p>
       </div>
     </div>
     <section class="sgrid">
       <SettingsProfile />
       <BotsSection />
       <SettingsSso />
+      <SettingsExits />
     </section>
   </main>
 </template>

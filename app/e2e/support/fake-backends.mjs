@@ -5,10 +5,11 @@ import { readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
-const nodes = JSON.parse(readFileSync('/var/lib/anysda-vpn2/runtime/nodes.json', 'utf8'))
-const mgmt = Object.fromEntries(nodes.filter(n => n.mgmt).map(n => [n.tag, n.mgmt]))
-const tags = nodes.map(n => n.tag).filter(tag => tag !== 'ru')
-const instances = Object.values(mgmt).map(ip => `${ip}:9100`)
+// Состав читается на каждый запрос: добавленный экзит (fake-manager.py) сразу с метриками и выходами.
+const nodes = () => JSON.parse(readFileSync('/var/lib/anysda-vpn2/runtime/nodes.json', 'utf8'))
+const mgmtIps = () => nodes().filter(n => n.mgmt).map(n => n.mgmt)
+const exitTags = () => nodes().map(n => n.tag).filter(tag => tag !== 'ru')
+const instances = () => mgmtIps().map(ip => `${ip}:9100`)
 
 // Число ядер узла: запрос тоже по node_cpu_seconds_total, поэтому стоит раньше
 // загрузки CPU и отвечает своим целым числом.
@@ -32,7 +33,7 @@ function vm(req, res) {
   const q = url.searchParams.get('query') || ''
   const now = Number(url.searchParams.get('time')) || Date.now() / 1000
   const hit = SERIES.find(([needle]) => q.includes(needle))
-  const result = hit ? instances.map(instance => ({ metric: { instance }, value: [now, String(hit[1])] })) : []
+  const result = hit ? instances().map(instance => ({ metric: { instance }, value: [now, String(hit[1])] })) : []
   json(res, { status: 'success', data: { resultType: 'vector', result } }, 'application/json')
 }
 
@@ -45,7 +46,7 @@ function vmRange(url, res) {
   const times = []
   for (let t = start; t <= end; t += step) times.push(t)
   const hit = SERIES.find(([needle]) => q.includes(needle))
-  const result = Object.values(mgmt).flatMap((ip) => {
+  const result = mgmtIps().flatMap((ip) => {
     const values = times.flatMap((t) => {
       const v = hit?.[1]
       return v == null ? [] : [[t, String(v)]]
@@ -96,6 +97,7 @@ function clash(req, res) {
       finally { db.close() }
     }
     const proxies = { 'direct-ru': { name: 'direct-ru', type: 'Direct', history: [] } }
+    const tags = exitTags()
     tags.forEach((t, i) => {
       for (const v of ['direct', 'warp']) {
         const name = `hy2-${t}-${v}`
@@ -482,4 +484,4 @@ createServer(vm).listen(8428, '127.0.0.1')
 createServer(clash).listen(9090, '127.0.0.1')
 createServer(bot).listen(8877, '127.0.0.1')
 createServer(adguard).listen(3000, '127.0.0.1')
-console.log(`fake backends: vm :8428 (${instances.join(' ')}), clash :9090 (${tags.join(' ')}), bot :8877, adguard :3000`)
+console.log(`fake backends: vm :8428 (${instances().join(' ')}), clash :9090 (${exitTags().join(' ')}), bot :8877, adguard :3000`)

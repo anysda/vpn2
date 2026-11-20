@@ -11,7 +11,7 @@ INFRA = ROOT / 'infra'
 TEMPLATE = INFRA / 'tests/fixtures/config/etalon.yaml'
 FIXTURE = INFRA / 'tests/fixtures/ansible/inventory-etalon.json'
 LABELS = {'@ENTRY_HOST@': '198.18.10.10', '@EXIT_HOST@': '198.18.10.20', '@EXIT_TAG@': 'nl',
-          '@ADMIN_KEY@': 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStand vpn2-ci-stand', '@PANEL_IMAGE@': 'panel:test'}
+          '@ADMIN_KEY@': 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStand vpn2-ci-stand', '@PANEL_IMAGE@': 'panel:test', '@ADMIN_PASSWORD@': 'stand-admin'}
 
 
 def render(extra_exits=''):

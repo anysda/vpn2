@@ -17,3 +17,5 @@ backup:
   schedule: off
   local:
     dir: /var/backups/anysda-vpn2
+secrets:
+  admin_password: "@ADMIN_PASSWORD@"

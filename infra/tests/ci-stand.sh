@@ -78,6 +78,8 @@ EXIT=$NET.20
 # Состояние деплоя на entry и ожидание его замка. Выпуск со старой раскладкой
 # держит замок в checkout: его ждём, только если файл есть - flock создал бы.
 STATE=/var/lib/anysda-vpn2/state
+# Пароль панели стенда на entry: деплой его не хранит, вход в панель скриптами - по нему.
+ADMIN_PASSWORD_FILE=/root/stand-admin-password
 OLD_STATE=/opt/anysda-vpn2/infra/state
 DEPLOY_LOCK_WAIT="flock -w 70 /run/lock/anysda-vpn2-deploy.lock true"
 DEPLOY_LOCK_WAIT+=" && { [ ! -e $OLD_STATE/deploy.lock ] || flock -w 70 $OLD_STATE/deploy.lock true; }"
@@ -504,6 +506,7 @@ cmd_up() {
   fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")
+  [[ -f "$STAND_DIR/admin-password" ]] || (umask 077; openssl rand -hex 12 > "$STAND_DIR/admin-password")
   net_up
   apt_proxy_up
   acme_up
@@ -637,11 +640,13 @@ push_tree() {
   rendered=$( { if [[ $mode == --ref ]]; then git -C "$REPO_ROOT" show "$tag:infra/tests/fixtures/config/etalon.yaml"; else cat "$template"; fi; } \
     | sed -e "s|@ENTRY_HOST@|$ENTRY|g" -e "s|@EXIT_HOST@|$EXIT|g" -e "s|@EXIT_TAG@|$EXIT_TAG|g" \
       -e "s|@PASSWORD@|$(cat "$STAND_DIR/root-password")|g" -e "s|@ADMIN_KEY@|$(cat "$STAND_DIR/id_ed25519.pub")|g" \
-      -e "s|@PANEL_IMAGE@|$PANEL_REF|g")
+      -e "s|@ADMIN_PASSWORD@|$(cat "$STAND_DIR/admin-password")|g" -e "s|@PANEL_IMAGE@|$PANEL_REF|g")
   if grep -q '@[A-Z_]*@' <<<"$rendered"; then
     die "в config.yaml стенда остались неподставленные метки (шаблон $template)"
   fi
   ssh_node "$ENTRY" "umask 077; cat > /opt/anysda-vpn2/config.yaml" <<<"$rendered"
+  # Пароль панели деплой не хранит: стенд помнит свой (выпуск 1.2.0 держал его в /etc/anysda).
+  [[ $mode == --ref ]] || ssh_node "$ENTRY" "umask 077; cat > $ADMIN_PASSWORD_FILE" < "$STAND_DIR/admin-password"
 }
 
 # Как человек по README: ./deploy.sh -key на entry, строка - в authorized_keys экзитов.
@@ -1160,6 +1165,8 @@ cmd_deploy_upgrade() {
   # Адреса - строки «тег октет»; шапку-комментарий деплой пишет свою.
   mgmt=$(ssh_node "$ENTRY" "grep -v '^#' $STATE/mgmt-ips.txt 2>/dev/null || grep -v '^#' $OLD_STATE/mgmt-ips.txt") \
     || die 'обновление: адреса mesh выпуска не прочитаны'
+  ssh_node "$ENTRY" "install -m 600 /etc/anysda/admin-password.txt $ADMIN_PASSWORD_FILE" \
+    || die 'обновление: пароля панели выпуска нет'
   push_tree --over "$tag"
   load_panel "$image" || return 1
   entry_run deploy './deploy.sh --development' || rc=$?
@@ -1167,7 +1174,7 @@ cmd_deploy_upgrade() {
   (( rc == 0 )) || return "$rc"
   password_refused || die 'обновление: вход по паролю не закрыт'
   # config.yaml выпуска нёс пароли root: обновление их стёрло.
-  ssh_node "$ENTRY" "! grep -n 'password:' /opt/anysda-vpn2/config.yaml" || die 'обновление: пароли root остались в config.yaml'
+  ssh_node "$ENTRY" "! grep -nE '^[[:space:]]*(- )?password:' /opt/anysda-vpn2/config.yaml" || die 'обновление: пароли root остались в config.yaml'
   [[ $(ssh_node "$ENTRY" "grep -v '^#' $STATE/mgmt-ips.txt") == "$mgmt" ]] \
     || die 'обновление: адреса mesh после переноса состояния не те, что у выпуска'
   ssh_node "$ENTRY" "test -s $STATE/known_hosts" || die "обновление: нет $STATE/known_hosts"
@@ -1191,7 +1198,7 @@ panel_api() {
   local base=http://127.0.0.1:51821 jar=/run/vpn2-panel.jar
   # Origin со схемой панели: с сертификатом она ждёт https (session.cookie.secure).
   local hdr="-H \"Origin: \$o\" -H 'Content-Type: application/json'"
-  local login="curl -fsS -c $jar $hdr -d \"\$(printf '{\"username\":\"anysda\",\"password\":\"%s\"}' \"\$(cat /etc/anysda/admin-password.txt)\")\" $base/api/auth/sign-in/username >/dev/null"
+  local login="curl -fsS -c $jar $hdr -d \"\$(printf '{\"username\":\"anysda\",\"password\":\"%s\"}' \"\$(cat $ADMIN_PASSWORD_FILE 2>/dev/null || cat /etc/anysda/admin-password.txt)\")\" $base/api/auth/sign-in/username >/dev/null"
   local req="curl -fsS -b $jar -X $method $hdr ${body:+-d '$body'} $base$path"
   ssh_node "$ENTRY" "o=\$(sed -n 's/^true\$/https/p' /etc/vpn2/tls/panel/secure 2>/dev/null); o=\${o:-http}://127.0.0.1:51821
     [ -f $jar ] || { $login; }; $req"
@@ -1349,9 +1356,24 @@ cmd_restore_check() {
     || die 'замок деплоя на entry не освободился за 70 с'
   local mgmt
   mgmt=$(ssh_node "$ENTRY" "sha256sum $STATE/mgmt-ips.txt") || die "restore: нет $STATE/mgmt-ips.txt"
+  # Пароль панели из архива: база восстановится с его хэшем, а файл с паролем restore не оставляет.
+  (( foreign )) || ssh_node "$ENTRY" "PYTHONPATH=/opt/anysda-vpn2/infra/vpn2/src python3 - > $ADMIN_PASSWORD_FILE.etalon" <<'PY' \
+    || die 'restore: пароль панели из архива не прочитан'
+import sys, tarfile, tempfile
+from vpn2.backup import archive
+with tempfile.TemporaryDirectory() as work:
+    archive.decrypt('/root/etalon.tar.gz.age', f'{work}/a.tar.gz', 'stand-etalon')
+    with tarfile.open(f'{work}/a.tar.gz') as tar:
+        member = next(m for m in tar.getmembers() if m.name.endswith('/etc-anysda/admin-password.txt'))
+        sys.stdout.write(tar.extractfile(member).read().decode())
+PY
   entry_run restore './deploy.sh --development restore /root/etalon.tar.gz.age --force' || rc=$?
   log "restore: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
+  ssh_node "$ENTRY" "mv $ADMIN_PASSWORD_FILE.etalon $ADMIN_PASSWORD_FILE"
+  # Токен бота из архива 1.2.0 - в хранилище entry, в runtime-файле его нет (sha256 в expect - файл без токена).
+  [[ $(ssh_node "$ENTRY" 'cat /run/vpn2-secrets/root/telegram_bot_token') == 1234567890:stand-etalon-archive-token-0000000 ]] \
+    || die 'restore: токен бота из архива не в хранилище entry'
 
   # Эталонный архив снят до переезда состояния деплоя: restore оставляет текущее.
   [[ $(ssh_node "$ENTRY" "sha256sum $STATE/mgmt-ips.txt") == "$mgmt" ]] \

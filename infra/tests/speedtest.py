@@ -161,7 +161,7 @@ jar=/root/.speedtest-panel.jar
 clients=$(mktemp)
 trap 'rm -f "$clients"' EXIT
 if ! curl -fsS -b "$jar" -c "$jar" "$origin/api/clients" > "$clients" 2>/dev/null; then
-  pw=$(cat /etc/anysda/admin-password.txt)
+  pw=$(cat /root/stand-admin-password 2>/dev/null || cat /etc/anysda/admin-password.txt)
   python3 -c 'import json,sys; print(json.dumps({"username": sys.argv[1] or "anysda", "password": sys.argv[2]}))' "$user" "$pw" \
     | curl -fsS -c "$jar" -H 'Content-Type: application/json' -H "Origin: $origin" \
       --data @- "$origin/api/auth/sign-in/username" >/dev/null

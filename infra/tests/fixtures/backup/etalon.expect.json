@@ -8,7 +8,7 @@
   "/etc/openvpn/server/pki/server.crt": "05968241e438c962cbfbed8c013625842456982291ea5c44189528251639cc6f",
   "/etc/swanctl/x509/anysda-server.crt": "1dc64fdad8e1bb71e932fc416a88ee3682fa06b1ec4712dec03426870d756462",
   "/etc/swanctl/x509ca/anysda-ca.crt": "8bee2a666555b85dc186de9b37846478c166ccd3edaf884ae4651788bcaa38e5",
-  "/var/lib/anysda-vpn2/runtime/telegram-runtime.json": "a4785885e9fb5bf378acfe4f3bd15564e14db465a48ca8d6e76bccf55ba651fc"
+  "/var/lib/anysda-vpn2/runtime/telegram-runtime.json": "9aa0e9c04cda8ca34128672b944e1ece0d16c69ec64631daff912f3e41378de2"
  },
  "wg_peers": [
   "KqZYweyVVpFBnDhFPZmeSKlva74GRT0Zfm9KqoIydVA=",

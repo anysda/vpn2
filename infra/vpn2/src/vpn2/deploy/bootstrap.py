@@ -136,7 +136,8 @@ def setup(environ):
             result['fingerprint'] = certificate(ip)
         except Exception as error:  # noqa: BLE001 - причина уходит в терминал ниже
             result['error'] = error
-    worker = threading.Thread(target=tls_part)
+    # Ctrl-C во время ожидания ACME (до минуты) - выход сразу: замок деплоя не держит поток сертификата.
+    worker = threading.Thread(target=tls_part, daemon=True)
     worker.start()
     code = svc('apt_have age || { apt_update_if_stale; NEEDRESTART_SUSPEND=1 apt_get install -y -qq age >/dev/null; }')
     if docker and docker.wait():

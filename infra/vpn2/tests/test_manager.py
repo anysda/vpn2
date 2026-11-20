@@ -318,6 +318,23 @@ def test_exit_change_marks_router_config_last_good(monkeypatch):
                     '30-frontend@ru', '99-verify@all', 'complete']
 
 
+@pytest.mark.parametrize('out, ran', [('vpn2-forget: start\nvpn2-forget: done\n', True),
+                                      ('vpn2-forget: start\nleft: /opt/vpn2\nvpn2-forget: done\n', False)])
+def test_add_starts_from_a_clean_server(monkeypatch, out, ran):
+    deploy, done = deploy_run.Deploy.__new__(deploy_run.Deploy), []
+    deploy.skipped, deploy.progress, deploy.logins = [], None, {'nl': ['192.0.2.9', '']}
+    deploy.run_stage = lambda stage, group: done.append(f'{stage}@{group}')
+    deploy.exits_changed = lambda new: done.append(f'changed {new}') or 0
+    monkeypatch.setattr(deploy_run, 'wipe_server', lambda host, env: done.append(f'wipe {host} {env}') or (out, 0))
+    if ran:
+        assert deploy.add_exit('nl') == 0
+    else:
+        with pytest.raises(SystemExit):
+            deploy.add_exit('nl')
+    assert done == ['wipe 192.0.2.9 KEEP_LOGIN=1', *(['00-bootstrap@nl', '05-mgmt-mesh@nl', '10-foreign@nl', 'changed nl']
+                                                     if ran else [])]
+
+
 def test_socket_refuses_other_users(monkeypatch):
     monkeypatch.setattr(manager, 'callers', lambda: {12345})
     root = Path(f'/tmp/vpn2-manager-uid-{os.getpid()}')

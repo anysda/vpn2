@@ -438,6 +438,11 @@ class Deploy:
         """Новый экзит в config.yaml: его стадии, затем стадии entry, что читают состав экзитов."""
         if tag in self.skipped:
             die(f'{tag}: нет входа по ssh, экзит не добавлен')
+        # Наше на новом экзите - только от прежнего состава (забытый экзит: аварийка, сертификаты): ставим с чистого.
+        with self.progress.stage('00-bootstrap', [tag]) if self.progress else contextlib.nullcontext():
+            out, code = wipe_server(self.logins[tag][0], 'KEEP_LOGIN=1')
+            if code or 'vpn2-forget: done' not in out or 'left: ' in out:
+                die(f'{tag}: следы прежней установки не убрались, экзит не добавлен')
         for stage in EXIT_FIRST:
             self.run_stage(stage, tag)
         return self.exits_changed(tag)
@@ -659,19 +664,24 @@ class Deploy:
         die(f'pre-flight: узлов без входа по ключу: {len(reasons)}, на серверах ничего не менялось')
 
 
-def forget_exit(deploy, tag, host):
-    """Убранный экзит: если сервер отвечает - наши службы, файлы и ключи на нём (lib/exit-forget.sh), затем его
-    следы на entry. Итог: server cleaned, partial (left - что осталось на сервере) или forgotten (не ответил)."""
+def wipe_server(host, env):
+    """lib/exit-forget.sh на сервере ключом оркестратора; (вывод, код), 255 - сервер не ответил."""
     command = ['ssh', '-o', 'BatchMode=yes', *ssh_options(), '-i', str(orchestrator_key()), f'root@{host}', 'bash -s']
     try:
-        keys = '\n'.join(filter(None, (key_id(text) for text in own_keys())))
-        done = subprocess.run(command, input=f'ENTRY_KEYS={shlex.quote(keys)}\n' + (INFRA / 'lib/exit-forget.sh').read_text(),
-                              capture_output=True,
-                              text=True, timeout=600)
+        done = subprocess.run(command, input=f'{env}\n' + (INFRA / 'lib/exit-forget.sh').read_text(),
+                              capture_output=True, text=True, timeout=600)
         out, code = done.stdout, done.returncode
     except subprocess.TimeoutExpired as error:
         out, code = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or '', 255
     print(out, end='', flush=True)
+    return out, code
+
+
+def forget_exit(deploy, tag, host):
+    """Убранный экзит: если сервер отвечает - наши службы, файлы и ключи на нём (lib/exit-forget.sh), затем его
+    следы на entry. Итог: server cleaned, partial (left - что осталось на сервере) или forgotten (не ответил)."""
+    keys = '\n'.join(filter(None, (key_id(text) for text in own_keys())))
+    out, code = wipe_server(host, f'ENTRY_KEYS={shlex.quote(keys)}')
     left = [line.removeprefix('left: ') for line in out.splitlines() if line.startswith('left: ')]
     if 'vpn2-forget: start' not in out:
         server = 'forgotten'

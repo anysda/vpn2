@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Экзит, убранный из установки (менеджер установки, deploy exit-remove): с сервера уходят наши службы, файлы,
 # правила ufw и ключи entry. Ключи человека и правило ssh остаются, sshd снова пускает по паролю, как до установки.
+# Перед добавлением экзита (exit-add, KEEP_LOGIN=1) - то же без входа и ключей: экзит ставится с чистого.
 # Идёт по ssh (bash -s) ключом оркестратора, ключи entry убираются последними. Что не убралось - строкой «left: ...».
 set -u
 echo 'vpn2-forget: start'
@@ -72,6 +73,9 @@ if command -v ufw >/dev/null; then
     ufw --force delete "$number" >/dev/null || left "правило ufw $number"
   done
 fi
+
+# KEEP_LOGIN=1 - чистка перед добавлением экзита: вход и ключи entry остаются.
+if [[ ${KEEP_LOGIN:-} == 1 ]]; then echo 'vpn2-forget: done'; exit 0; fi
 
 # Вход по паролю - как до установки: без нашей вставки и с умолчанием Ubuntu в основном конфиге.
 rm -f /etc/ssh/sshd_config.d/00-anysda.conf /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf

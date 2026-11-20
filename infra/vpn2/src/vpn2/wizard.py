@@ -389,6 +389,8 @@ class Wizard:
                      'detail': ', '.join(f'{node["tag"]}: {node["monitoring"]}' for node in nodes)}]
         if draft['youtube']:
             systems.append({'name': 'YouTube через RU', 'state': 'ok', 'detail': 'включён'})
+        if not self.meta().get('status_read'):
+            self.set_meta(status_read=True)
         return {'panel_url': f'https://{host}/', 'systems': systems}
 
     def state(self):
@@ -476,6 +478,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = (STATIC / name).resolve()
         if not name or not path.is_file() or STATIC.resolve() not in path.parents:
             path = STATIC / 'index.html'
+            # Итог прочитан, страница уходит («Открыть панель» на тот же адрес): маршрут снят до ответа - браузер
+            # по переадресации попадает в панель.
+            if self.wizard.meta().get('status_read'):
+                from vpn2 import tls
+                tls.serve_routes('wizard', '')
+                self.send_response(302)
+                for header, value in (('Location', '/'), ('Cache-Control', 'no-store'), ('Content-Length', '0')):
+                    self.send_header(header, value)
+                self.end_headers()
+                return self.wizard.finish()
         try:
             data = path.read_bytes()
         except OSError:

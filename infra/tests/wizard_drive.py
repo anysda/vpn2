@@ -118,13 +118,11 @@ if any(item['state'] == 'failed' for item in status['systems']) or status['panel
     die(f'итог: {status}')
 if call('POST', '/api/session', {'token': TOKEN}, auth=False)[0] != 401:
     die('ссылка жива после конца установки')
-# Страница закрыта: мастер уходит через минуту без запросов, на IP снова панель.
-deadline = time.monotonic() + 180
-while time.monotonic() < deadline:
-    time.sleep(10)
-    code, answer = call('GET', '/api/state', auth=False)
-    if code not in (200, 401) or code == 401 and 'refused' not in answer:
-        break
-else:
-    die('мастер не ушёл за 3 мин после конца установки')
-log(f'мастер ушёл: /api/state -> {code}')
+# «Открыть панель» с экрана итога - тот же адрес: мастер переадресует и уходит, следующий запрос - панель.
+code, _ = call('GET', '/')
+if code != 302:
+    die(f'переход со страницы итога: {code}, не 302')
+code, answer = call('GET', '/api/state', auth=False)
+if code == 401 and 'refused' in answer:
+    die('после перехода на панель отвечает мастер')
+log(f'«Открыть панель»: 302, затем панель (/api/state -> {code})')

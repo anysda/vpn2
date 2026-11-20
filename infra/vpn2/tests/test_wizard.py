@@ -291,6 +291,32 @@ def test_done_status_then_the_wizard_leaves(setup, monkeypatch):
     assert client('GET', '/api/status')[0] == 401
 
 
+def test_open_panel_from_the_done_screen_reaches_the_panel(setup, monkeypatch):
+    """«Открыть панель» ведёт на тот же адрес: прочитав итог, мастер на переход страницы снимает маршрут и уходит."""
+    client, fake, _, tmp = setup
+    client.login(wizard.new_link())
+    filled(client)
+    calls = []
+    monkeypatch.setattr(wizard.subprocess, 'run', lambda argv, **_: calls.append(argv))
+    from vpn2 import tls
+    monkeypatch.setattr(tls, 'serve_routes', lambda *args: calls.append(['routes', *args]))
+    client('POST', '/api/install')
+    fake.jobs[1].update(state='done')
+    (tmp / 'static/app.js').write_text('app')
+    assert client('GET', '/')[0] == 200, 'страница итога до чтения итога'
+    client('GET', '/api/status')
+    assert client('GET', '/app.js') == (200, 'app') and not calls
+    connection = http.client.HTTPConnection('127.0.0.1', client.port, timeout=10)
+    connection.request('GET', '/', headers={'Cookie': f'{wizard.COOKIE}={client.cookie}'})
+    response = connection.getresponse()
+    assert (response.status, response.getheader('Location')) == (302, '/')
+    deadline = time.monotonic() + 5
+    while ['systemctl', 'disable', 'vpn2-wizard'] not in calls and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert calls[0] == ['routes', 'wizard', ''] and ['systemctl', 'disable', 'vpn2-wizard'] in calls
+    assert not (tmp / 'state').exists()
+
+
 @pytest.mark.parametrize(('argv', 'env', 'files', 'expected'), [
     ([], {}, (), True),
     (['--development'], {}, (), False),

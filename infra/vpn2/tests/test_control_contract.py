@@ -23,7 +23,7 @@ METHODS = ('wg.apply', 'openvpn.apply', 'ikev2.apply', 'state.read', 'config.app
            'profile.read', 'traffic.read', 'openvpn.issue', 'openvpn.revoke', 'openvpn.disconnect',
            'openvpn.certificate', 'settings.read', 'settings.apply', 'api.describe', 'routes.plan', 'expiry.run',
            'manager.exit.check', 'manager.install.run', 'manager.exit.add', 'manager.exit.remove', 'manager.job.read',
-           'manager.job.retry', 'manager.job.skip', 'manager.job.forget', 'manager.status.read')
+           'manager.job.retry', 'manager.job.skip', 'manager.job.forget', 'manager.status.read', 'manager.key.read')
 # Метод -> параметры, которые сервис принимает (по одному полному примеру на метод).
 VALID = {
     'wg.apply': {'version': 3, 'peers': [PEER, {**PEER, 'key': PSK, 'ip': '10.66.64.9', 'expires_at': WHEN}]},
@@ -54,6 +54,7 @@ VALID = {
     'manager.job.skip': {'job': 3, 'tag': 'nl'},
     'manager.job.forget': {'job': 3},
     'manager.status.read': {},
+    'manager.key.read': {},
 }
 
 
@@ -68,7 +69,7 @@ def refused(method, params):
 
 
 def test_method_names_and_limits_are_the_published_ones():
-    assert contract.METHODS == METHODS and len(set(METHODS)) == 26
+    assert contract.METHODS == METHODS and len(set(METHODS)) == 27
     assert (contract.API, contract.LIMIT, contract.MAX_DEVICES) == (1, 1024 * 1024, 2000)
     assert set(VALID) == set(METHODS)
 

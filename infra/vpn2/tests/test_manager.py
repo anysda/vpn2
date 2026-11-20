@@ -370,6 +370,16 @@ def test_socket_refuses_other_users(monkeypatch):
         path.unlink(missing_ok=True)
 
 
+def test_key_read_is_the_public_half_only(fake, tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    assert call(fake, 'key.read') == {'key': ''}
+    (tmp_path / '.ssh').mkdir()
+    (tmp_path / '.ssh/id_ed25519').write_text('PRIVATE\n')
+    (tmp_path / '.ssh/id_ed25519.pub').write_text('ssh-ed25519 AAAA root@entry\n')
+    assert call(fake, 'key.read') == {'key': 'ssh-ed25519 AAAA root@entry'}
+    assert manager.answer(fake, json.dumps({'api': 1, 'method': 'key.read', 'params': {'path': '/'}}))['ok'] is False
+
+
 def test_control_relays_to_manager(monkeypatch):
     from vpn2.control import backend
     sent = []

@@ -12,6 +12,7 @@ API 1 - одна строка JSON на соединение с /run/vpn2-manage
   job.skip {job, tag}     -> установка продолжается без этого экзита
   job.forget {job}        -> задание закрыто; у упавшего добавления убирается то, что успело лечь
   status.read {}          -> {deploy: idle|busy, job: задание|null, nodes: [{tag, role: entry|exit, host, monitoring: up|down|unknown}]}
+  key.read {}             -> {key: открытый ключ оркестратора для authorized_keys экзита; '' - ключа ещё нет}
 host - адрес или root@адрес, tag - тег экзита, job - номер задания; путей, команд и прочих аргументов нет.
 Задание: {id, kind: install|add|remove, tag, host, state: running|done|failed|interrupted|forgotten,
   stages: [{name, state: pending|running|done|failed, nodes, failed}], log: журнал текущей или упавшей стадии
@@ -42,7 +43,7 @@ SOCKET = Path(os.environ.get('VPN2_MANAGER_SOCKET') or '/run/vpn2-manager/manage
 LOCK = Path(os.environ.get('VPN2_DEPLOY_LOCK') or '/run/lock/anysda-vpn2-deploy.lock')
 UNIT = 'vpn2-manager-job'
 METHODS = {'exit.check': 'tag host', 'install.run': '', 'exit.add': 'tag host', 'exit.remove': 'tag',
-           'job.read': 'job', 'job.retry': 'job', 'job.skip': 'job tag', 'job.forget': 'job', 'status.read': ''}
+           'job.read': 'job', 'job.retry': 'job', 'job.skip': 'job tag', 'job.forget': 'job', 'status.read': '', 'key.read': ''}
 OPEN = ('running', 'failed', 'interrupted')
 RECAP = re.compile(r'(?m)^(\S+)\s+: ok=\d+\s+changed=\d+\s+unreachable=(\d+)\s+failed=(\d+)')
 
@@ -397,6 +398,9 @@ class Manager:
             return {'problems': self.problems(params['tag'], params['host'])}
         if method == 'status.read':
             return self.status()
+        if method == 'key.read':
+            from vpn2.deploy import pub, read
+            return {'key': read(pub())}
         with self.mutex:
             if method == 'job.read':
                 job = self.load(params['job'])

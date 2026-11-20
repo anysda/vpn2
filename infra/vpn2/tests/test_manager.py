@@ -198,9 +198,14 @@ def test_interrupted_job_after_restart_or_reboot(fake):
     assert call(again, 'job.retry', job=1)['state'] == 'running' and again.spawned == [['exit-remove', 'at', '192.0.2.3']]
 
 
-def test_install_continues_without_a_failed_exit(fake):
+def test_unfinished_deploy_is_finished_by_install(fake):
     fake.journal.write_text('{"phase": "applying"}')
-    assert 'сначала ./deploy.sh recover' in call(fake, 'install.run')['refused']
+    assert 'сначала полная установка' in call(fake, 'exit.add', tag='nl', host='192.0.2.9')['refused']
+    assert 'сначала полная установка' in call(fake, 'exit.remove', tag='at')['refused']
+    assert call(fake, 'install.run')['state'] == 'running' and fake.spawned == [['recover']]
+
+
+def test_install_continues_without_a_failed_exit(fake):
     fake.journal.write_text('{"phase": "complete"}')
     call(fake, 'install.run')
     assert fake.spawned == [[]] and fake.config.read_text() == CONFIG

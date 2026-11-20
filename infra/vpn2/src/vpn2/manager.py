@@ -262,8 +262,10 @@ class Manager:
                           f'задание {last["id"]} не закрыто: повтори его или забудь')
         if self.busy():
             raise Refused('идёт ./deploy.sh: дождись его конца')
-        if self.journal_open():
-            raise Refused('прошлый ./deploy.sh упал на середине: сначала ./deploy.sh recover')
+        # Прошлый деплой упал на середине: полная установка его доводит (как ./deploy.sh recover), экзиты - после неё.
+        unfinished = self.journal_open()
+        if unfinished and kind != 'install':
+            raise Refused('прошлый деплой упал на середине: сначала полная установка')
         if not self.config.is_file():
             raise Refused('config.yaml не заполнен')
         if kind == 'add' and (problems := self.problems(tag, host)):
@@ -278,7 +280,7 @@ class Manager:
         job = {'id': self.latest() + 1, 'kind': kind, 'tag': tag, 'host': config._exit_host(host, 'host') if host else '',
                'state': 'new', 'skipped': []}
         self.folder(job['id']).mkdir(parents=True, mode=0o700)
-        return self.run(job)
+        return self.run(job, recover=unfinished)
 
     def closed(self, number):
         job = self.load(number)

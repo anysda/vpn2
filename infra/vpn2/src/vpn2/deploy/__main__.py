@@ -66,6 +66,8 @@ def dispatch(deploy, argv, new_server=None):
     if action in ('', 'recover', *EXIT_ACTIONS):
         report.banner(deploy)
         deploy.preflight()
+        if action == 'exit-add':
+            deploy.clean_new_exit(argv[1])
     # Автообновления свежей ОС стартуют в первые минуты после загрузки: пауза - до любого apt деплоя.
     if action in ('', 'recover') and os.path.isdir('/run/systemd/system'):
         if code := svc('nftables_preserve_rules'):

@@ -434,15 +434,18 @@ class Deploy:
         report.announce(self)
         return verify
 
-    def add_exit(self, tag):
-        """Новый экзит в config.yaml: его стадии, затем стадии entry, что читают состав экзитов."""
+    def clean_new_exit(self, tag):
+        """Наше на новом экзите - только от прежнего состава (забытый экзит: аварийка, журнал выпуска): до проверок
+        выпуска сервер становится чистым."""
         if tag in self.skipped:
             die(f'{tag}: нет входа по ssh, экзит не добавлен')
-        # Наше на новом экзите - только от прежнего состава (забытый экзит: аварийка, сертификаты): ставим с чистого.
-        with self.progress.stage('00-bootstrap', [tag]) if self.progress else contextlib.nullcontext():
+        with self.progress.stage('preflight', [tag]) if self.progress else contextlib.nullcontext():
             out, code = wipe_server(self.logins[tag][0], 'KEEP_LOGIN=1')
             if code or 'vpn2-forget: done' not in out or 'left: ' in out:
                 die(f'{tag}: следы прежней установки не убрались, экзит не добавлен')
+
+    def add_exit(self, tag):
+        """Новый экзит в config.yaml: его стадии, затем стадии entry, что читают состав экзитов."""
         for stage in EXIT_FIRST:
             self.run_stage(stage, tag)
         return self.exits_changed(tag)

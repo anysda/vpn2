@@ -24,8 +24,8 @@ Description={description}
 After=network-online.target
 
 [Service]
-Environment=DEPLOY_ROOT={infra} PYTHONPATH={infra}/vpn2/src{extra}
-ExecStart=/usr/bin/python3 -B -m {module} serve
+Environment=DEPLOY_ROOT={infra} PYTHONPATH={infra}/vpn2/src
+{extra}ExecStart=/usr/bin/python3 -B -m {module} serve
 UMask=0077
 Restart=on-failure
 RestartSec=2
@@ -75,7 +75,14 @@ def page(environ):
         environ['VPN2_RELEASE_MANIFEST'] = str(compose.MANIFEST)
         if release.main(['--manifest', str(compose.MANIFEST), 'fetch', str(REPO)]):
             raise SystemExit(1)
-    image = compose.release_image(environ, 'wizard', compose.Docker())
+    try:
+        image = compose.release_image(environ, 'wizard', compose.Docker())
+    except compose.EngineError:
+        # Разработка без образа мастера: страница, что уже лежит на узле.
+        if environ.get('VPN2_DEVELOPMENT') != 'true' or not (wizard.STATIC / 'index.html').is_file():
+            raise
+        print(f'WARNING: [development] wizard: образа нет, страница из {wizard.STATIC}', file=sys.stderr)
+        return
     home = wizard.STATIC.parent
     home.mkdir(parents=True, exist_ok=True)
     subprocess.run(['docker', 'rm', '-f', 'vpn2-wizard'], capture_output=True)
@@ -94,8 +101,9 @@ def page(environ):
 
 def units(environ):
     """Менеджер установки из дерева (его службу 29-control заменит своей из venv - она не трогается) и мастер."""
-    extra = ''.join(f' {name}={environ[name]}' for name in ('VPN2_DEVELOPMENT', 'VPN2_RELEASE_MANIFEST', 'TLS_ACME_URL',
-                                                            'TLS_ACME_ROOT') if environ.get(name))
+    from vpn2.nodevars import RUN_NAMES
+    # Настройки запуска мимо config.yaml (--development, тестовый ACME стенда) - менеджеру и его заданиям.
+    extra = ''.join(f'Environment="{name}={environ[name]}"\n' for name in sorted(RUN_NAMES) if environ.get(name))
     texts = {'vpn2-manager': ('VPN2 install manager (before install: from the tree)', 'vpn2.manager'),
              wizard.UNIT: ('VPN2 install wizard in the browser', 'vpn2.wizard')}
     for name, (description, module) in texts.items():

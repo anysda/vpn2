@@ -10,6 +10,7 @@
 #   sudo infra/tests/ci-stand.sh up-bg [--release] | up-wait  то же фоном и ожидание
 #   sudo infra/tests/ci-stand.sh deploy <образ панели>  полный деплой
 #   sudo infra/tests/ci-stand.sh deploy-release <тег> <манифест>  установка выпуска по манифесту
+#   sudo infra/tests/ci-stand.sh wizard <образ панели>  чистая установка мастером: ./deploy.sh без config.yaml, API мастера
 #   sudo infra/tests/ci-stand.sh release-save           остановить ВМ, диски и базу слепка выпуска - в кэш
 #   infra/tests/ci-stand.sh release-key <тег>            ключ кэша установленного выпуска (stand.yml)
 #   sudo infra/tests/ci-stand.sh deploy-upgrade <образ> <тег>     поверх выпуска - дерево ветки
@@ -819,6 +820,48 @@ cmd_deploy() {
   warm_report
   host_stats 'после деплоя'
   return "$rc"
+}
+
+# Чистая установка мастером, без браузера: ./deploy.sh без config.yaml печатает ссылку, wizard_drive.py ведёт
+# API от токена до итога; связь во время стадий 30 и 29-control рвётся не дольше 10 с; после итога мастер уходит,
+# повторный ./deploy.sh мастера не ставит. ACME остановлен (acme-down) - отпечаток из терминала равен отданному.
+cmd_wizard() {
+  local image=${1:?образ панели (docker-образ на этой машине)} started=$SECONDS rc=0 log link fingerprint check
+  local tree=/opt/anysda-vpn2
+  apt_proxy_up --if-down
+  push_tree
+  ssh_node "$ENTRY" "rm -f $tree/config.yaml $ADMIN_PASSWORD_FILE"
+  lay_key
+  # Образа страницы мастера у ветки нет (его собирает images): заглушка, API ведёт стенд.
+  ssh_node "$ENTRY" 'mkdir -p /opt/vpn2-wizard/static && echo "<!doctype html>wizard" > /opt/vpn2-wizard/static/index.html'
+  entry_run wizard 'PANEL_IMAGE_PULL=false ./deploy.sh --development' || die 'мастер не встал'
+  log "ссылка за $(( SECONDS - started )) с от ./deploy.sh"
+  log=$(ssh_node "$ENTRY" "sed 's/\x1b\[[0-9;]*m//g' /root/wizard.log")
+  link=$(grep -o 'https://[0-9.]*/#[A-Za-z0-9_-]*' <<<"$log" | tail -1)
+  [[ -n $link ]] || die 'ссылки в выводе ./deploy.sh нет'
+  ! ssh_node "$ENTRY" "journalctl -b --no-pager; ps -eo args; cat /var/log/caddy/* 2>/dev/null" | grep -qF "${link#*#}" \
+    || die 'токен ссылки в журнале или в ps'
+  fingerprint=$(sed -n 's/.*сертификат самоподписанный, отпечаток SHA-256 \([0-9A-F:]*\)$/\1/p' <<<"$log" | tail -1)
+  if pgrep -f "$STAND_DIR/acme/pebble -config" >/dev/null; then
+    [[ -z $fingerprint ]] || die "ACME работает, а терминал говорит о самоподписанном: $fingerprint"
+    curl -fsSk https://127.0.0.1:15000/roots/0 > "$STAND_DIR/pebble-root.pem" || die 'корень pebble не получен'
+    check=ca=$STAND_DIR/pebble-root.pem
+  else
+    grep -q 'браузер предупредит - сверьте отпечаток' <<<"$log" || die 'без ACME терминал не просит сверить отпечаток'
+    check=fingerprint=$fingerprint
+  fi
+  # Образ панели ветки - под тегом разработки по умолчанию: задание мастера берёт его без pull.
+  load_panel "$image" && ssh_node "$ENTRY" "docker tag $PANEL_REF ghcr.io/anysda/vpn2/panel:dev" || die 'образ панели не на entry'
+  python3 "$REPO_ROOT/infra/tests/wizard_drive.py" "$link" "$(cat "$STAND_DIR/id_ed25519.pub")" "$EXIT_TAG" "root@$EXIT" \
+    "$(cat "$STAND_DIR/admin-password")" "$check" || rc=$?
+  ssh_node "$ENTRY" 'tail -n 60 /var/lib/vpn2-manager/jobs/1/log' > "$STAND_DIR/wizard-job.log" 2>&1 || true
+  (( rc )) && { tail -n 60 "$STAND_DIR/wizard-job.log"; die "мастер: код $rc"; }
+  ssh_node "$ENTRY" "! systemctl cat vpn2-wizard >/dev/null 2>&1 && [ ! -e /etc/caddy/vpn2-site.d/wizard.conf ] && [ ! -e /var/lib/vpn2-wizard ]" \
+    || die 'после итога остались служба, маршрут или состояние мастера'
+  ssh_node "$ENTRY" "umask 077; cat > $ADMIN_PASSWORD_FILE" < "$STAND_DIR/admin-password"
+  ssh_node "$ENTRY" "! DEPLOY_ROOT=$tree/infra PYTHONPATH=$tree/infra/vpn2/src python3 -B -m vpn2.deploy.bootstrap --wanted" \
+    || die 'на установленной системе ./deploy.sh снова пошёл бы мастером'
+  log "мастер: установка и уход за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
 }
 
 # Сценарий 4, шаг 1: выпуск <тег> ставится по манифесту (образы по digest).
@@ -1679,6 +1722,7 @@ case "${1:-}" in
   up-wait) cmd_up_wait ;;
   deploy) cmd_deploy "${@:2}" ;;
   deploy-release) cmd_deploy_release "${@:2}" ;;
+  wizard) cmd_wizard "${@:2}" ;;
   release-save) cmd_release_save ;;
   release-key) release_key "${@:2}" ;;
   deploy-upgrade) cmd_deploy_upgrade "${@:2}" ;;

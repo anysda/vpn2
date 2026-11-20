@@ -69,7 +69,7 @@ jobs:
         run: python3 .github/reuse.py stand
 
   deploy:
-    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой' || matrix.part == 'tls' && 'TLS без ACME' || 'restore' }}"
+    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой' || matrix.part == 'tls' && 'TLS без ACME' || matrix.part == 'wizard' && 'мастер установки' || matrix.part == 'wizard-noacme' && 'мастер установки без ACME' || 'restore' }}"
     needs: reuse
     if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
@@ -82,6 +82,9 @@ jobs:
         # Установка при недоступном ACME: самоподписанная пара, потом смена на пару CA.
         include:
           - {os: '26.04', part: tls}
+          # Чистая установка мастером в браузере: API от ссылки до итога, с ACME и без него.
+          - {os: '26.04', part: wizard}
+          - {os: '26.04', part: wizard-noacme}
     env:
       STAND_OS: ${{ matrix.os }}
     steps:
@@ -130,8 +133,9 @@ jobs:
               echo $? > "$RUNNER_TEMP/venv.rc"; } > "$RUNNER_TEMP/venv.log" 2>&1 &
           fi
           { sudo infra/tests/ci-stand.sh up-wait > "$RUNNER_TEMP/up.log" 2>&1; echo $? > "$RUNNER_TEMP/up.rc"
-            [ "$(cat "$RUNNER_TEMP/up.rc")" = 0 ] && { [ "${{ matrix.part }}" != tls ] || sudo infra/tests/ci-stand.sh acme-down; } \
-              && sudo infra/tests/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
+            part=${{ matrix.part }}
+            [ "$(cat "$RUNNER_TEMP/up.rc")" = 0 ] && { [ "$part" != tls ] && [ "$part" != wizard-noacme ] || sudo infra/tests/ci-stand.sh acme-down; } \
+              && sudo infra/tests/ci-stand.sh "$([ "${part#wizard}" = "$part" ] && echo deploy || echo wizard)" vpn2-stand/panel:${{ github.sha }}
             echo $? > "$RUNNER_TEMP/deploy.rc"; } > "$RUNNER_TEMP/deploy.log" 2>&1 &
 
       - uses: docker/setup-buildx-action@v4

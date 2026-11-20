@@ -391,3 +391,23 @@ def test_control_relays_to_manager(monkeypatch):
     with pytest.raises(backend.Fault, match='unavailable'):
         backend.Backend.execute(object.__new__(backend.Backend), 'manager.status.read', {})
 
+
+
+def test_check_works_before_config_yaml_exists(fake):
+    """Мастер установки проверяет экзит до того, как записан config.yaml."""
+    fake.config.unlink()
+    assert call(fake, 'exit.check', tag='nl', host='root@192.0.2.9') == {'problems': []}
+    assert call(fake, 'exit.check', tag='ru', host='192.0.2.9')['problems'][0].startswith('тег «ru»')
+    assert call(fake, 'exit.check', tag='nl', host='10.0.0.5') == {'problems': ['10.0.0.5 - это сама entry']}
+
+
+def test_job_runs_with_the_run_settings_of_the_manager(tmp_path, monkeypatch):
+    """Менеджер до установки идёт с --development и тестовым ACME стенда: задание - с ними же, без прочего окружения."""
+    calls = []
+    monkeypatch.setattr(manager.subprocess, 'run', lambda argv, **_: calls.append(argv))
+    monkeypatch.setenv('VPN2_DEVELOPMENT', 'true')
+    monkeypatch.setenv('TLS_ACME_URL', 'https://198.18.10.1:14000/dir')
+    monkeypatch.setenv('SOMETHING_ELSE', 'x')
+    manager.Manager(tmp_path, tmp_path / 'config.yaml', tmp_path / 'lock', tmp_path).spawn(tmp_path, [], False)
+    assert '--setenv=VPN2_DEVELOPMENT=true' in calls[0] and '--setenv=TLS_ACME_URL=https://198.18.10.1:14000/dir' in calls[0]
+    assert not any('SOMETHING_ELSE' in arg for arg in calls[0])

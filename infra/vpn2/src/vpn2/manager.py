@@ -45,8 +45,6 @@ UNIT = 'vpn2-manager-job'
 METHODS = {'exit.check': 'tag host', 'install.run': '', 'exit.add': 'tag host', 'exit.remove': 'tag',
            'job.read': 'job', 'job.retry': 'job', 'job.skip': 'job tag', 'job.forget': 'job', 'status.read': '', 'key.read': ''}
 OPEN = ('running', 'failed', 'interrupted')
-# Режим деплоя менеджера до установки (./deploy.sh --development, тестовый ACME стенда) - и его заданиям.
-PASS = ('VPN2_DEVELOPMENT', 'VPN2_RELEASE_MANIFEST', 'TLS_ACME_URL', 'TLS_ACME_ROOT')
 RECAP = re.compile(r'(?m)^(\S+)\s+: ok=\d+\s+changed=\d+\s+unreachable=(\d+)\s+failed=(\d+)')
 
 
@@ -167,8 +165,9 @@ class Manager:
         log = folder / 'log'
         subprocess.run(['systemd-run', f'--unit={UNIT}', '--collect', '--quiet', '-p', f'StandardOutput=append:{log}',
                         '-p', f'StandardError=append:{log}', f'--setenv=VPN2_JOB={folder}',
-                        f'--setenv=VPN2_RECOVER={int(recover)}', *(f'--setenv={name}={os.environ[name]}' for name in PASS
-                                                                    if os.environ.get(name)),
+                        # Настройки запуска мимо config.yaml (--development, тестовый ACME), с которыми идёт менеджер.
+                        f'--setenv=VPN2_RECOVER={int(recover)}', *(f'--setenv={name}={os.environ[name]}'
+                                                                    for name in sorted(nodevars.RUN_NAMES) if os.environ.get(name)),
                         str(self.repo / 'deploy.sh'), *argv],
                        check=True, capture_output=True)
 

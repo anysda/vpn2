@@ -10,9 +10,12 @@ const lever = (name: 'hold' | 'deploy-busy', on: boolean) => inside(`import fs f
   if (JSON.parse(process.argv[2])) fs.writeFileSync(path, ''); else fs.rmSync(path, { force: true })`, name, on)
 const card = (page: Page) => page.locator('section.sexits')
 const row = (page: Page, tag: string) => card(page).locator('.xrow').filter({ hasText: tag.toUpperCase() })
-// Состояние экрана для карточки: 1440x900, при E2E_983_DIR.
-const shot = (page: Page, state: string) => process.env.E2E_983_DIR
-  ? page.screenshot({ path: `${process.env.E2E_983_DIR}/983-${state}.png` }) : Promise.resolve()
+// Состояние экрана для карточки: 1440x900, при E2E_983_DIR; низ карточки экзитов в кадре.
+async function shot(page: Page, state: string) {
+  if (!process.env.E2E_983_DIR) return
+  await card(page).evaluate(el => el.scrollIntoView({ block: 'end' }))
+  await page.screenshot({ path: `${process.env.E2E_983_DIR}/983-${state}.png` })
+}
 
 async function openSettings(page: Page) {
   await page.goto('/settings')

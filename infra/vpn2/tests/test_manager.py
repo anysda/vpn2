@@ -23,13 +23,15 @@ class Fake(manager.Manager):
     def __init__(self, root):
         (root / 'config.yaml').write_text(CONFIG)
         super().__init__(root / 'state', root / 'config.yaml', root / 'deploy.lock', root)
-        self.running, self.spawned, self.logins = False, [], []
+        self.running, self.spawned, self.logins, self.recovers = False, [], [], []
+        self.journal = root / 'operation.json'
 
     def alive(self):
         return self.running
 
-    def spawn(self, _folder, argv):
+    def spawn(self, _folder, argv, recover):
         self.spawned.append(argv)
+        self.recovers.append(recover)
         self.running = True
 
     def login_problems(self, address):
@@ -166,20 +168,24 @@ def test_interrupted_job_after_restart_or_reboot(fake):
     fake.running = False  # процесс пропал без итога: kill -9 или перезагрузка
     again = Fake.__new__(Fake)
     manager.Manager.__init__(again, fake.jobs.parent, fake.config, fake.lock, fake.repo)
-    again.running, again.spawned = False, []
+    again.running, again.spawned, again.recovers = False, [], []
     job = call(again, 'job.read', job=1)
     assert (job['state'], job['actions'], tags(again)) == ('interrupted', ['retry', 'forget'], ['se', 'at'])
     assert call(again, 'job.retry', job=1)['state'] == 'running' and again.spawned == [['exit-remove', 'at', '192.0.2.3']]
 
 
 def test_install_continues_without_a_failed_exit(fake):
+    fake.journal.write_text('{"phase": "applying"}')
+    assert 'сначала ./deploy.sh recover' in call(fake, 'install.run')['refused']
+    fake.journal.write_text('{"phase": "complete"}')
     call(fake, 'install.run')
     assert fake.spawned == [[]] and fake.config.read_text() == CONFIG
     fake.end(1, [{'name': '10-foreign', 'state': 'failed', 'nodes': ['se', 'at'], 'failed': ['at']}])
     assert call(fake, 'job.read', job=1)['actions'] == ['retry', 'skip', 'forget']
     assert 'экзита nl нет' in call(fake, 'job.skip', job=1, tag='nl')['refused']
     assert call(fake, 'job.skip', job=1, tag='at')['skipped'] == ['at']
-    assert tags(fake) == ['se'] and fake.spawned[-1] == []
+    # Упавшая установка оставила журнал открытым: продолжение - recover.
+    assert tags(fake) == ['se'] and fake.spawned[-1] == ['recover'] and fake.recovers == [False, True]
     fake.end(1)
     assert call(fake, 'job.read', job=1)['state'] == 'failed' and tags(fake) == ['se', 'at']
     assert 'без последнего экзита' in call(fake, 'job.skip', job=1, tag='se')['refused']

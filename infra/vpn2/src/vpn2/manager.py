@@ -143,16 +143,23 @@ class Manager:
         from vpn2.deploy import CONFIG, REPO
         self.jobs, self.config, self.lock = state / 'jobs', Path(config_path or CONFIG), lock
         self.repo, self.mutex = Path(repo or REPO), threading.Lock()
+        self.journal = Path(os.environ.get('VPN2_DEPLOY_JOURNAL') or '/var/lib/vpn2-deploy/operation.json')
 
     # Процесс задания - служба systemd: менеджер его не держит.
     def alive(self):
         return subprocess.run(['systemctl', 'is-active', '--quiet', UNIT]).returncode == 0
 
-    def spawn(self, folder, argv):
+    def spawn(self, folder, argv, recover):
         log = folder / 'log'
         subprocess.run(['systemd-run', f'--unit={UNIT}', '--collect', '--quiet', '-p', f'StandardOutput=append:{log}',
                         '-p', f'StandardError=append:{log}', f'--setenv=VPN2_JOB={folder}',
-                        str(self.repo / 'deploy.sh'), *argv], check=True, capture_output=True)
+                        f'--setenv=VPN2_RECOVER={int(recover)}', str(self.repo / 'deploy.sh'), *argv],
+                       check=True, capture_output=True)
+
+    def journal_open(self):
+        """Прошлый деплой упал после начала изменений: журнал выпуска entry не закрыт."""
+        found = fsutil.read_json(self.journal, {}) if self.journal.is_file() else {}
+        return bool(found) and found.get('phase') not in ('complete', 'aborted', 'rolled-back')
 
     def busy(self):
         try:
@@ -198,8 +205,9 @@ class Manager:
     def exits(self, text=None):
         return [(node.tag, node.host) for node in config.loads(text or self.config.read_text()).exits]
 
-    def run(self, job):
-        """Состав экзитов задания в config.yaml и процесс задания."""
+    def run(self, job, recover=False):
+        """Состав экзитов задания в config.yaml и процесс задания. recover - продолжение после своего упавшего
+        задания: журнал выпуска, что оно оставило открытым, доводится, как у ./deploy.sh recover."""
         folder = self.folder(job['id'])
         original = self.config.read_text()
         (folder / 'config.orig').write_text(original)
@@ -208,14 +216,14 @@ class Manager:
         wanted = [item for item in exits if item[0] not in job['skipped'] and not (job['kind'] == 'remove' and item[0] == job['tag'])]
         if wanted != self.exits(original):
             config.set_exits(self.config, wanted)
-        argv = {'install': [], 'add': ['exit-add', job['tag']], 'remove': ['exit-remove', job['tag'], job['host']]}[job['kind']]
+        argv = {'install': ['recover'] if recover else [], 'add': ['exit-add', job['tag']], 'remove': ['exit-remove', job['tag'], job['host']]}[job['kind']]
         # Итог прошлой попытки не должен достаться новой, что упала до первой записи хода.
         if (folder / 'progress.json').exists():
             fsutil.write_json(folder / 'progress.json', {**fsutil.read_json(folder / 'progress.json'), 'exit': None})
         job['state'] = 'running'
         self.save(job)
         try:
-            self.spawn(folder, argv)
+            self.spawn(folder, argv, recover)
         except (OSError, subprocess.CalledProcessError) as error:
             with open(folder / 'log', 'a') as log:
                 log.write(f'[manager] FATAL: задание не запустилось: {getattr(error, "stderr", "") or error}\n')
@@ -231,6 +239,8 @@ class Manager:
                           f'задание {last["id"]} не закрыто: повтори его или забудь')
         if self.busy():
             raise Refused('идёт ./deploy.sh: дождись его конца')
+        if self.journal_open():
+            raise Refused('прошлый ./deploy.sh упал на середине: сначала ./deploy.sh recover')
         if not self.config.is_file():
             raise Refused('config.yaml не заполнен')
         if kind == 'add' and (problems := self.problems(tag, host)):
@@ -258,7 +268,7 @@ class Manager:
         return job
 
     def retry(self, number):
-        return self.run(self.closed(number))
+        return self.run(self.closed(number), recover=True)
 
     def skip(self, number, tag):
         job = self.closed(number)
@@ -270,7 +280,7 @@ class Manager:
         if len(exits) == 1:
             raise Refused('без последнего экзита установка не продолжается')
         job['skipped'].append(tag)
-        return self.run(job)
+        return self.run(job, recover=True)
 
     def forget(self, number):
         job = self.closed(number)
@@ -282,7 +292,7 @@ class Manager:
         # Добавление успело что-то положить: entry перестраивается без экзита, сервер чистится.
         cleanup = {'id': self.latest() + 1, 'kind': 'remove', 'tag': job['tag'], 'host': job['host'], 'state': 'new', 'skipped': []}
         self.folder(cleanup['id']).mkdir(parents=True, mode=0o700)
-        return self.run(cleanup)
+        return self.run(cleanup, recover=True)
 
     def problems(self, tag, host):
         """Отказы до любых изменений: формат, занятость, сама entry; затем вход по ssh и ОС."""

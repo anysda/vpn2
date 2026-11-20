@@ -481,8 +481,10 @@ class Deploy:
                 raise SystemExit(code)
             return
         self.opened = self.staged = True
+        # Задание менеджера установки продолжает своё упавшее задание: открытый им журнал доводится, как у recover.
+        recover = action == 'recover' or action.startswith('exit-') and os.environ.get('VPN2_RECOVER') == '1'
         if self.service('--tags', 'release', '-e', self.bundle(), '-e', f'out={self.tmp}', '-e', f'scope={scope}',
-                        '-e', f'partial={action not in ("", "recover")}', '-e', f'journal={action != "recover"}',
+                        '-e', f'partial={action not in ("", "recover")}', '-e', f'journal={not recover}',
                         '-e', f'bootstrap={action in ("", "recover", "00-bootstrap", "exit-add")}'):
             if found := sorted(self.tmp.glob('*.journal')):
                 self.opened = False

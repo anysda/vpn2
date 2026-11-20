@@ -756,13 +756,13 @@ snapshot_base() {
 }
 
 # Строк нет нигде на entry: ни в файлах (кроме журналов и файлов самого стенда: /root/*.log, /root/*.rc,
-# фикстуры infra/tests клона), ни в журнале systemd. /proc, /sys, /dev не читаются.
+# фикстуры infra/tests клона и его копия для слепка в $SNAP_DIR), ни в журнале systemd. /proc, /sys, /dev не читаются.
 secrets_absent() {  # <что проверяется> <строка>...
   local what=$1 found
   shift
   found=$(printf '%s\n' "$@" | ssh_node "$ENTRY" 'umask 077; cat > /run/vpn2-needles
     { grep -rlsF -D skip --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev -f /run/vpn2-needles / \
-        | grep -vE "^(/root/[^/]*\.(log|rc)|/run/vpn2-needles|/opt/anysda-vpn2/infra/tests/.*)$"
+        | grep -vE "^(/root/[^/]*\.(log|rc)|/run/vpn2-needles|/run/vpn2-snapshot/.*|/opt/anysda-vpn2/infra/tests/.*)$"
       journalctl -o cat --no-pager -q | grep -qF -f /run/vpn2-needles && echo "журнал systemd"; } || true
     rm -f /run/vpn2-needles') || die "$what: диск entry не прочитан"
   [[ -z $found ]] || die "$what: секрет лежит на entry: ${found//$'\n'/, }"

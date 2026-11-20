@@ -1406,7 +1406,7 @@ PY
 # ./deploy.sh restore <архив> без строки ./deploy.sh -key на экзите. Экзит не трогается: его authorized_keys
 # до и после совпадают, новая entry входит на него только ключом из архива.
 cmd_recover_fresh() {
-  local archive key mgmt authorized host loader rc=0 started=$SECONDS
+  local archive key mgmt authorized host loader pid rc=0 started=$SECONDS
   local mgmt_pub="ssh-keygen -y -f /run/vpn2-secrets/root/mgmt_key | cut -d' ' -f1,2"
   entry_run backup './deploy.sh --development backup' || die 'recover: бэкап живой entry не снят'
   archive=$(ssh_node "$ENTRY" 'ls -t /var/backups/anysda-vpn2/anysda-vpn2-*.tar.gz.age | head -1') \
@@ -1415,8 +1415,9 @@ cmd_recover_fresh() {
   key=$(ssh_node "$ENTRY" '/opt/anysda-vpn2/deploy.sh -key 2>/dev/null') && mgmt=$(ssh_node "$ENTRY" "$mgmt_pub") \
     && authorized=$(ssh_node "$EXIT" 'sha256sum /root/.ssh/authorized_keys') \
     && host=$(ssh_node "$ENTRY" 'cat /etc/ssh/ssh_host_ed25519_key.pub') || die 'recover: ключи живой entry не прочитаны'
-  kill "$(cat "$STAND_DIR/entry.pid")" || die 'recover: ВМ entry не остановлена'
-  while kill -0 "$(cat "$STAND_DIR/entry.pid")" 2>/dev/null; do sleep 1; done
+  # Свой pidfile qemu стирает при выходе: номер процесса читается один раз.
+  pid=$(cat "$STAND_DIR/entry.pid") && kill "$pid" || die 'recover: ВМ entry не остановлена'
+  while kill -0 "$pid" 2>/dev/null; do sleep 1; done
   vm_boot "${NODES[0]}"
   vm_wait_ready entry "$ENTRY" "$started"
   [[ $(ssh_node "$ENTRY" 'cat /etc/ssh/ssh_host_ed25519_key.pub') != "$host" ]] && ssh_node "$ENTRY" 'test ! -e /var/lib/vpn2-secrets' \

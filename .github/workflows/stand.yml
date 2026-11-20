@@ -263,7 +263,8 @@ jobs:
       # Потеря entry: новая ВМ entry с чистого образа, экзит не тронут; restore архива без строки ./deploy.sh -key.
       - name: restore на новой entry
         if: ${{ matrix.part == 'restore' && !inputs.backup_fixture && !inputs.restore_foreign }}
-        run: sudo infra/tests/ci-stand.sh recover-fresh
+        # Новая ВМ - с образа своей Ubuntu: STAND_OS sudo сам не передаёт.
+        run: sudo --preserve-env=STAND_OS infra/tests/ci-stand.sh recover-fresh
 
       - name: эталонный архив бэкапа
         if: ${{ matrix.part == 'restore' && inputs.backup_fixture }}

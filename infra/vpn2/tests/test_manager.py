@@ -28,7 +28,7 @@ class Fake(manager.Manager):
     def alive(self):
         return self.running
 
-    def spawn(self, folder, argv):
+    def spawn(self, _folder, argv):
         self.spawned.append(argv)
         self.running = True
 
@@ -303,7 +303,7 @@ def test_socket_refuses_other_users(monkeypatch):
 def test_control_relays_to_manager(monkeypatch):
     from vpn2.control import backend
     sent = []
-    monkeypatch.setattr(manager, 'call', lambda method, params, timeout: sent.append((method, params)) or
+    monkeypatch.setattr(manager, 'call', lambda method, params, **_options: sent.append((method, params)) or
                         {'api': 1, 'ok': True, 'result': {'refused': 'x'}})
     assert backend.Backend.execute(object.__new__(backend.Backend), 'manager.exit.remove', {'tag': 'nl'}) == {'refused': 'x'}
     assert sent == [('exit.remove', {'tag': 'nl'})]

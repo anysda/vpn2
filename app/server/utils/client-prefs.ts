@@ -83,3 +83,12 @@ async function writePrefs(): Promise<void> {
 // По очереди: иначе запись по устаревшему снимку базы могла лечь последней.
 const prefsQueue = serialQueue()
 export const syncClientPrefsFile = () => prefsQueue(writePrefs)
+
+/**
+ * Деплой не идёт: смена client-prefs.json перезапускает apply-routes, а тот стирает пробы 99-verify
+ * в ручных наборах. Удаление экзита само снимает его из файла в конце; панель сверяет закрепления после.
+ */
+export async function deployIdle(): Promise<boolean> {
+  const status = await control<{ deploy: 'idle' | 'busy' }>('manager.status.read', {}).catch(() => null)
+  return status?.deploy === 'idle'
+}

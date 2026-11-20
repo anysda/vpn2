@@ -17,17 +17,18 @@ export default defineNitroPlugin((nitroApp) => {
     await runAccessOperations()
     await reportControlExpiry().catch(err => log.error({ err }, 'cron: control expiry report failed'))
     await syncControlExpiry().catch(err => log.error({ err }, 'cron: control expiry sync failed'))
-    await syncClientPrefsFile().catch(err => log.error({ err }, 'cron: client prefs sync failed'))
+    if (await deployIdle()) await syncClientPrefsFile().catch(err => log.error({ err }, 'cron: client prefs sync failed'))
     await collectTraffic().catch(err => log.error({ err }, 'cron: traffic collection failed'))
   }
 
-  // Состав экзитов сменился (задание менеджера): закрепления удалённого экзита снимаются сразу, а не тиком.
+  // Состав экзитов сменился (задание менеджера): закрепления удалённого экзита снимаются, как только деплой кончился.
   let exitSet = ''
   every(nitroApp, 5_000, async () => {
     const now = JSON.stringify(exitNodes())
-    if (now === exitSet) return
-    exitSet = now
-    await syncClientPrefsFile().catch(err => log.error({ err }, 'cron: client prefs sync after exit change failed'))
+    if (now === exitSet || !await deployIdle()) return
+    await syncClientPrefsFile()
+      .then(() => { exitSet = now })
+      .catch(err => log.error({ err }, 'cron: client prefs sync after exit change failed'))
   })
 
   // Первый тик с задержкой: init должен успеть проверить базу.

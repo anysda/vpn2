@@ -49,7 +49,7 @@ files=(/etc/systemd/system/anysda-* /etc/systemd/system/vpn2-* /etc/systemd/syst
   /etc/systemd/system/system.slice.d/zz-vpn2-resources.conf
   /etc/systemd/system/nftables.service.d/10-anysda-preserve.conf /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
   /etc/systemd/networkd.conf.d/60-anysda-foreign.conf /etc/sysctl.d/99-anysda.conf /etc/sysctl.d/60-anysda-swap.conf
-  /etc/fail2ban/jail.d/anysda.local /etc/apt/apt.conf.d/90anysda-lock-timeout
+  /etc/fail2ban/jail.d/anysda.local /etc/apt/apt.conf.d/*anysda*
   /etc/nftables-hy2hop.conf /etc/polkit-1/rules.d/50-vpn2-emergency-hy2.rules /etc/docker /etc/apt/sources.list.d/docker*
   /etc/apt/keyrings/docker* /etc/sing-box /etc/caddy /etc/anysda /etc/vpn2 /var/anysda /var/lib/anysda* /var/lib/vpn2-*
   /var/lib/sing-box /var/lib/caddy /var/lib/docker /var/lib/containerd /usr/local/lib/vpn2 /usr/local/bin/anysda-*

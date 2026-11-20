@@ -453,6 +453,37 @@ test.describe('me', () => {
       await page.context().clearCookies()
       await loginApi(page)
     })
+
+    test('версия продукта - ответ /api/version; пока ответа нет или при сбое - прочерк', async ({ page, guard }) => {
+      guard.allow(503, /\/api\/version$/, 'GET')
+      await loginApi(page)
+      const { version } = await (await page.request.get('/api/version')).json() as { version: string }
+      const row = page.locator('.fld').filter({ has: page.getByText('Версия', { exact: true }) })
+      await page.goto('/settings')
+      await expect(row.locator('code')).toHaveText(version)
+
+      let answer!: () => void
+      const held = new Promise<void>((resolve) => { answer = resolve })
+      await page.route(/\/api\/version$/, async (route) => {
+        await held
+        await route.fallback()
+      })
+      await page.goto('/settings')
+      await hydrated(page)
+      await expect(row.locator('code')).toHaveText('—')
+      const before = await row.boundingBox()
+      answer()
+      await expect(row.locator('code')).toHaveText(version)
+      expect(await row.boundingBox(), 'строка не прыгает, когда ответ пришёл').toEqual(before)
+
+      await page.unrouteAll()
+      await page.route(/\/api\/version$/, route => route.fulfill({ status: 503, json: { statusCode: 503, statusMessage: 'panel_starting' } }))
+      const failed = page.waitForResponse(/\/api\/version$/)
+      await page.goto('/settings')
+      expect((await failed).status()).toBe(503)
+      await hydrated(page)
+      await expect(row.locator('code')).toHaveText('—')
+    })
   })
 
   test.describe('вход через Authentik из профиля', () => {

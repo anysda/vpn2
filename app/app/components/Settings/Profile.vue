@@ -2,6 +2,7 @@
 const { user, loginMethod } = useAuthSession()
 const { sso } = useSsoPublic()
 const { toast, busy, act } = useAct()
+const { data: product } = useFetch('/api/version', { server: false, lazy: true })
 const pwd = reactive({ current: '', next: '', confirm: '' })
 
 function changePassword() {
@@ -23,6 +24,9 @@ function changePassword() {
     </div>
     <div class="fld">
       <span>Логин</span><code>{{ user?.username ?? '—' }}</code>
+    </div>
+    <div class="fld">
+      <span>Версия</span><code>{{ product?.version ?? '—' }}</code>
     </div>
     <div v-if="sso.enabled" class="al">
       <b>Пароль — аварийный вход</b>Форма входа по паролю открывается по адресу /login?direct=1, если включено «Оставить вход по паролю». При выключенной настройке аварийный вход тоже недоступен.

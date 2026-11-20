@@ -16,6 +16,7 @@ import { ADMIN_PASSWORD, ADMIN_USER, authPost, expect, hydrated, loginApi, test 
 //
 // | маршрут                          | поле                                | значение                      | причина |
 // | /api/sso                         | enabled, autoRedirect               | false                         | SSO включают чужие тесты шарда |
+// | /api/version                     | version                             | 1.2.0                         | номер меняется каждым выпуском |
 // | /api/events                      | весь список                         | пять событий, at от FIXED     | журнал пишут и чужие тесты (маршруты, входы), at - время запроса |
 // | /api/ops/traffic                 | starts, exits[].bytes, total, sum, prev | узор от FIXED             | вёдра считаются от Date.now() сервера, последнее неполное |
 // | /api/ops/activity                | today, days                         | узор от FIXED                 | сутки от Date.now(), дни из трафика чужих тестов |
@@ -125,6 +126,7 @@ function pinAll(page: Page) {
     // Живое: порт в «Адресе возврата» SSO - у каждого шарда свой E2E_PORT, эталон снят на 31710.
     pin(page, /\/api\/admin\/sso(\?|$)/, (b: Json) => ({ ...b, redirectUrl: String(b.redirectUrl).replace(/:\d+\//, ':31710/') })),
     pin(page, /\/api\/sso(\?|$)/, b => ({ ...b, enabled: false, autoRedirect: false })),
+    pin(page, /\/api\/version$/, b => ({ ...b, version: '1.2.0' })),
     pin(page, /\/api\/events(\?|$)/, () => [
       { id: 5, at: FIXED - 4 * 60_000, type: 'node', level: 'ok', title: 'Узел восстановлен', detail: 'Связь с узлом снова есть' },
       { id: 4, at: FIXED - 35 * 60_000, type: 'node', level: 'alarm', title: 'Узел недоступен', detail: 'Нет ответа уже 3 минуты' },
@@ -298,6 +300,7 @@ async function walk(page: Page, mobile: boolean, onShot: (name: string) => Promi
 
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
+  await expect(page.getByText('1.2.0', { exact: true })).toBeVisible()
   await snap('settings')
 }
 

@@ -28,15 +28,6 @@ def columns(lines):
     return ['  '.join(cell.ljust(widths[i]) if i < len(row) - 1 else cell for i, cell in enumerate(row)) for row in cells]
 
 
-def root_password_open():
-    """sshd этой entry пускает root по паролю: ключа человека на entry нет."""
-    try:
-        lines = subprocess.run(['sshd', '-T'], capture_output=True, text=True, timeout=10).stdout.lower().splitlines()
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return 'passwordauthentication yes' in lines and 'permitrootlogin yes' in lines
-
-
 def summary(deploy, t0):
     env, timing = deploy.env(), elapsed(t0)
     url = f'http://{env["SSH_HOST"]}/'
@@ -46,12 +37,10 @@ def summary(deploy, t0):
         url = f'https://{env["PANEL_DOMAIN"]}/'
     password = 'задан в config.yaml (admin.password)' if env.get('ADMIN_PASSWORD') else \
         f'ssh {env.get("SSH_USER") or "root"}@{env["SSH_HOST"]} cat /etc/anysda/admin-password.txt'
-    ssh = ['-', '  ⚠ SSH:      вход root по паролю открыт из интернета; ключ: ./setup.sh (SSH pubkey), затем ./deploy.sh'] \
-        if root_password_open() else []
-    warned = deploy.verify_warnings or deploy.deploy_warnings or deploy.skipped or ssh
+    warned = deploy.verify_warnings or deploy.deploy_warnings or deploy.skipped
     title = f'  {"⚠ деплой завершён с предупреждениями" if warned else "деплой завершён"}  ·  {timing}  '
     rows = [title, '-', *(f'  {row}' for row in columns(deploy.stage_log)), '-',
-            f'  Panel:    {url}', f'  Login:    {env.get("ADMIN_USER") or "admin"}', f'  Password: {password}', *ssh]
+            f'  Panel:    {url}', f'  Login:    {env.get("ADMIN_USER") or "admin"}', f'  Password: {password}']
     width = max(len(row) for row in rows) + 12
     bar = '─' * width
     print(f'\n{G}  ┌{bar}┐{E}\n' + ''.join(f'{G}  ├{bar}┤{E}\n' if row == '-' else f'{G}  │{E}{row:<{width}}{G}│{E}\n'

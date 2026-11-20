@@ -11,7 +11,7 @@ INFRA = ROOT / 'infra'
 TEMPLATE = INFRA / 'tests/fixtures/config/etalon.yaml'
 FIXTURE = INFRA / 'tests/fixtures/ansible/inventory-etalon.json'
 LABELS = {'@ENTRY_HOST@': '198.18.10.10', '@EXIT_HOST@': '198.18.10.20', '@EXIT_TAG@': 'nl',
-          '@PASSWORD@': 'stand-pass', '@PANEL_IMAGE@': 'panel:test'}
+          '@ADMIN_KEY@': 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStand vpn2-ci-stand', '@PANEL_IMAGE@': 'panel:test'}
 
 
 def render(extra_exits=''):
@@ -25,7 +25,7 @@ def run(directory, text, *args):
     path = Path(directory) / 'config.yaml'
     path.write_text(text, encoding='utf-8')
     # Окружение пустое: настройки запуска из окружения инвентарь отдаёт узлам, эталону они не нужны.
-    env = dict(PATH=os.environ['PATH'], VPN2_CONFIG=str(path), PYTHONPATH=str(INFRA / 'vpn2/src'),
+    env = dict(PATH=os.environ['PATH'], HOME='/root', VPN2_CONFIG=str(path), PYTHONPATH=str(INFRA / 'vpn2/src'),
                VPN2_STATE_DIR=str(Path(directory) / 'state'), VPN2_INVENTORY_SECRETS='show')
     return subprocess.run([sys.executable, 'infra/ansible/inventory.py', *args], cwd=ROOT, env=env,
                           capture_output=True, text=True, timeout=30)
@@ -55,7 +55,7 @@ class AnsibleInventoryTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), {})
 
     def test_exits_follow_config(self):
-        second = '  - tag: de\n    host: 198.18.10.30\n    password: "stand-pass"\n'
+        second = '  - tag: de\n    host: root@198.18.10.30\n'
         base = render()
         no_exits = base.split('exits:\n')[0] + 'admin:' + base.split('admin:', 1)[1]
         cases = ((no_exits, []), (render(second), ['nl', 'de']))
@@ -68,7 +68,7 @@ class AnsibleInventoryTests(unittest.TestCase):
     def test_prepare_keeps_release_octets_in_clean_install_text(self):
         # Файл v1.1.5 со своей шапкой: октеты те же, текст как у чистой установки.
         release = '# тег → последний октет MGMT_IP (10.99.0.N), пишет config2env.py.\nnl 5\n'
-        second = '  - tag: de\n    host: 198.18.10.30\n    password: "stand-pass"\n'
+        second = '  - tag: de\n    host: root@198.18.10.30\n'
         for text, octets in ((render(), ['nl 5']), (render(second), ['de 2', 'nl 5'])):
             with self.subTest(octets=octets), tempfile.TemporaryDirectory() as directory, \
                     tempfile.TemporaryDirectory() as clean:

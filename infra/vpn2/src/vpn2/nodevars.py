@@ -17,14 +17,14 @@ OVPN_PROTOS = ('udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6', 'tcp-server', 'tcp4
 FALSE_WORDS = ('false', 'no', 'n', '0')
 LABEL = r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
 # Значения этих имён в выводе ansible-inventory закрыты (см. infra/ansible/inventory.py).
-SECRET_NAMES = frozenset({'SSH_PASS', 'ADMIN_PASSWORD', 'TELEGRAM_BOT_TOKEN', 'SSO_CLIENT_SECRET',
-                          'BACKUP_PASSPHRASE', 'BACKUP_S3_ACCESS_KEY', 'BACKUP_S3_SECRET_KEY'})
+SECRET_NAMES = frozenset({'ADMIN_PASSWORD', 'TELEGRAM_BOT_TOKEN', 'SSO_CLIENT_SECRET', 'BACKUP_PASSPHRASE',
+                           'BACKUP_S3_ACCESS_KEY', 'BACKUP_S3_SECRET_KEY'})
 
 # Имена, которые деплой выводит из config.yaml (кроме имён с тегом экзита).
 CONFIG_NAMES = frozenset("""
 ENTRY_HOST AGH_PORT HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT HY2_HOP_ENABLED HY2_HOP_DIRECT HY2_HOP_WARP
 HY2_HOP_MGMT HY2_HOP_INTERVAL ADMIN_SSH_PUBKEY EXIT_TAGS WG_PUBLIC_HOST OVPN_PUBLIC_HOST MGMT_IP_RU
-HOST_TAG SSH_USER SSH_HOST SSH_PASS PUB_IP PUB_IP_OUT MGMT_IP HY2_UP_MBPS HY2_DOWN_MBPS
+HOST_TAG SSH_USER SSH_HOST PUB_IP PUB_IP_OUT MGMT_IP HY2_UP_MBPS HY2_DOWN_MBPS
 ADMIN_USER ADMIN_PASSWORD PANEL_DOMAIN ENTRY_RESOURCE_OVERRIDES PANEL_IMAGE TGBOT_IMAGE
 WG_LISTEN_PORT OVPN_PORT OVPN_PROTO WG_MTU WG_SPLIT_LOCAL RESTART_AFTER_CHECKS RESTART_MIN_INTERVAL_S
 TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID TELEGRAM_ADMIN_USERNAME ALERT_CPU_PCT ALERT_RAM_PCT ALERT_WINDOW_SEC
@@ -143,8 +143,6 @@ def validate(cfg: Config) -> dict:
     sec['exits'] = cfg.raw.get('exits', [])
     entry = sec['entry']
     _check_host(entry.get('host', ''), 'entry.host')
-    if not entry.get('password'):
-        raise ConfigError('entry.password', 'обязательное непустое значение')
     if entry.get('public_host'):
         _check_host(entry['public_host'], 'entry.public_host')
     if not sec['exits']:
@@ -157,8 +155,6 @@ def validate(cfg: Config) -> dict:
             raise ConfigError(key + '.tag', 'нужен уникальный незарезервированный тег: [a-z](?:[a-z0-9-]*[a-z0-9])?')
         tags.add(tag)
         _check_host(item.get('host', ''), key + '.host')
-        if not item.get('password'):
-            raise ConfigError(key + '.password', 'обязательное непустое значение')
         if 'hy2_direct_port' in item:
             _check_port(item['hy2_direct_port'], key + '.hy2_direct_port')
     for name, value in sec['ports'].items():
@@ -181,8 +177,8 @@ def validate(cfg: Config) -> dict:
             raise ConfigError(f'exits[{item["tag"]}]', 'нужны обе скорости hy2_up_mbps/hy2_down_mbps, целые Мбит/с '
                               'от 1 до 1000000, либо обе пустые (BBR)') from None
     if _flag(sec['backup'].get('enabled', '')) and not sec['backup'].get('passphrase', ''):
-        raise ConfigError('backup.passphrase', 'пустой при включённом бэкапе - задай его (или запусти '
-                          './setup.sh), либо выключи backup.enabled')
+        raise ConfigError('backup.passphrase', 'пустой при включённом бэкапе - задай его '
+                          'или выключи backup.enabled')
     return sec
 
 
@@ -314,8 +310,7 @@ def _backup(backup):
 def _entry(sec, development):
     """Переменные ru.env."""
     host = sec['entry']['host']
-    env = {'HOST_TAG': 'ru', 'SSH_USER': 'root', 'SSH_HOST': host, 'SSH_PASS': sec['entry']['password'],
-           'PUB_IP_OUT': host, 'MGMT_IP': '10.99.0.1',
+    env = {'HOST_TAG': 'ru', 'SSH_USER': 'root', 'SSH_HOST': host, 'PUB_IP_OUT': host, 'MGMT_IP': '10.99.0.1',
            'ADMIN_USER': sec['admin'].get('user', 'anysda') or 'anysda',
            'ADMIN_PASSWORD': sec['admin'].get('password', ''), 'PANEL_DOMAIN': sec['panel'].get('domain', ''),
            'ENTRY_RESOURCE_OVERRIDES': json.dumps(sec['entry_resources'])}
@@ -337,8 +332,7 @@ def _entry(sec, development):
 
 def _exit(item, octet, direct):
     """Переменные <тег>.env."""
-    env = {'HOST_TAG': item['tag'], 'SSH_USER': 'root', 'SSH_HOST': item['host'], 'SSH_PASS': item['password'],
-           'PUB_IP': item['host'], 'MGMT_IP': f'10.99.0.{octet}',
+    env = {'HOST_TAG': item['tag'], 'SSH_USER': 'root', 'SSH_HOST': item['host'], 'PUB_IP': item['host'], 'MGMT_IP': f'10.99.0.{octet}',
            'HY2_UP_MBPS': item.get('hy2_up_mbps', ''), 'HY2_DOWN_MBPS': item.get('hy2_down_mbps', '')}
     if item.get('hy2_direct_port', direct) != direct:
         env['HY2_DIRECT_PORT'] = item['hy2_direct_port']

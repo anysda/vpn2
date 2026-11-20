@@ -15,9 +15,8 @@ containers_tools:
   telegram:
     - {src: configs/anysda-config.yaml.tpl, dest: anysda-config.yaml.tpl}
 
-# Окружение шага - все переменные узла, кроме пароля входа на entry.
+# Окружение шага - все переменные узла.
 # Версия VictoriaMetrics закреплена в versions.yml: с :latest узлы жили на разных версиях.
 containers_env: >-
-  {{ vpn2_env | dict2items | rejectattr('key', 'eq', 'SSH_PASS') | items2dict
-     | combine({'VM_VERSION': (lookup('ansible.builtin.file', containers_infra ~ '/versions.yml')
-                               | from_yaml).victoriametrics}) }}
+  {{ vpn2_env | combine({'VM_VERSION': (lookup('ansible.builtin.file', containers_infra ~ '/versions.yml')
+                                        | from_yaml).victoriametrics}) }}

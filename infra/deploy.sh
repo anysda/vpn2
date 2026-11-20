@@ -15,6 +15,9 @@ usage() {
   cat <<'TEXT'
 anysda-vpn2 — деплой
 
+  ./deploy.sh -key                         открытый ключ оркестратора (нет - создаётся): его кладут
+                                           в /root/.ssh/authorized_keys на каждом экзите до установки
+  ./deploy.sh -yaml                        установка по заполненному config.yaml
   ./deploy.sh                              полный pipeline: манифест commit → prereqs → проверки → деплой
   ./deploy.sh --manifest <file>            то же без сети: манифест сборки из файла
   ./deploy.sh --development [stage group]  явный режим разработки с локальными/плавающими образами
@@ -44,11 +47,19 @@ case "${1:-}" in
     VPN2_DEVELOPMENT=false MANIFEST=$(realpath "$2")
     shift 2 ;;
 esac
-case "${1:-}" in -h|--help) usage ;; esac
+case "${1:-}" in
+  -h|--help) usage ;;
+  -key) [[ $# -eq 1 ]] || { printf '%b✗ -key без других аргументов%b\n' "$R" "$E" >&2; exit 1; }
+        PYTHONPATH="$DEPLOY_ROOT/vpn2/src" exec python3 -B -m vpn2.deploy -key ;;
+  -yaml) shift
+         [[ $# -eq 0 ]] || { printf '%b✗ -yaml без других аргументов%b\n' "$R" "$E" >&2; exit 1; } ;;
+esac
 if [[ ! -f "$REPO/config.yaml" ]]; then
   printf '\n  %b config.yaml не найден%b\n\n' "$R" "$E"
-  printf '  Запусти мастер настройки:\n'
-  printf '  %b./setup.sh%b\n\n' "$Y" "$E"
+  printf '  Установка:\n'
+  printf '  1. %b./deploy.sh -key%b - ключ оркестратора; положи его в /root/.ssh/authorized_keys на каждом экзите\n' "$Y" "$E"
+  printf '  2. cp config.example.yaml config.yaml и заполни: entry, exits (root@адрес), admin.ssh_pubkey\n'
+  printf '  3. %b./deploy.sh -yaml%b - установка\n\n' "$Y" "$E"
   exit 1
 fi
 export VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} VPN2_MANIFEST=$MANIFEST

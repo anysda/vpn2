@@ -31,7 +31,7 @@ FATAL_TEXT = '''anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутству
   source в Bash-скрипте anysda-backup.sh (вручную или из systemd).
 
 Действия:
-  1. Запусти ./setup.sh (на оркестраторе) — заполни backup.passphrase.
+  1. Заполни backup.passphrase в config.yaml на entry.
   2. ./deploy.sh 26-backup ru — стадия пересоздаст {env_file}.
   3. Перезапусти бэкап вручную: /usr/local/bin/anysda-backup.sh
 '''

@@ -20,7 +20,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -45,7 +44,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -76,7 +74,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -104,7 +101,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -138,7 +134,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -169,7 +164,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -200,7 +194,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -236,7 +229,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -267,7 +259,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -298,7 +289,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -308,7 +298,7 @@
    "YT_ZAPRET_OFFLOAD": "keep"
   }
  },
- "backup-3": "ConfigError: config.yaml: backup.passphrase: пустой при включённом бэкапе - задай его (или запусти ./setup.sh), либо выключи backup.enabled",
+ "backup-3": "ConfigError: config.yaml: backup.passphrase: пустой при включённом бэкапе - задай его или выключи backup.enabled",
  "base": {
   "de": {
    "ADMIN_SSH_PUBKEY": "",
@@ -330,7 +320,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -355,7 +344,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -387,7 +375,6 @@
    "OVPN_PUBLIC_HOST": "panel.example.com",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root",
    "WG_PUBLIC_HOST": "panel.example.com"
   },
@@ -415,7 +402,6 @@
    "PANEL_IMAGE": "ghcr.io/x/panel:1",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -449,7 +435,6 @@
    "OVPN_PUBLIC_HOST": "vpn.example.com",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root",
    "WG_PUBLIC_HOST": "vpn.example.com"
   },
@@ -476,7 +461,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -487,7 +471,60 @@
    "YT_ZAPRET_OFFLOAD": "keep"
   }
  },
- "entry-1": "ConfigError: config.yaml: entry.password: обязательное непустое значение",
+ "entry-1": {
+  "de": {
+   "ADMIN_SSH_PUBKEY": "",
+   "AGH_PORT": "3000",
+   "DE_HY2_DIRECT_PORT": "443",
+   "DE_HY2_DOWN_MBPS": "",
+   "DE_HY2_UP_MBPS": "",
+   "DOMAIN_DE": "198.51.100.20",
+   "ENTRY_HOST": "203.0.113.10",
+   "EXIT_TAGS": "de",
+   "HOST_TAG": "de",
+   "HY2_DIRECT_PORT": "443",
+   "HY2_DOWN_MBPS": "",
+   "HY2_MGMT_PORT": "8444",
+   "HY2_UP_MBPS": "",
+   "HY2_WARP_PORT": "8443",
+   "MGMT_IP": "10.99.0.2",
+   "MGMT_IP_DE": "10.99.0.2",
+   "MGMT_IP_RU": "10.99.0.1",
+   "PUB_IP": "198.51.100.20",
+   "SSH_HOST": "198.51.100.20",
+   "SSH_USER": "root"
+  },
+  "ru": {
+   "ADMIN_PASSWORD": "",
+   "ADMIN_SSH_PUBKEY": "",
+   "ADMIN_USER": "anysda",
+   "AGH_PORT": "3000",
+   "DE_HY2_DIRECT_PORT": "443",
+   "DE_HY2_DOWN_MBPS": "",
+   "DE_HY2_UP_MBPS": "",
+   "DOMAIN_DE": "198.51.100.20",
+   "ENTRY_HOST": "203.0.113.10",
+   "ENTRY_RESOURCE_OVERRIDES": "{}",
+   "EXIT_TAGS": "de",
+   "HOST_TAG": "ru",
+   "HY2_DIRECT_PORT": "443",
+   "HY2_MGMT_PORT": "8444",
+   "HY2_WARP_PORT": "8443",
+   "MGMT_IP": "10.99.0.1",
+   "MGMT_IP_DE": "10.99.0.2",
+   "MGMT_IP_RU": "10.99.0.1",
+   "PANEL_DOMAIN": "",
+   "PUB_IP_OUT": "203.0.113.10",
+   "SSH_HOST": "203.0.113.10",
+   "SSH_USER": "root",
+   "SSO_ENABLED": "false",
+   "SSO_REQUESTED": "false",
+   "YT_MARK": "256",
+   "YT_QUIC": "block",
+   "YT_ROUTE": "off",
+   "YT_ZAPRET_OFFLOAD": "keep"
+  }
+ },
  "entry-2": "ConfigError: config.yaml: entry.host: ожидается IP-адрес или DNS-имя",
  "entry_resources-0": {
   "de": {
@@ -510,7 +547,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -535,7 +571,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -567,7 +602,6 @@
    "NL_HY2_UP_MBPS": "100",
    "PUB_IP": "exit.example.net",
    "SSH_HOST": "exit.example.net",
-   "SSH_PASS": "p2",
    "SSH_USER": "root"
   },
   "ru": {
@@ -593,7 +627,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -630,7 +663,6 @@
    "NL_HY2_UP_MBPS": "100",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "nl": {
@@ -659,7 +691,6 @@
    "NL_HY2_UP_MBPS": "100",
    "PUB_IP": "exit.example.net",
    "SSH_HOST": "exit.example.net",
-   "SSH_PASS": "p2",
    "SSH_USER": "root"
   },
   "ru": {
@@ -690,7 +721,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -704,7 +734,7 @@
  "exit-2": "ConfigError: config.yaml: exits[1].tag: нужен уникальный незарезервированный тег: [a-z](?:[a-z0-9-]*[a-z0-9])?",
  "exit-3": "ConfigError: config.yaml: exits[1].tag: нужен уникальный незарезервированный тег: [a-z](?:[a-z0-9-]*[a-z0-9])?",
  "exit-4": "ConfigError: config.yaml: exits[1].host: ожидается IP-адрес или DNS-имя",
- "exit-5": "ConfigError: config.yaml: exits[1].password: обязательное непустое значение",
+ "exit-5": "ConfigError: config.yaml: exits[1].host: вход на экзит только root: root@адрес или адрес",
  "exit-6": "ConfigError: config.yaml: exits[1].hy2_direct_port: порт должен быть целым числом от 1 до 65535",
  "failover-0": {
   "de": {
@@ -727,7 +757,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -754,7 +783,6 @@
    "RESTART_AFTER_CHECKS": "3",
    "RESTART_MIN_INTERVAL_S": "600",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -786,7 +814,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -812,7 +839,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -845,7 +871,6 @@
    "OVPN_PUBLIC_HOST": "panel.example.com",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root",
    "WG_PUBLIC_HOST": "panel.example.com"
   },
@@ -872,7 +897,6 @@
    "PANEL_DOMAIN": "panel.example.com",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -911,7 +935,6 @@
    "NL_HY2_UP_MBPS": "100",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "nl": {
@@ -940,7 +963,6 @@
    "NL_HY2_UP_MBPS": "100",
    "PUB_IP": "exit.example.net",
    "SSH_HOST": "exit.example.net",
-   "SSH_PASS": "p2",
    "SSH_USER": "root"
   },
   "ru": {
@@ -971,7 +993,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1002,7 +1023,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1028,7 +1048,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1066,7 +1085,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1096,7 +1114,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1128,7 +1145,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1153,7 +1169,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ALLOWED_SUBS": "",
    "SSO_AUTO_REDIRECT": "true",
@@ -1191,7 +1206,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1216,7 +1230,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ALLOWED_SUBS": "a,b",
    "SSO_AUTO_REDIRECT": "false",
@@ -1254,7 +1267,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1279,7 +1291,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ALLOWED_SUBS": "",
    "SSO_AUTO_REDIRECT": "false",
@@ -1317,7 +1328,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1342,7 +1352,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1373,7 +1382,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1398,7 +1406,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1432,7 +1439,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1457,7 +1463,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1488,7 +1493,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1513,7 +1517,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1544,7 +1547,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1569,7 +1571,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",
@@ -1603,7 +1604,6 @@
    "MGMT_IP_RU": "10.99.0.1",
    "PUB_IP": "198.51.100.20",
    "SSH_HOST": "198.51.100.20",
-   "SSH_PASS": "exitpass",
    "SSH_USER": "root"
   },
   "ru": {
@@ -1628,7 +1628,6 @@
    "PANEL_DOMAIN": "",
    "PUB_IP_OUT": "203.0.113.10",
    "SSH_HOST": "203.0.113.10",
-   "SSH_PASS": "entrypass",
    "SSH_USER": "root",
    "SSO_ENABLED": "false",
    "SSO_REQUESTED": "false",

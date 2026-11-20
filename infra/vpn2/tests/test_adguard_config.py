@@ -260,9 +260,9 @@ class AdguardLiteralTests(unittest.TestCase):
         for value in VALUES:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
                 # Имя проходит весь путь: config.yaml, inventory.py --env, env узла, конфиг AdGuard.
-                config = ('entry:\n  host: entry.example.test\n  password: fake\n'
+                config = ('entry:\n  host: entry.example.test\n'
                           'exits:\n  - tag: test\n    host: exit.example.test\n'
-                          '    password: fake\nadmin:\n  user: ' + json.dumps(value) + '\n')
+                          'admin:\n  user: ' + json.dumps(value) + '\n')
                 prepared, texts = node_envs(work, config)
                 self.assertTrue(texts, prepared.stderr)
                 user = sourced(work, texts['ru'], 'printf %s "$ADMIN_USER"')

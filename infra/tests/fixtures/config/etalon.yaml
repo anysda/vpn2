@@ -1,13 +1,12 @@
 # Шаблон стенда CI: метки @...@ подставляет ci-stand.sh, пароль бэкапа тестовый.
 entry:
   host: @ENTRY_HOST@
-  password: "@PASSWORD@"
 exits:
   - tag: @EXIT_TAG@
-    host: @EXIT_HOST@
-    password: "@PASSWORD@"
+    host: root@@EXIT_HOST@
 admin:
   user: anysda
+  ssh_pubkey: "@ADMIN_KEY@"
 panel:
   image: @PANEL_IMAGE@
 backup:

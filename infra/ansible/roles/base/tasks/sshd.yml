@@ -7,13 +7,25 @@
     state: directory
     mode: '0755'
 
-# Невалидный конфиг на место не ложится: проверка идёт до записи.
+# Вход по паролю закрывается всегда. Ключ оркестратора доказан входом этого же плея; ключ человека
+# на entry - его строкой в authorized_keys: иначе после переустановки entry на неё не зайти.
+- name: Ключ человека лежит на entry
+  ansible.builtin.command: cat /root/.ssh/authorized_keys
+  register: base_sshd_keys
+  changed_when: false
+  failed_when: >-
+    base_sshd_keys.rc != 0 or not ((base_host_keys | trim) or (base_admin_key and
+    (base_admin_key.split() | first) ~ ' ' ~ (base_admin_key.split()[1] | default('')) in base_sshd_keys.stdout))
+  when: base_entry
+
+# Невалидный конфиг на место не ложится: проверка идёт до записи. Файл 00-* читается раньше
+# 50-cloud-init.conf образа, а у sshd побеждает первое значение.
 - name: Парольный вход и вход root
   ansible.builtin.copy:
     content: |
       # anysda-vpn — set by infra/scripts/00-bootstrap.sh
-      PasswordAuthentication {{ base_sshd_password }}
-      PermitRootLogin {{ base_sshd_root }}
+      PasswordAuthentication no
+      PermitRootLogin prohibit-password
       KbdInteractiveAuthentication no
     dest: /etc/ssh/sshd_config.d/00-anysda.conf
     mode: '0644'
@@ -27,8 +39,8 @@
     replace: '{{ item.key }} {{ item.value }}'
     validate: sshd -t -f %s
   loop:
-    - {key: PasswordAuthentication, value: "{{ base_sshd_password }}"}
-    - {key: PermitRootLogin, value: "{{ base_sshd_root }}"}
+    - {key: PasswordAuthentication, value: 'no'}
+    - {key: PermitRootLogin, value: prohibit-password}
     - {key: ChallengeResponseAuthentication, value: 'no'}
     - {key: KbdInteractiveAuthentication, value: 'no'}
   register: base_sshd_main
@@ -61,3 +73,13 @@
     cmd: systemctl reload-or-restart ssh
   when: base_sshd_dropin is changed or base_sshd_main is changed or base_sshd_penalties is changed
   changed_when: true
+
+# Действующие значения, а не файл: drop-in образа или Match могли их перебить.
+- name: Вход по паролю закрыт в действующем sshd
+  ansible.builtin.command:
+    cmd: sshd -T
+  register: base_sshd_now
+  changed_when: false
+  failed_when: >-
+    base_sshd_now.rc != 0 or 'passwordauthentication no' not in base_sshd_now.stdout_lines
+    or 'kbdinteractiveauthentication no' not in base_sshd_now.stdout_lines

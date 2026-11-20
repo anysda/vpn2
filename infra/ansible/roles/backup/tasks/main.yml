@@ -34,7 +34,7 @@
           - backup_backend != 's3' or (backup_s3.values() | map('length') | min) > 0
         fail_msg: >-
           Нет настроек бэкапа: backend, passphrase, а для s3 - endpoint, bucket и ключи.
-          Заполни setup.sh или раздел backup в config.yaml
+          Заполни раздел backup в config.yaml
         quiet: true
 
     - name: Каталоги архивов

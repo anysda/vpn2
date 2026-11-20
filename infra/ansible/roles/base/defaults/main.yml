@@ -91,11 +91,6 @@ base_admin_key: "{{ vpn2_env.ADMIN_SSH_PUBKEY | default('') }}"
 base_keys: "{{ (base_orchestrator_keys.splitlines() + [base_admin_key]) | map('trim') | select | unique | list }}"
 # Ключи человека, что уже лежали в authorized_keys entry (заданные у хостера): их выписывает deploy.
 base_host_keys: "{{ lookup('ansible.builtin.file', base_infra ~ '/secrets/rendered/admin_keys', errors='ignore') | default('', true) }}"
-# Entry: пароль отключается, только когда ключ есть у человека - ключ оркестратора
-# живёт на самой entry и после её переустановки не поможет.
-# Экзит: пароль отключается, как только лёг ключ оркестратора.
-base_sshd_root: "{{ 'yes' if base_sshd_password == 'yes' else 'prohibit-password' }}"
-base_sshd_password: "{{ 'no' if ((base_admin_key ~ base_host_keys) | trim if base_entry else base_orchestrator_keys | trim) else 'yes' }}"
 
 # Listener-порты WG, OpenVPN, IKEv2 и панели открывают их роли. Пустые группы
 # снимают правила под Caddy-обманку с экзитов, поставленных раньше.

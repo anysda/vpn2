@@ -10,7 +10,6 @@ from typing import NamedTuple
 
 import yaml
 # Состояние деплоя на entry; тот же путь, что в корневом deploy.sh.
-# Состояние деплоя на entry; тот же путь, что в infra/lib/state-dir.sh.
 STATE_DIR = Path(os.environ.get('VPN2_STATE_DIR') or '/var/lib/anysda-vpn2/state')
 
 BOOL_WORDS = {'true', 'false', 'yes', 'no', 'y', 'n', '1', '0'}
@@ -19,6 +18,8 @@ STRICT_STR_WORDS = {'true', 'false', 'yes', 'no'}
 # Порты hy2-direct, которые перебирает проверка после 20-ru-router; диапазоны hy2_hop их не задевают.
 HY2_PORT_CANDIDATES = (443, 4443, 4444, 8443, 8444, 33445)
 
+# password у entry и экзитов - пароль root из конфигов 1.2.0: файл принимается, деплой его не берёт и
+# после успешного деплоя стирает (drop_passwords).
 SCHEMA = {
     'entry': {'host', 'password', 'public_host'},
     'exits': {'tag', 'host', 'password', 'hy2_direct_port', 'hy2_up_mbps', 'hy2_down_mbps',
@@ -72,7 +73,6 @@ class ConfigError(Exception):
 class Node(NamedTuple):
     tag: str
     host: str
-    password: str
 
 
 class Config(NamedTuple):
@@ -188,8 +188,19 @@ def _exits(node):
     for index, item in enumerate(node.value):
         if not isinstance(item, yaml.MappingNode) or item.start_mark.column not in (2, 4):
             raise ConfigError(f'exits[{index}]', 'неверный отступ или структура')
-        out.append(_mapping(item, f'exits[{index}]', 'exits', item.start_mark.column))
+        found = _mapping(item, f'exits[{index}]', 'exits', item.start_mark.column)
+        if 'host' in found:
+            found['host'] = _exit_host(found['host'], f'exits[{index}].host')
+        out.append(found)
     return out
+
+
+def _exit_host(value, key):
+    """Адрес экзита из `root@адрес` или из голого адреса (вход тоже root)."""
+    user, at, host = value.rpartition('@')
+    if at and user != 'root':
+        raise ConfigError(key, 'вход на экзит только root: root@адрес или адрес')
+    return host
 
 
 def _sections(root):
@@ -228,7 +239,8 @@ def _key_at(text, line, column):
 def loads(text):
     """Config из текста config.yaml; неверный файл - ConfigError.
 
-    Config.raw - разделы как в файле, все значения строками (секреты и числа с ведущим нулём целы).
+    Config.raw - разделы как в файле, все значения строками (секреты и числа с ведущим нулём целы);
+    exits[].host - адрес без `root@`.
     """
     text = _plain_forms(text)
     try:
@@ -245,16 +257,14 @@ def loads(text):
         raise ConfigError('<корень>', 'пустой файл или не словарь ключей')
     sections = _sections(root)
     entry = sections.get('entry', {})
-    exits = tuple(Node(item.get('tag', ''), item.get('host', ''), item.get('password', ''))
-                  for item in sections.get('exits', []))
-    return Config(Node('ru', entry.get('host', ''), entry.get('password', '')), exits, sections)
+    exits = tuple(Node(item.get('tag', ''), item.get('host', '')) for item in sections.get('exits', []))
+    return Config(Node('ru', entry.get('host', '')), exits, sections)
 
 
 def load(path='/etc/anysda/config.yaml'):
     """Config из файла."""
     with open(path, encoding='utf-8') as handle:
         return loads(handle.read())
-
 
 
 def set_exit_port(path, tag, port):
@@ -277,3 +287,39 @@ def set_exit_port(path, tag, port):
         path.chmod(0o600)
         return
     raise ConfigError('exits', f'тег "{tag}" не найден в config.yaml')
+
+
+def drop_passwords(path):
+    """Пароли root entry и экзитов из config.yaml 1.2.0; комментарии, порядок, права и владелец те же.
+
+    Файл подменяется через rename; без паролей не трогается. True - пароли были.
+    """
+    path = Path(path)
+    text = path.read_text()
+    root = yaml.compose(_plain_forms(text), Loader=yaml.SafeLoader)
+    lines, drop = text.split('\n'), set()
+    for key, value in root.value if isinstance(root, yaml.MappingNode) else ():
+        items = [value] if key.value == 'entry' else value.value if key.value == 'exits' else ()
+        for item in (found for found in items if isinstance(found, yaml.MappingNode)):
+            for index, (name, field) in enumerate(item.value):
+                if name.value != 'password':
+                    continue
+                end = field.end_mark.line - (field.end_mark.column == 0)
+                drop.update(range(name.start_mark.line, end + 1))
+                head = lines[name.start_mark.line][:name.start_mark.column]
+                # `- password:` первым ключом экзита: тире переходит к следующему ключу.
+                if head.strip() == '-' and index + 1 < len(item.value):
+                    following = item.value[index + 1][0].start_mark.line
+                    lines[following] = head + lines[following][len(head):]
+    if not drop:
+        return False
+    stat = path.stat()
+    tmp = path.with_name(f'.{path.name}.tmp')
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.st_mode & 0o7777)
+    with os.fdopen(fd, 'w') as out:
+        os.fchmod(out.fileno(), stat.st_mode & 0o7777)
+        os.fchown(out.fileno(), stat.st_uid, stat.st_gid)
+        out.write('\n'.join(line for number, line in enumerate(lines) if number not in drop))
+    os.replace(tmp, path)
+    return True

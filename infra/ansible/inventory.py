@@ -18,6 +18,7 @@ from pathlib import Path
 
 from vpn2 import nodevars
 from vpn2.config import STATE_DIR, Config, ConfigError, load
+from vpn2.deploy import orchestrator_key
 
 HIDDEN = '***'
 TEMPLATE_MARKS = ('{{', '{%', '{#')
@@ -60,27 +61,26 @@ def exits_list(env):
 
 
 def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_secrets=False) -> dict:
-    """Инвентарь в формате ansible --list; те же опции ssh, что у bash-деплоя."""
+    """Инвентарь в формате ansible --list: root по ключу оркестратора, без пароля."""
     environ = os.environ if environ is None else environ
     common_args = ' '.join((
         f'-o UserKnownHostsFile={state}/known_hosts',
         '-o StrictHostKeyChecking=accept-new',
-        '-o PreferredAuthentications=publickey,password',
+        '-o PreferredAuthentications=publickey',
         '-o ConnectTimeout=10',
     ))
 
-    def hostvars(host, password):
+    def hostvars(host):
         return {
             'ansible_host': host,
             'ansible_user': 'root',
-            'ansible_password': HIDDEN if hide_secrets else password,
-            'ansible_ssh_private_key_file': '~/.ssh/id_ed25519',
+            'ansible_ssh_private_key_file': str(orchestrator_key()),
             'ansible_ssh_common_args': common_args,
         }
 
-    meta = {'ru': hostvars(cfg.entry.host, cfg.entry.password)}
+    meta = {'ru': hostvars(cfg.entry.host)}
     for node in cfg.exits:
-        meta[node.tag] = hostvars(node.host, node.password)
+        meta[node.tag] = hostvars(node.host)
     result = {
         '_meta': {'hostvars': meta},
         'all': {'children': ['entry', 'exits']},
@@ -113,14 +113,13 @@ def prepare(cfg: Config, state: Path, repo_root: Path):
     """Перед деплоем: ключ оркестратора из config.yaml в ~/.ssh, октеты mesh закреплены за тегами."""
     nodevars.env_by_node(cfg, state=state, repo_root=repo_root)
     if cfg.raw.get('orchestrator_key'):
-        ssh_dir = Path.home() / '.ssh'
-        ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        private = ssh_dir / 'id_ed25519'
+        private = orchestrator_key()
+        private.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         private.touch(mode=0o600, exist_ok=True)
         private.chmod(0o600)
         private.write_bytes(base64.b64decode(cfg.raw['orchestrator_key']))
         if cfg.raw.get('orchestrator_pubkey'):
-            (ssh_dir / 'id_ed25519.pub').write_text(cfg.raw['orchestrator_pubkey'].rstrip() + '\n')
+            Path(f'{private}.pub').write_text(cfg.raw['orchestrator_pubkey'].rstrip() + '\n')
         print('orchestrator-ключ восстановлен из config.yaml')
     tags = [node.tag for node in cfg.exits]
     path = state / 'mgmt-ips.txt'

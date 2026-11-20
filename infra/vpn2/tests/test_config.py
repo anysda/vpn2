@@ -6,29 +6,29 @@ import pytest
 
 from vpn2 import config
 
-EXITS_PLAIN = 'entry:\n  host: 1.2.3.4\n  password: p\nexits:\n- tag: us\n  host: 5.6.7.8\n  password: q\n'
-EXITS_INDENTED = 'entry:\n  host: 1.2.3.4\n  password: p\nexits:\n  - tag: us\n    host: 5.6.7.8\n    password: q\n'
+EXITS_PLAIN = 'entry:\n  host: 1.2.3.4\nexits:\n- tag: us\n  host: 5.6.7.8\n'
+EXITS_INDENTED = 'entry:\n  host: 1.2.3.4\nexits:\n  - tag: us\n    host: root@5.6.7.8\n'
 
 
 @pytest.mark.parametrize('text', [EXITS_PLAIN, EXITS_INDENTED])
 def test_exit_list_with_and_without_indent(text):
     cfg = config.loads(text)
-    assert [(e.tag, e.host, e.password) for e in cfg.exits] == [('us', '5.6.7.8', 'q')]
+    assert [(e.tag, e.host) for e in cfg.exits] == [('us', '5.6.7.8')]
 
 
 def test_quotes_comments_and_non_ascii():
-    text = ('entry:\n  host: "1.2.3.4"   # адрес\n  password: \'it\'\'s # not\'\n'
+    text = ('entry:\n  host: "1.2.3.4"   # адрес\nadmin:\n  password: \'it\'\'s # not\'\n'
             'telegram:\n  bot_token: пароль-ключ\n  chat_id: "42" # чат\n'
             'sso:\n  enabled: "yes"\n  label: Вход через «Authentik»\n')
     cfg = config.loads(text)
-    assert (cfg.entry.host, cfg.entry.password) == ('1.2.3.4', "it's # not")
+    assert (cfg.entry.host, cfg.raw['admin']['password']) == ('1.2.3.4', "it's # not")
     assert (cfg.raw['telegram']['bot_token'], cfg.raw['telegram']['chat_id']) == ('пароль-ключ', '42')
     assert cfg.raw['sso'] == {'enabled': 'yes', 'label': 'Вход через «Authentik»'}
 
 
 def test_all_typed_fields_are_read():
-    text = ('entry:\n  host: h\n  password: p\n  public_host: vpn.test\n'
-            'exits:\n  - tag: t\n    host: e\n    password: w\n    hy2_direct_port: 4443\n'
+    text = ('entry:\n  host: h\n  public_host: vpn.test\n'
+            'exits:\n  - tag: t\n    host: e\n    hy2_direct_port: 4443\n'
             '    hy2_up_mbps: 100\n    hy2_down_mbps: 200\n    hy2_insecure: true\n'
             'ports:\n  hy2_direct: 443\n  hy2_warp: 8443\n  hy2_mgmt: 8444\n  wireguard: 51820\n'
             '  openvpn: 1194\n  hy2_hop:\n    enabled: true\n    direct: 1-2\n    warp: 3-4\n'
@@ -38,8 +38,8 @@ def test_all_typed_fields_are_read():
             '  client_secret: x\n  allowed_subs: z\n  auto_redirect: true\n'
             '  password_login: false\n  label: l\n  discovery_url: d\n')
     cfg = config.loads(text)
-    assert cfg.entry == config.Node('ru', 'h', 'p')
-    assert cfg.exits == (config.Node('t', 'e', 'w'),)
+    assert cfg.entry == config.Node('ru', 'h')
+    assert cfg.exits == (config.Node('t', 'e'),)
     assert cfg.raw['ports']['hy2_hop']['interval'] == '30'
     assert cfg.raw['exits'][0]['hy2_insecure'] == 'true'
 
@@ -100,11 +100,11 @@ def test_load_reads_file():
 
 @pytest.mark.parametrize('value', ['"a"b', "'a'b", '!a', '&a', '*a', '[a', '{a', '|a', '>a', '~', 'null', 'True'])
 def test_markup_value_refused_with_key_line_and_quote_hint(value):
-    """VPN2-933: пароль хостера с разметкой YAML - отказ по-русски, с ключом и строкой; в кавычках читается."""
-    text = 'entry:\n  host: 192.0.2.1\n  password: {}\nexits:\n  - tag: nl\n    host: 192.0.2.2\n    password: x\n'
+    """VPN2-933: пароль с разметкой YAML - отказ по-русски, с ключом и строкой; в кавычках читается."""
+    text = 'entry:\n  host: 192.0.2.1\nadmin:\n  password: {}\nexits:\n  - tag: nl\n    host: 192.0.2.2\n'
     with pytest.raises(config.ConfigError) as caught:
         config.loads(text.format(value))
-    assert caught.value.key == 'entry.password'
-    assert 'строка 3' in caught.value.reason and 'заключите значение в кавычки' in caught.value.reason
+    assert caught.value.key == 'admin.password'
+    assert 'строка 4' in caught.value.reason and 'заключите значение в кавычки' in caught.value.reason
     quoted = "'" + value.replace("'", "''") + "'"
-    assert config.loads(text.format(quoted)).entry.password == value
+    assert config.loads(text.format(quoted)).raw['admin']['password'] == value

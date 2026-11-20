@@ -1,4 +1,4 @@
-"""python3 -m vpn2.deploy [recover|rollback|backup|backup-list|restore ...|<стадия> <группа>]
+"""python3 -m vpn2.deploy [-key|recover|rollback|backup|backup-list|restore ...|<стадия> <группа>]
 
 Зовёт infra/deploy.sh после проверки config.yaml; флаги --development и --manifest он разбирает
 сам и отдаёт в VPN2_DEVELOPMENT и VPN2_MANIFEST.
@@ -9,8 +9,9 @@ import signal
 import subprocess
 import sys
 
-from vpn2.config import STATE_DIR
-from vpn2.deploy import CONFIG, INFRA, REPO, ROOT, die, install_prereqs, migrate_state, report, step, svc
+from vpn2.config import STATE_DIR, drop_passwords
+from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, admin_key_check, die, install_prereqs, migrate_state, ok,
+                         orchestrator_key, read, report, step, svc)
 from vpn2.deploy.run import Deploy, Interrupted
 
 
@@ -38,6 +39,13 @@ def dispatch(deploy, argv):
         deploy.stage_nodes(action, [])
         # Стадия entry на экзите (и наоборот) - отказ, а не пустой проход с кодом 0.
         scope = deploy.stage_nodes(action, deploy.expand(argv[1]), refuse_empty=True)
+    # restore и rollback возвращают уже стоявшее: вход по паролю ими не закрывается.
+    if action not in ('restore', 'rollback'):
+        admin_key_check(deploy.env())
+    orchestrator_key(create=True)
+    if action in ('', 'recover'):
+        report.banner(deploy)
+        deploy.preflight()
     # Автообновления свежей ОС стартуют в первые минуты после загрузки: пауза - до любого apt деплоя.
     if action in ('', 'recover') and os.path.isdir('/run/systemd/system'):
         if code := svc('nftables_preserve_rules'):
@@ -63,6 +71,9 @@ def dispatch(deploy, argv):
     if code:
         return code
     deploy.release_complete()
+    # Пароли root из config.yaml 1.2.0 больше не нужны: вход по ключу на все узлы прошёл, деплой - тоже.
+    if action in ('', 'recover') and drop_passwords(CONFIG):
+        ok('пароли root entry и экзитов убраны из config.yaml: вход на серверы только по ключу')
     return 0
 
 
@@ -71,6 +82,12 @@ def main(argv):
     signal.signal(signal.SIGINT, interrupted(130))
     signal.signal(signal.SIGTERM, interrupted(143))
     manifest = os.environ.pop('VPN2_MANIFEST', '')
+    if argv == ['-key']:
+        key = orchestrator_key(create=True)
+        print(read(f'{key}.pub'))
+        print('Положи эту строку в /root/.ssh/authorized_keys на каждом экзите, затем заполни config.yaml '
+              'и запусти ./deploy.sh -yaml', file=sys.stderr)
+        return 0
     os.environ.update(DEPLOY_ROOT=str(INFRA), VPN2_INFRA=str(INFRA), VPN2_SOURCE_ROOT=str(REPO), VPN2_CONFIG=str(CONFIG),
                       VPN2_INVENTORY_SECRETS='show', VPN2_RELEASE_MANIFEST='/tmp/anysda/release-manifest.json')
     try:

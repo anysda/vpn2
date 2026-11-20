@@ -13,14 +13,11 @@ from vpn2.deploy.run import Deploy
 CASES = json.loads((Path(__file__).parent / 'fixtures/ports/cases.json').read_text())
 CONFIG = '''entry:
   host: 192.0.2.1
-  password: entry-pass
 exits:
   - tag: se
     host: 192.0.2.2
-    password: se-pass
   - tag: nl
     host: 192.0.2.3
-    password: nl-pass
     hy2_direct_port: 4443
 admin:
   user: anysda

@@ -277,7 +277,7 @@ def apt_have(*packages):
 
 def install_prereqs():
     step('проверяю локальные зависимости')
-    commands = ('ssh', 'sshpass', 'curl', 'python3', 'openssl')
+    commands = ('ssh', 'curl', 'python3', 'openssl')
     missing = [name for name in commands if not shutil.which(name)]
     packages = ['openssh-client' if name == 'ssh' else name for name in missing]
     if not apt_have('python3-venv'):
@@ -301,7 +301,7 @@ def install_prereqs():
         print(f'  {name:<10} {G}✓{E}', flush=True)
     # Docker свежего entry (им проверяются образы выпуска) и его compose ставятся, пока собирается venv.
     docker = None
-    if not shutil.which('docker') and not Path('/var/lib/anysda-vpn2/db.sqlite').exists() and not Path('/etc/anysda').is_dir():
+    if not shutil.which('docker') and not installed():
         docker = subprocess.Popen(['bash', '-c', 'set -euo pipefail; HOST_TAG=ru; source "$0"; docker_apt_source; apt_update_if_stale\n'
                                    'DEBIAN_FRONTEND=noninteractive apt_get install -y -qq "${DOCKER_PKGS[@]}" "${DOCKER_SKIP[@]/#docker-compose-plugin-/docker-compose-plugin}" >/dev/null\n'
                                    'systemctl enable --now docker', INFRA / 'lib/anysda-svc.sh'], stdin=subprocess.DEVNULL)
@@ -318,19 +318,60 @@ def dedupe(path):
     path.chmod(0o600)
 
 
-def prep_keys():
-    """Ключ оркестратора: им entry ходит на экзиты после 00-bootstrap; копия в config.yaml
-    переживает пересоздание entry. Ключ entry для ssh на экзиты (mgmt) - отдельный."""
-    ssh, out = Path.home() / '.ssh', INFRA / 'secrets/rendered'
-    for folder in (ssh, out):
-        folder.mkdir(parents=True, exist_ok=True)
-        folder.chmod(0o700)
-    key, pub = ssh / 'id_ed25519', ssh / 'id_ed25519.pub'
+def installed():
+    """На этой машине уже стоит entry: есть база панели или /etc/anysda."""
+    return Path('/var/lib/anysda-vpn2/db.sqlite').exists() or Path('/etc/anysda').is_dir()
+
+
+def orchestrator_key(create=False):
+    """Приватный ключ оркестратора: им entry входит на себя и на экзиты. Копия в config.yaml (orchestrator_key)
+    переживает пересоздание entry. create - ключа нет, создать; есть - не трогать. Открытая часть ключа - рядом
+    (.pub) и в /root/.ssh/authorized_keys самой entry."""
+    key = Path.home() / '.ssh/id_ed25519'
+    if not create:
+        return key
+    key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not key.is_file():
-        log('keypair оркестратора отсутствует — генерю ed25519')
+        log('ключа оркестратора нет — создаю ed25519')
         subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', 'anysda-orchestrator', '-f', key, '-q'], check=True)
+    pub = Path(f'{key}.pub')
     if not pub.is_file():
         pub.write_text(subprocess.run(['ssh-keygen', '-y', '-f', key], check=True, capture_output=True, text=True).stdout)
+    authorized = key.parent / 'authorized_keys'
+    if key_id(pub.read_text()) not in map(key_id, read_raw(authorized).splitlines()):
+        with open(authorized, 'a') as keys:
+            keys.write(pub.read_text())
+        authorized.chmod(0o600)
+    return key
+
+
+def admin_key_check(env):
+    """Вход по паролю закрывается всегда, поэтому без ключа человека деплой не начинается. На установленной entry
+    (обновление с 1.2.0) хватает ключа, что уже лежит в /root/.ssh/authorized_keys."""
+    key = env.get('ADMIN_SSH_PUBKEY', '')
+    if key and not key_id(key):
+        die('admin.ssh_pubkey в config.yaml - не открытый ключ ssh (ожидается строка вида «ssh-ed25519 AAAA... имя»)')
+    if key or (installed() and human_keys(read_raw(orchestrator_key().parent / 'authorized_keys'), *own_keys())):
+        return
+    die('admin.ssh_pubkey в config.yaml не задан. Вход на серверы по паролю деплой закрывает, '
+        'поэтому без ключа на entry будет не зайти. Впиши свой открытый ключ ssh '
+        '(cat ~/.ssh/id_ed25519.pub на своём компьютере) в admin.ssh_pubkey и повтори ./deploy.sh')
+
+
+def own_keys():
+    """Тексты .pub ключей самого узла: оркестратора, старого RSA и mgmt."""
+    ssh = Path.home() / '.ssh'
+    return [read_raw(path) for path in (f'{orchestrator_key()}.pub', ssh / 'id_rsa.pub', '/root/.ssh/id_ed25519_mgmt.pub')]
+
+
+def prep_keys():
+    """Перед 00-bootstrap: копия ключа оркестратора в config.yaml, ключи для authorized_keys узлов и
+    ключ entry для ssh на экзиты через mgmt (отдельный)."""
+    out = INFRA / 'secrets/rendered'
+    out.mkdir(parents=True, exist_ok=True)
+    out.chmod(0o700)
+    key = orchestrator_key(create=True)
+    pub, ssh = Path(f'{key}.pub'), key.parent
     if CONFIG.is_file() and not re.search(r'(?m)^orchestrator_key:', CONFIG.read_text()):
         log('сохраняю orchestrator-ключ в config.yaml (переживёт пересоздание entry)')
         with open(CONFIG, 'a') as config:
@@ -339,8 +380,6 @@ def prep_keys():
                          f'orchestrator_key: {base64.b64encode(key.read_bytes()).decode()}\n'
                          f'orchestrator_pubkey: {pub.read_text().rstrip(chr(10))}\n')
     authorized = ssh / 'authorized_keys'
-    with open(authorized, 'a') as keys:
-        keys.write(pub.read_text())
     (out / 'orchestrator_keys').write_text(''.join(read_raw(path) for path in (pub, ssh / 'id_rsa.pub', authorized)))
     for path in (authorized, out / 'orchestrator_keys'):
         dedupe(path)
@@ -349,8 +388,8 @@ def prep_keys():
         subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-C', 'anysda-entry-mgmt', '-f', mgmt], check=True)
     shutil.copyfile(f'{mgmt}.pub', out / 'entry_mgmt_key')
     (out / 'entry_mgmt_key').chmod(0o600)
-    # Ключ человека на entry - не свой ключ узла: заданный у хостера или админом. С ним вход по паролю закрывается.
-    (out / 'admin_keys').write_text(human_keys(read_raw(authorized), *map(read_raw, (pub, ssh / 'id_rsa.pub', f'{mgmt}.pub'))))
+    # Ключ человека на entry - не свой ключ узла: заданный у хостера или админом.
+    (out / 'admin_keys').write_text(human_keys(read_raw(authorized), *own_keys()))
 
 
 def human_keys(authorized, *own):

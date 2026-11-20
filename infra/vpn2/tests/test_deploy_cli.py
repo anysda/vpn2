@@ -38,13 +38,15 @@ for match, code, pause in json.loads(os.environ.get('FAKE_RULES', '[]')):
         time.sleep(pause)
         sys.exit(code)
 '''
-# Заглушка ssh (sshpass её зовёт): строка JSON на вход; FAKE_SSH_RULES - [подстрока команды, код].
+# Заглушка ssh: строка JSON на вход; FAKE_SSH_RULES - [подстрока «адрес команда», код, stderr].
 SSH = r'''#!PYTHON
 import json, os, sys
 host, command = sys.argv[-2].split('@')[1], sys.argv[-1]
 with open(os.environ['FAKE_SSH'], 'a') as out:
     out.write(json.dumps({'host': host, 'command': command}) + '\n')
-sys.exit(next((code for match, code in json.loads(os.environ.get('FAKE_SSH_RULES', '[]')) if match in command), 0))
+rule = next((rule for rule in json.loads(os.environ.get('FAKE_SSH_RULES', '[]')) if rule[0] in f'{host} {command}'), None)
+sys.stderr.write(rule[2] if rule and len(rule) > 2 else '')
+sys.exit(rule[1] if rule else 0)
 '''
 RUNNER = '''import sys
 from vpn2.deploy import __main__ as main, run
@@ -73,7 +75,6 @@ def make_tree(tmp_path):
     (venv / 'python3').symlink_to(sys.executable)
     (tmp_path / 'bin').mkdir()
     (tmp_path / 'bin/ssh').write_text(SSH.replace('PYTHON', sys.executable))
-    (tmp_path / 'bin/sshpass').write_text('#!/bin/sh\nshift\nexec "$@"\n')
     for fake in (venv / 'ansible-playbook', venv / 'ansible', *(tmp_path / 'bin').iterdir()):
         fake.chmod(0o755)
     return tmp_path
@@ -111,6 +112,7 @@ def inproc(tree, capfd, monkeypatch):
     from vpn2 import config, deploy
     from vpn2.deploy import __main__ as main, report, run
     saved, handlers = dict(os.environ), {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    services = []
 
     def reload():
         for module in (deploy, report, run, main):
@@ -123,11 +125,12 @@ def inproc(tree, capfd, monkeypatch):
         monkeypatch.setattr(config, 'STATE_DIR', tree / 'state')
         reload()
         main.install_prereqs = run.prep_keys = lambda: None
-        main.svc = lambda *_args, **_options: 0
+        main.svc = lambda *args, **_options: services.append(args) or 0
         capfd.readouterr()
         code = main.main(list(args))
         out, err = capfd.readouterr()
         return subprocess.CompletedProcess(args, code, out, err)
+    call.services = services
     yield call
     monkeypatch.undo()
     os.environ.clear()
@@ -163,10 +166,22 @@ def test_help_needs_no_config_lock_or_root(tree):
         assert done.stdout == (ROOT / 'infra/vpn2/tests/fixtures/deploy-help.txt').read_text()
 
 
-def test_missing_config_is_refused(tree):
+def test_clean_system_without_config_names_the_install_steps(tree):
     (tree / 'config.yaml').unlink()
-    done = deploy(tree)
-    assert done.returncode == 1 and 'config.yaml не найден' in done.stdout and not plays(tree)
+    for args in ([], ['-yaml']):
+        done = deploy(tree, *args)
+        assert done.returncode == 1 and 'config.yaml не найден' in done.stdout and not plays(tree)
+        assert './deploy.sh -key' in done.stdout and './deploy.sh -yaml' in done.stdout and 'setup.sh' not in done.stdout
+
+
+def test_key_is_created_once_and_printed_the_same(tree):
+    (tree / 'config.yaml').unlink()
+    first, second = deploy(tree, '-key'), deploy(tree, '-key')
+    assert first.returncode == second.returncode == 0, first.stderr
+    assert first.stdout == second.stdout and first.stdout.startswith('ssh-ed25519 ') and first.stdout.count('\n') == 1
+    # Тем же ключом деплой входит и на саму entry.
+    assert (tree / 'home/.ssh/authorized_keys').read_text() == first.stdout
+    assert '/root/.ssh/authorized_keys на каждом экзите' in first.stderr and not plays(tree, 'ssh')
 
 
 def test_second_deploy_on_the_machine_is_refused(tree):
@@ -255,7 +270,10 @@ def test_full_deploy_follows_site_yml(tree, inproc):
     pulled = [call['t'] for call in calls if '--tags secrets' in call['args']]
     zapret = next(call['t'] for call in calls if '--tags 19-yt-zapret ' in call['args'])
     assert len(pulled) == 1 and pulled[0] < zapret + 2
-    assert [call['args'].split('--tags ')[1].split()[0] for call in calls][:2] == ['release', 'preflight']
+    assert [call['args'].split('--tags ')[1].split()[0] for call in calls][:2] == ['release', '00-bootstrap']
+    # Вход по ключу проверен на всех узлах до первого плея: по ssh-входу на узел, ничего не запуская.
+    assert sorted((call['host'], call['command']) for call in plays(tree, 'ssh')[:3]) == [
+        ('1.2.3.4', 'true'), ('5.6.7.8', 'true'), ('9.10.11.12', 'true')]
     assert 'bootstrap=True' in calls[0]['args'] and 'scope= ' in calls[0]['args']
     # Остатки v1.1.5 убирает последняя 99-verify, а не проверки экзитов в 10-foreign.
     assert '--tags 99-verify --limit ru,us,gb' in calls[-1]['args'] and 'verify_old_layout=true' in calls[-1]['args']
@@ -263,6 +281,67 @@ def test_full_deploy_follows_site_yml(tree, inproc):
     closing = [call['command'] for call in plays(tree, 'ssh') if 'state phase' in call['command']]
     assert len(closing) == 3
     assert 'деплой завершён' in done.stdout and re.search(r'│  30-frontend +ru +\d+s +│', done.stdout)
+
+
+def test_exits_without_key_stop_the_deploy_before_any_change(tree, inproc):
+    """Оба экзита без ключа оркестратора названы одним списком; ни плеев, ни шагов на entry."""
+    done = inproc(FAKE_SSH_RULES=json.dumps([['5.6.7.8 true', 255, 'root@5.6.7.8: Permission denied (publickey).'],
+                                             ['9.10.11.12 true', 255, 'root@9.10.11.12: Permission denied (publickey).']]))
+    assert done.returncode == 1
+    assert 'нода us (5.6.7.8) не пускает по ключу' in done.stdout and 'нода gb (9.10.11.12) не пускает по ключу' in done.stdout
+    key = (tree / 'home/.ssh/id_ed25519.pub').read_text().strip()
+    assert f'в /root/.ssh/authorized_keys есть строка из ./deploy.sh -key: {key}' in done.stdout and 'порт 22' in done.stdout
+    assert 'узлов без входа по ключу: 2, на серверах ничего не менялось' in done.stderr
+    assert not plays(tree) and not inproc.services and {call['command'] for call in plays(tree, 'ssh')} == {'true'}
+
+
+def test_unreachable_exit_of_a_clean_install_is_refused(tree, inproc):
+    done = inproc(PREFLIGHT_BUDGET='0', FAKE_SSH_RULES=json.dumps(
+        [['9.10.11.12 true', 255, 'ssh: connect to host 9.10.11.12 port 22: Connection timed out']]))
+    assert done.returncode == 1 and 'нода gb (9.10.11.12) не пускает по ключу' in done.stdout
+    assert 'sshd на ноде запущен и слушает порт 22' in done.stdout and not plays(tree) and not inproc.services
+
+
+def test_root_passwords_of_1_2_0_leave_config_after_a_good_deploy_only(tree, inproc):
+    legacy = CONFIG.replace('  host: 1.2.3.4\n', '  host: 1.2.3.4\n  password: root pw\n').replace(
+        '    host: root@9.10.11.12\n', '    host: root@9.10.11.12\n    password: "p2"\n')
+    (tree / 'config.yaml').write_text(legacy)
+    (tree / 'config.yaml').chmod(0o600)
+    failed = inproc(FAKE_RULES=json.dumps([['--tags 30-frontend ', 2, 0]]))
+    assert failed.returncode and (tree / 'config.yaml').read_text() == legacy
+    done = inproc(FAKE_RULES='[]')
+    assert done.returncode == 0, done.stderr
+    assert (tree / 'config.yaml').read_text() == CONFIG and (tree / 'config.yaml').stat().st_mode & 0o777 == 0o600
+    assert 'пароли root entry и экзитов убраны из config.yaml' in done.stderr
+    assert inproc().returncode == 0 and (tree / 'config.yaml').read_text() == CONFIG
+
+
+def test_missing_admin_key_refuses_to_start(tree, inproc):
+    (tree / 'config.yaml').write_text(re.sub(r'(?m)^  ssh_pubkey: .*\n', '', CONFIG))
+    done = inproc()
+    assert done.returncode == 1 and 'admin.ssh_pubkey в config.yaml не задан' in done.stderr
+    assert not plays(tree) and not plays(tree, 'ssh') and not inproc.services
+
+
+def test_admin_key_of_an_installed_entry_may_already_be_on_it(tmp_path, monkeypatch):
+    """Обновление с 1.2.0 без admin.ssh_pubkey: хватает ключа человека в authorized_keys entry, свои ключи узла не в счёт."""
+    from vpn2 import deploy as orchestrator
+    monkeypatch.setenv('HOME', str(tmp_path))
+    (tmp_path / '.ssh').mkdir()
+    own = 'ssh-ed25519 AAAAown anysda-orchestrator\n'
+    (tmp_path / '.ssh/id_ed25519.pub').write_text(own)
+    (tmp_path / '.ssh/authorized_keys').write_text(own)
+    for installed, keys, env in ((True, own, {}), (False, own + 'ssh-ed25519 AAAAhuman me\n', {}),
+                                 (False, '', {'ADMIN_SSH_PUBKEY': 'not a key'})):
+        monkeypatch.setattr(orchestrator, 'installed', lambda installed=installed: installed)
+        (tmp_path / '.ssh/authorized_keys').write_text(keys)
+        with pytest.raises(SystemExit):
+            orchestrator.admin_key_check(env)
+    (tmp_path / '.ssh/authorized_keys').write_text(own + 'ssh-ed25519 AAAAhuman me\n')
+    monkeypatch.setattr(orchestrator, 'installed', lambda: True)
+    orchestrator.admin_key_check({})
+    monkeypatch.setattr(orchestrator, 'installed', lambda: False)
+    orchestrator.admin_key_check({'ADMIN_SSH_PUBKEY': 'ssh-ed25519 AAAAx me'})
 
 
 def test_recover_skips_the_journal_check(tree, inproc):

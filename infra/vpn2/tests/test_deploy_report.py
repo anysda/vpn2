@@ -123,15 +123,3 @@ def test_insecure_exit_is_warned(capsys):
     deploy.warn_insecure_exits()
     said = capsys.readouterr().err
     assert '[deploy] de-2: exits[].hy2_insecure: true — сертификат экзита не проверяется' in said and 'us:' not in said
-
-
-@pytest.mark.parametrize('dump, said', [('passwordauthentication yes\npermitrootlogin yes\n', True),
-                                        ('passwordauthentication no\npermitrootlogin prohibit-password\n', False)])
-def test_summary_frame_warns_about_root_password_login(dump, said, tmp_path, monkeypatch, capsys):
-    """VPN2-966: без ключа человека entry пускает root по паролю - итоговая рамка говорит об этом."""
-    monkeypatch.setattr(report, 'ETC', tmp_path)
-    monkeypatch.setattr(report.subprocess, 'run', lambda *_a, **_k: SimpleNamespace(stdout=dump))
-    report.summary(fake({'SSH_HOST': '192.0.2.1', 'ADMIN_PASSWORD': 'x'}), 0)
-    out = capsys.readouterr().out
-    assert ('вход root по паролю открыт' in out) is said
-    assert ('⚠ деплой завершён с предупреждениями' in out) is said

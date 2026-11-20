@@ -9,15 +9,15 @@ import samples
 from nodevars_support import differences, layout, old_env
 from vpn2 import config, nodevars
 
-MINIMAL = 'entry:\n  host: 198.18.0.1\n  password: p\nexits:\n  - tag: nl\n    host: 198.18.0.2\n    password: q\n'
-OLD_FORMAT = ('entry:\n  host: 198.18.0.1\n  password: p\nexits:\n- tag: nl\n  host: 198.18.0.2\n  password: q\n'
+MINIMAL = 'entry:\n  host: 198.18.0.1\nexits:\n  - tag: nl\n    host: 198.18.0.2\n'
+OLD_FORMAT = ('entry:\n  host: 198.18.0.1\nexits:\n- tag: nl\n  host: 198.18.0.2\n'
               'admin:\n  user: anysda\npanel:\n  image: registry.example/panel:1.0.0\n'
               'tgbot:\n  image: registry.example/bot:1.0.0\n')
-EXITS3 = ('entry:\n  host: 198.18.0.1\n  password: p\nexits:\n'
-          '  - tag: nl\n    host: 198.18.0.2\n    password: q\n'
-          '  - tag: de-2\n    host: de.example.org\n    password: "w x"\n    hy2_direct_port: 4443\n'
+EXITS3 = ('entry:\n  host: 198.18.0.1\nexits:\n'
+          '  - tag: nl\n    host: 198.18.0.2\n'
+          '  - tag: de-2\n    host: root@de.example.org\n    hy2_direct_port: 4443\n'
           '    hy2_up_mbps: 100\n    hy2_down_mbps: 200\n    hy2_insecure: true\n'
-          '  - tag: us\n    host: 198.18.0.4\n    password: e\n    hy2_direct_port: 443\n    hy2_insecure: false\n')
+          '  - tag: us\n    host: 198.18.0.4\n    hy2_direct_port: 443\n    hy2_insecure: false\n')
 FULL = EXITS3 + '''ports:
   hy2_direct: 443
   hy2_warp: 8443
@@ -95,12 +95,10 @@ entry_resources:
 '''
 ODD = r'''entry:
   host: 198.18.0.1
-  password: "p'a\"s $HOME `id` \\ ю {{ x }} #1"
   public_host: vpn.example.org
 exits:
   - tag: nl
     host: 198.18.0.2
-    password: 'it''s $1 "q" %d'
 admin:
   user:
   password: '  lead and trail  '
@@ -124,7 +122,7 @@ MATRIX = {
     'full-development': (FULL, {'development': True}),
     'odd-values': (ODD, {}),
     'domain-no-public-host': (MINIMAL + 'panel:\n  domain: vpn.example.org\n', {}),
-    'public-host-over-domain': (MINIMAL.replace('  password: p\n', '  password: p\n  public_host: gw.example.org\n')
+    'public-host-over-domain': (MINIMAL.replace('  host: 198.18.0.1\n', '  host: 198.18.0.1\n  public_host: gw.example.org\n')
                                 + 'panel:\n  domain: vpn.example.org\n', {}),
     'bot-without-chat': (MINIMAL + 'telegram:\n  bot_token: "1:a"\n', {}),
     'bot': (MINIMAL + 'telegram:\n  bot_token: "1:a"\n  chat_id: "7"\n', {}),
@@ -215,8 +213,8 @@ def test_positive_control_extra_and_changed_key_are_caught():
     (MINIMAL + 'youtube:\n  route: tor\n', 'youtube.route'),
     (MINIMAL + 'youtube:\n  quic: maybe\n', 'youtube.quic'),
     (MINIMAL + 'youtube:\n  window_scale: 15\n', 'youtube.window_scale'),
-    (MINIMAL.replace('    password: q\n', '    password: q\n    hy2_up_mbps: 10\n'), 'exits[nl]'),
-    ('entry:\n  host: 198.18.0.1\n  password: p\n', 'exits'),
+    (MINIMAL.replace('    host: 198.18.0.2\n', '    host: 198.18.0.2\n    hy2_up_mbps: 10\n'), 'exits[nl]'),
+    ('entry:\n  host: 198.18.0.1\n', 'exits'),
 ])
 def test_rejected_by_prepare(text, key):
     old, before, _ = compare(text)

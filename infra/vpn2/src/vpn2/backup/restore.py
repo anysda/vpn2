@@ -779,7 +779,7 @@ def mark_good(rb):
 # После замены: стадии с паролями из архива и проверка узла
 
 def stage_env(source_root, work):
-    """Окружение стадий entry из config.yaml клона (инвентарь деплоя) без SSH_PASS; путь к файлу.
+    """Окружение стадий entry из config.yaml клона (инвентарь деплоя); путь к файлу.
 
     Конфиг не читается - файл не создаётся. ADMIN_PASSWORD снимается: стадии читают
     восстановленный файл, а не засевают новый.
@@ -792,14 +792,13 @@ def stage_env(source_root, work):
                                 'VPN2_CONFIG': str(root / 'config.yaml')})
     if found.returncode:
         return target
-    own = b''.join(line for line in found.stdout.splitlines(keepends=True) if not line.startswith(b'SSH_PASS='))
     tail = f"unset ADMIN_PASSWORD\nVPN2_DEVELOPMENT={shlex.quote(os.environ.get('VPN2_DEVELOPMENT') or 'false')}\n"
     # /tmp/anysda/release-manifest.json живёт до перезагрузки: деплой оставляет манифест
     # установленного выпуска в состоянии, стадии берут его оттуда.
     manifest = os.path.join(os.environ.get('VPN2_STATE_DIR') or f'/{DB_DIR}/state', 'release-manifest.json')
     if os.path.isfile(manifest):
         tail += f'VPN2_RELEASE_MANIFEST={shlex.quote(manifest)}\n'
-    _write_private(target, own + tail.encode())
+    _write_private(target, found.stdout + tail.encode())
     return target
 
 

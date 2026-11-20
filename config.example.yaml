@@ -1,16 +1,15 @@
 # anysda-vpn2 — конфигурация инфраструктуры
 #
-# 1. Запусти интерактивный мастер: ./setup.sh
-#    (или скопируй этот файл и заполни вручную: cp config.example.yaml config.yaml)
-# 2. ./deploy.sh   # зависимости, проверки и полный деплой
+# 1. ./deploy.sh -key   # ключ оркестратора: положи его в /root/.ssh/authorized_keys на каждом экзите
+# 2. cp config.example.yaml config.yaml и заполни
+# 3. ./deploy.sh -yaml  # зависимости, проверки и полный деплой
 #
-# chmod 600 — файл содержит пароли в открытом виде.
+# chmod 600 — файл содержит секреты в открытом виде.
 
 # Входная нода — WireGuard + OpenVPN серверы, sing-box роутер, веб-панель,
-# AdGuard. Авторизация через root + пароль (sshpass).
+# AdGuard. Деплой идёт с неё самой.
 entry:
   host: 1.2.3.4
-  password: <root-password>
   # public_host: vpn.example.com   # опционально: адрес сервера в клиентских
   #                                # WG/OVPN-конфигах вместо IP; при смене IP
   #                                # entry хватит поменять A-запись; не задан -
@@ -18,14 +17,13 @@ entry:
   # Домен — только IPv4 (A), без IPv6 (AAAA), иначе VPN на Linux может не заработать.
 
 # Выходные ноды — Hysteria2 серверы. Минимум 1, рекомендуется 2+.
+# Вход root по ключу оркестратора (./deploy.sh -key), порт ssh 22; паролей нет.
 exits:
   - tag: us              # короткий тег: us / gb / nl / de / us2 / ...
-    host: 5.6.7.8
-    password: <root-password>
+    host: root@5.6.7.8   # root@адрес или просто адрес
 
   - tag: gb
-    host: 9.10.11.12
-    password: <root-password>
+    host: root@9.10.11.12
     hy2_direct_port: 4443   # опционально — задай если хостер фильтрует UDP:443
                             # (verify_and_rotate_ports сделает это сам, но можно
                             # сразу прописать чтобы не пересобирать)
@@ -45,13 +43,9 @@ exits:
 admin:
   user: anysda
   # password: my-secret
-  # ssh_pubkey опционально, но РЕКОМЕНДУЕТСЯ. Если задан — при деплое ключ
-  # кладётся в /root/.ssh/authorized_keys на всех нодах и парольный вход по SSH
-  # отключается на entry. На экзитах пароль отключается всегда, как только на
-  # них лёг ключ оркестратора. Если пусто — на entry пароль закрывается, только
-  # если ключ уже задан у хостера (/root/.ssh/authorized_keys): без ключа entry
-  # не запирается, иначе после переустановки на неё не зайти.
-  # ssh_pubkey: "ssh-ed25519 AAAA... you@host"
+  # ssh_pubkey обязателен: твой открытый ключ ssh. Деплой кладёт его в
+  # /root/.ssh/authorized_keys на всех нодах; вход по паролю закрыт везде.
+  ssh_pubkey: "ssh-ed25519 AAAA... you@host"
 
 # Домен для веб-панели (опционально).
 # Без домена: HTTPS на публичном IP, Let's Encrypt shortlived (~6 дней),
@@ -243,16 +237,14 @@ admin:
 # покидает mktemp-dir и не остаётся в файловой системе.
 #
 # passphrase — единственный секрет. Потерял = бэкапы нечитаемы.
-# ./setup.sh генерирует крепкий сам и пишет в config.yaml (chmod 600), как
-# admin.password / root-пароли нод; на экран не выводится.
-# При ручном заполнении config.yaml passphrase обязателен при enabled: true,
-# иначе deploy остановится на проверке конфига.
+# passphrase обязателен при enabled: true, иначе deploy остановится на
+# проверке конфига (крепкий: openssl rand -base64 32).
 # На компрометацию оркестратора — ротировать passphrase И re-encrypt
 # существующие бэкапы (см. README §Backup & Disaster Recovery).
 backup:
   enabled: true                # отключить — заменить true на false в этой строке
   backend: local               # local | s3
-  passphrase: ""               # age symmetric passphrase; вручную — задать, ./setup.sh генерирует сам
+  passphrase: ""               # age symmetric passphrase
   retention: 10                # keep last N; «последний успешный» защищён от удаления
   schedule: daily              # off | daily — с 02:00 по системной TZ entry, задержка до 5 мин
                                # (timedatectl), случайная задержка до 5 минут
@@ -261,7 +253,7 @@ backup:
 
   # S3 — только если backend: s3. rclone ставится 26-backup, поддерживает любой
   # S3-совместимый endpoint: AWS, MinIO, Backblaze B2, Cloudflare R2, Yandex
-  # Object Storage, Cloud.ru и т.д. Креды кладёт setup.sh, доставляет 26-backup
+  # Object Storage, Cloud.ru и т.д. Креды - здесь же, доставляет 26-backup
   # в /etc/anysda/backup.env (chmod 600), systemd читает через EnvironmentFile.
   # s3:
   #   endpoint: https://s3.eu-central-1.amazonaws.com

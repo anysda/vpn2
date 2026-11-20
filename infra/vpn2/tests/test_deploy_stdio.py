@@ -29,7 +29,7 @@ from pathlib import Path
 from vpn2.deploy import run
 work = Path(os.environ['FAKE_WORK'])
 deploy = run.Deploy.__new__(run.Deploy)
-deploy.logins, deploy.plays, deploy.closing = {'nl': ('nl', '', '')}, None, False
+deploy.logins, deploy.plays, deploy.closing = {'nl': ('nl', '')}, None, False
 deploy.lock, deploy.beat, deploy.beats = threading.Lock(), None, 1
 side = threading.Thread(target=deploy.guard_finish, args=('23-emergency', 'nl'))
 side.start()

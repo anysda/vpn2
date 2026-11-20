@@ -6,15 +6,12 @@ import unittest
 from envs import node_env, node_envs, parse, sourced
 from vpn2 import config as vpn2_config
 from vpn2.containers import compose
-from vpn2.setup import parse_yaml, update
 
 CONFIG = """entry:
   host: 192.0.2.1
-  password: 'entry secret'
 exits:
   - tag: se
     host: 192.0.2.2
-    password: 'exit secret'
 """
 # Дословный вывод yaml.safe_dump: ключи по алфавиту, список без отступа, длинная строка перенесена на 80 символах.
 SAFE_DUMP = """admin:
@@ -29,15 +26,28 @@ backup:
   passphrase: backup pass
 entry:
   host: 192.0.2.1
-  password: entry pass
 exits:
 - host: 192.0.2.2
-  password: exit pass
   tag: se
 - host: 192.0.2.3
   hy2_direct_port: 8443
-  password: p2
   tag: nl
+"""
+# config.yaml 1.2.0: пароли root entry и экзитов, многострочный и первым ключом экзита.
+LEGACY = """# шапка
+entry:
+  host: 192.0.2.1
+  password: 'entry secret'   # root
+exits:
+  - tag: se
+    host: 192.0.2.2
+    password: "exit
+      secret"
+  - password: other
+    host: 192.0.2.3
+    tag: nl
+admin:
+  password: keep
 """
 PUBKEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBkCV2mrwNtd8HZsr2fO8QTtR3dQ5Q2sL8kQ5Wx9h4yZ user@host'
 # Секреты и решения стадии, которых нет в значениях узла.
@@ -55,7 +65,9 @@ def rejected():
              (CONFIG.replace('host: 192.0.2.2', 'host: "$(touch CANARY)"'), 'exits[0].host'),
              (CONFIG.replace('tag: se', 'tag: "$(touch CANARY)"'), 'exits[0].tag'),
              (CONFIG.replace('tag: se', 'tag: ../escaped'), 'exits[0].tag'),
-             (CONFIG + '  - tag: se\n    host: 192.0.2.3\n    password: x\n', 'exits[1].tag'),
+             (CONFIG + '  - tag: se\n    host: 192.0.2.3\n', 'exits[1].tag'),
+             (CONFIG.replace('host: 192.0.2.2', 'host: admin@192.0.2.2'), 'exits[0].host: вход на экзит только root'),
+             (CONFIG.replace('host: 192.0.2.2', 'host: root@'), 'exits[0].host'),
              (CONFIG.split('exits:')[0] + 'exits:\n', 'exits'),
              (SAFE_DUMP.replace('  tag: nl', '  tga: nl'), 'exits[1].tga: неизвестный ключ'),
              (SAFE_DUMP.replace('- host: 192.0.2.3', '- host: "$(touch CANARY)"'), 'exits[1].host'),
@@ -94,7 +106,7 @@ def rejected():
               for value in ('sctp', 'TCP', 'tcp-client', "''", '"udp\\ntcp"')]
     cases += [(CONFIG + f'wireguard:\n  mtu: {value}\n', 'wireguard.mtu')
               for value in ('1279', '9001', '-1', '1.5', "''", 'true')]
-    cases.append(("entry:\n  password: 'CANARY_UNCLOSED_SECRET\n", 'ERROR: config.yaml:'))
+    cases.append(("admin:\n  password: 'CANARY_UNCLOSED_SECRET\n", 'ERROR: config.yaml:'))
     return cases
 
 
@@ -141,9 +153,9 @@ class AcceptedTests(Case):
 
     def test_boundary_ports_ipv6_and_shell_quoted_secrets(self):
         secret = " spaces ' \" $HOME $(touch CANARY)\\nsecond line "
-        text = CONFIG.replace("'entry secret'", '"' + secret.replace('"', '\\"') + '"').replace('192.0.2.2', '2001:db8::2')
+        text = CONFIG.replace('192.0.2.2', '2001:db8::2') + 'admin:\n  password: "' + secret.replace('"', '\\"') + '"\n'
         result = sourced(self.root, self.envs(text + 'ports:\n  hy2_direct: 1\n  hy2_warp: 65535\n')['ru'],
-                         'printf "%s" "$SSH_PASS"')
+                         'printf "%s" "$ADMIN_PASSWORD"')
         self.assertEqual((result.returncode, result.stdout), (0, secret.replace('\\n', '\n')), result.stderr)
         self.assertFalse((self.root / 'CANARY').exists())
 
@@ -163,8 +175,8 @@ class AcceptedTests(Case):
                                ('  password: "first\n\n    second"\n', 'first\nsecond'),
                                ('  password: "\\u0451\\x41\\ \\t"\n', '\u0451A \t')):
             with self.subTest(line=line):
-                text = self.envs(SAFE_DUMP.replace('  password: entry pass\n', line))['ru']
-                self.assertEqual(sourced(self.root, text, 'printf %s "$SSH_PASS"').stdout, expected)
+                text = self.envs(SAFE_DUMP.replace('  password: adm pw\n', line))['ru']
+                self.assertEqual(sourced(self.root, text, 'printf %s "$ADMIN_PASSWORD"').stdout, expected)
 
     def test_backup_passphrase(self):
         for line, value in (("passphrase: '   '", '   '), ('passphrase: "\t "', '\t '),
@@ -200,15 +212,39 @@ class SetPortTests(unittest.TestCase):
                 path = Path(directory) / 'config.yaml'
                 path.write_text(SAFE_DUMP)
                 vpn2_config.set_exit_port(path, tag, port)
-                ports = {entry['tag']: entry.get('hy2_direct_port') for entry in parse_yaml(path.read_text())['exits']}
+                exits = vpn2_config.loads(path.read_text()).raw['exits']
+                ports = {entry['tag']: entry.get('hy2_direct_port') for entry in exits}
                 self.assertEqual((ports[tag], ports[other]), (port, kept))
 
-    def test_setup_merge_keeps_unindented_exits(self):
-        cfg = parse_yaml(update(SAFE_DUMP, {'entry': {'host': '192.0.2.1', 'password': "'new'"},
-                                            'exits': [('nl', '192.0.2.3', 'p3')]}))
-        self.assertEqual([(e['tag'], e['password'], e.get('hy2_direct_port')) for e in cfg['exits']],
-                         [('nl', 'p3', '8443')])
-        self.assertEqual(cfg['admin']['ssh_pubkey'], PUBKEY)
+
+class LegacyPasswordTests(Case):
+    """Пароли root из config.yaml 1.2.0: файл принят, в значения узлов не идут, drop_passwords их стирает."""
+
+    def test_passwords_are_accepted_and_not_used(self):
+        envs = self.envs(LEGACY)
+        self.assertEqual(sorted(envs), ['nl', 'ru', 'se'])
+        self.assertNotIn('secret', ''.join(envs.values()))
+        self.assertNotIn('other', ''.join(envs.values()))
+
+    def test_exit_login_form(self):
+        for host in ('root@192.0.2.2', '192.0.2.2'):
+            with self.subTest(host=host):
+                cfg = vpn2_config.loads(CONFIG.replace('host: 192.0.2.2', f'host: {host}'))
+                self.assertEqual((cfg.exits[0].host, cfg.raw['exits'][0]['host']), ('192.0.2.2', '192.0.2.2'))
+        self.assertIn('SSH_HOST=192.0.2.2', self.envs(CONFIG.replace('host: 192.0.2.2', 'host: root@192.0.2.2'))['se'])
+
+    def test_drop_keeps_comments_order_mode_and_admin_password(self):
+        path = self.root / 'config.yaml'
+        path.write_text(LEGACY)
+        path.chmod(0o640)
+        self.assertTrue(vpn2_config.drop_passwords(path))
+        self.assertEqual(path.read_text(), '# шапка\nentry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n'
+                                           '  - host: 192.0.2.3\n    tag: nl\nadmin:\n  password: keep\n')
+        self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(vpn2_config.loads(path.read_text()).raw['admin'], {'password': 'keep'})
+        before = path.stat()
+        self.assertFalse(vpn2_config.drop_passwords(path))
+        self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
 
 
 class PanelTests(Case):
@@ -257,7 +293,7 @@ class PanelTests(Case):
             for public in ('', 'edge.example.net'):
                 text = CONFIG + extra
                 if public:
-                    text = text.replace("password: 'entry secret'", f"password: 'entry secret'\n  public_host: {public}", 1)
+                    text = text.replace('  host: 192.0.2.1\n', f'  host: 192.0.2.1\n  public_host: {public}\n', 1)
                 with self.subTest(extra=extra, public=public):
                     _, panel = self.panel(text)
                     self.assertEqual((panel['NUXT_WG_PUBLIC_HOST'], panel['NUXT_OVPN_PUBLIC_HOST']),

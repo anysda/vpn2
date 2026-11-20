@@ -1,6 +1,5 @@
 ---
 # Служебные плеи деплоя вокруг стадий site.yml: их по тегам зовёт infra/deploy.sh.
-#   preflight  вход по ssh на каждый узел, отказ пишется в {{ out }}/<узел>.fail
 #   release    журнал прошлого деплоя, выкладка /tmp/anysda, apt, проверки выпуска, снимок, фаза applying
 #   prepare    выкладка /tmp/anysda и apt для стадии без выпуска (99-verify)
 #   abort      снимок снят, но узлы не менялись: журнал закрывается
@@ -8,26 +7,6 @@
 #   artifacts  пакет vpn2 и журнал выпуска в /tmp/anysda (откат панели)
 # Сторож фаервола, пульс, закрытие журнала и уборка /tmp/anysda - новыми ssh-входами из vpn2.deploy.run.
 # Переменные запуска (-e): out, manifest, partial, bundle, journal, bootstrap, scope.
-
-# Вход - ssh-плагином, не Mitogen: он разбирает текст отказа ssh.
-- name: Вход по ssh
-  hosts: all
-  tags: [preflight]
-  strategy: linear
-  vars: {ansible_ssh_timeout: 10}
-  tasks:
-    - name: Узел отвечает
-      ansible.builtin.wait_for_connection:
-        timeout: "{{ vpn2_env.PREFLIGHT_BUDGET | default(90, true) | int }}"
-      register: seen
-      ignore_errors: true
-    - name: Причина отказа
-      ansible.builtin.copy:
-        content: "{{ seen.msg | default('проверка не выполнилась') }}\n"
-        dest: "{{ out }}/{{ inventory_hostname }}.fail"
-        mode: "0600"
-      delegate_to: localhost
-      when: seen is failed
 
 - name: Проверки выпуска и артефакты
   hosts: all

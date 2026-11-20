@@ -16,7 +16,7 @@
    "events": [],
    "excluded": null,
    "stagelog": [],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": []
   }
  },
@@ -49,7 +49,7 @@
    "stagelog": [
     "[port-rotate]\tforeign\tT"
    ],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n    hy2_direct_port: 4443\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n    hy2_direct_port: 4443\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": [
     "rotate-se-4443.log"
    ]
@@ -93,7 +93,7 @@
    ],
    "excluded": null,
    "stagelog": [],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n    hy2_direct_port: 443\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n    hy2_direct_port: 443\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": [
     "rotate-se-4443.log",
     "rotate-se-4444.log",
@@ -134,7 +134,7 @@
    "stagelog": [
     "[port-rotate]\tforeign\tT"
    ],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4444\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4444\nadmin:\n  user: anysda\n",
    "logs": [
     "rotate-nl-443.log",
     "rotate-nl-4444.log"
@@ -174,7 +174,7 @@
    "stagelog": [
     "[excluded]\tse\tT"
    ],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": [
     "excluded-reroute.log"
    ]
@@ -215,7 +215,7 @@
    ],
    "excluded": null,
    "stagelog": [],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": []
   }
  },
@@ -252,7 +252,7 @@
     "0o644"
    ],
    "stagelog": [],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": [
     "excluded-reroute.log"
    ]
@@ -297,7 +297,7 @@
    ],
    "excluded": null,
    "stagelog": [],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n    hy2_direct_port: 443\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n    hy2_direct_port: 443\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": [
     "rotate-se-4443.log",
     "rotate-se-4444.log",
@@ -326,7 +326,7 @@
    "events": [],
    "excluded": null,
    "stagelog": [],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
    "logs": []
   }
  },
@@ -367,7 +367,7 @@
    "stagelog": [
     "[port-rotate]\tforeign\tT"
    ],
-   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 443\nadmin:\n  user: anysda\n",
+   "config": "entry:\n  host: 192.0.2.1\nexits:\n  - tag: se\n    host: 192.0.2.2\n  - tag: nl\n    host: 192.0.2.3\n    hy2_direct_port: 443\nadmin:\n  user: anysda\n",
    "logs": [
     "rotate-nl-443.log"
    ]

@@ -605,6 +605,6 @@ class PublishedManifestTests(Work):
         install = install[0] + install[1]  # Quickstart и «Настройка»
         for forbidden in ('gh ', 'gh auth', 'gh run', '--manifest', 'release-manifest'):
             self.assertNotIn(forbidden, install)
-        steps = [install.index(step) for step in ('git clone', '\n./setup.sh\n', '\n./deploy.sh\n')]
+        steps = [install.index(step) for step in ('git clone', '\n./deploy.sh -key\n', '\n./deploy.sh -yaml\n')]
         self.assertIn('ssh-copy-id', install)
         self.assertEqual(steps, sorted(steps))

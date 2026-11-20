@@ -21,8 +21,8 @@ exit_libs:
   - "{{ exit_infra }}/configs/sing-box-server.json.tpl"
   - "{{ exit_wheel }}"
 
-# Окружение шагов - все переменные узла, кроме пароля входа на узел.
-exit_env: "{{ vpn2_env | dict2items | rejectattr('key', 'eq', 'SSH_PASS') | items2dict | combine({'HOST_TAG': inventory_hostname}) }}"
+# Окружение шагов - все переменные узла.
+exit_env: "{{ vpn2_env | combine({'HOST_TAG': inventory_hostname}) }}"
 
 # Сторож WARP живёт в пакете vpn2: venv экзита ставит первая стадия.
 exit_vpn2: /opt/vpn2/venv/bin/vpn2

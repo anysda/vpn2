@@ -15,7 +15,8 @@ from pathlib import Path
 
 from vpn2 import ports, release, stages
 from vpn2.config import STATE_DIR
-from vpn2.deploy import CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, log, ok, prep_keys, report, step, warn
+from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, installed, log, ok, orchestrator_key, prep_keys,
+                         read, report, step, warn)
 from vpn2.deploy.plays import Plays
 
 PLAYBOOK, SITE = INFRA / 'ansible/deploy.yml', INFRA / 'ansible/site.yml'
@@ -71,7 +72,7 @@ class Deploy:
         hosts = json.loads(listed.stdout)['_meta']['hostvars']
         plain = lambda value: value['__ansible_unsafe'] if isinstance(value, dict) else value  # noqa: E731
         self.nodes = {name: {key: plain(value) for key, value in found.get('vpn2_env', {}).items()} for name, found in hosts.items()}
-        self.logins = {name: [plain(found[key]) for key in ('ansible_host', 'ansible_password', 'ansible_ssh_common_args')]
+        self.logins = {name: [plain(found[key]) for key in ('ansible_host', 'ansible_ssh_common_args')]
                        for name, found in hosts.items()}
 
     def env(self, node='ru'):
@@ -113,16 +114,18 @@ class Deploy:
     def service(self, *args, **options):
         return self.play(PLAYBOOK, '-e', f'manifest={self.manifest}', *args, **options)
 
+    def ssh(self, node, command):
+        """ssh на узел с тем же ключом, что у ansible, без общего соединения: открытое соединение живёт
+        и при сломанном правиле."""
+        host, options = self.logins[node]
+        return ['ssh', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'BatchMode=yes', *shlex.split(options),
+                '-i', str(orchestrator_key()), f'root@{host}', command]
+
     def fresh(self, node, command, show=False):
-        """Новый ssh-вход на узел с теми же ключом и паролем, что у ansible, без общего соединения:
-        открытое соединение живёт и при сломанном правиле. Код команды; 255 - вход не прошёл.
-        Вывод show печатает деплой: ssh без tty ставит O_NONBLOCK на свой stdout, а общий нужен ansible-playbook."""
-        host, password, options = self.logins[node]
-        ssh = ['ssh', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', *shlex.split(options),
-               '-i', str(Path.home() / '.ssh/id_ed25519'), f'root@{host}', command]
+        """Новый ssh-вход на узел (ssh()). Код команды; 255 - вход не прошёл. Вывод show печатает деплой:
+        ssh без tty ставит O_NONBLOCK на свой stdout, а общий нужен ansible-playbook."""
         try:
-            done = subprocess.run(['sshpass', '-e', *ssh] if password else [*ssh[:1], '-o', 'BatchMode=yes', *ssh[1:]],
-                                  env={**os.environ, 'SSHPASS': password}, stdin=subprocess.DEVNULL, text=True,
+            done = subprocess.run(self.ssh(node, command), stdin=subprocess.DEVNULL, text=True,
                                   stdout=subprocess.PIPE if show else subprocess.DEVNULL, stderr=subprocess.PIPE if show else subprocess.DEVNULL,
                                   timeout=30)
         except subprocess.TimeoutExpired:
@@ -382,9 +385,7 @@ class Deploy:
             raise side[1][0]
 
     def do_all(self):
-        report.banner(self)
         t0, verify, side = time.time(), 0, None
-        self.preflight()
         try:
             for stage in self.stages:
                 if side and stage.name == side[2]:
@@ -544,34 +545,45 @@ class Deploy:
         secrets.write_text(text)
         ok('секреты записаны в secrets/foreign-secrets.env')
 
+    def knock(self, node, deadline):
+        """Вход по ключу на узел; '' - вошёл, иначе текст отказа ssh. Без связи вход повторяется до deadline:
+        узел после переустановки ОС поднимает sshd не сразу."""
+        while True:
+            try:
+                done = subprocess.run(self.ssh(node, 'true'), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+                reason = '' if done.returncode == 0 else done.stderr.strip() or f'ssh: код {done.returncode}'
+            except subprocess.TimeoutExpired:
+                reason = 'нет ответа за 30 с'
+            if not reason or refused(reason) or time.time() >= deadline:
+                return reason
+            time.sleep(5)
+
     def preflight(self):
-        """Вход на каждый узел до изменений. Экзит без связи пропускается; сменившийся host-key и
-        отказ во входе останавливают деплой: это чинит оператор."""
-        step('pre-flight: доступность SSH')
-        out = Path(tempfile.mkdtemp(dir=self.tmp))
-        with open(out / 'log', 'w') as journal:
-            code = self.service('--tags', 'preflight', '-e', f'out={out}', stdout=journal, stderr=journal)
+        """Вход по ключу на все узлы разом, до любых изменений на них и на entry. Отказ во входе и сменившийся
+        host-key останавливают деплой одним списком узлов. Экзит без связи пропускается только при обновлении:
+        у него есть секреты прошлого деплоя; в чистой установке это тоже отказ."""
+        step('pre-flight: вход по ключу на узлы')
+        nodes, deadline = self.expand('all'), time.time() + int(os.environ.get('PREFLIGHT_BUDGET') or 90)
+        with ThreadPoolExecutor(len(nodes)) as pool:
+            found = dict(zip(nodes, pool.map(lambda node: self.knock(node, deadline), nodes)))
         reasons, fixes, auth, net = [], [], False, False
-        for host in self.expand('all'):
-            if not (out / f'{host}.fail').is_file():
-                if code:
-                    print(''.join((out / 'log').read_text().splitlines(True)[-20:]), end='', file=sys.stderr)
-                    die('pre-flight: проверка входа не выполнилась, причина выше')
+        for host, reason in found.items():
+            if not reason:
                 print(f'  {host:<30} {G}✓{E}', flush=True)
                 continue
-            addr, reason = self.env(host).get('SSH_HOST', ''), (out / f'{host}.fail').read_text().replace('\n', ' ')
+            addr, reason = self.logins[host][0], reason.replace('\n', ' ')
             if 'IDENTIFICATION HAS CHANGED' in reason or 'Host key verification failed' in reason:
                 fixes.append(f'ssh-keygen -R {addr} -f {STATE_DIR}/known_hosts')
-            elif 'Permission denied' in reason or 'Authentication failed' in reason:
+            elif refused(reason):
                 auth = True
-            elif host != 'ru':
+            elif host != 'ru' and installed():
                 self.skipped.append(host)
                 print(f'  {Y}⚠ Экзит {host} пропущен: SSH недоступен в pre-flight{E}', flush=True)
                 continue
             else:
                 net = True
             print(f'  {host:<30} {R}✗{E}', flush=True)
-            reasons.append(f'нода {host} ({addr}) недоступна по ssh с entry: {reason}')
+            reasons.append(f'нода {host} ({addr}) не пускает по ключу с entry: {reason}')
         if not reasons:
             if self.skipped:
                 print(f'  {Y}⚠ Продолжаю без экзитов: {" ".join(self.skipped)}{E}', flush=True)
@@ -583,15 +595,23 @@ class Deploy:
                       'Новый ключ сам не принимается - это защита от подмены ноды.',
                       'Если ОС переустанавливал ты, убери старый ключ и повтори ./deploy.sh:', *(f'  {fix}' for fix in fixes)]
         if auth:
-            lines += ['Нода отказала во входе:',
-                      '  1. ключ anysda-orchestrator в /root/.ssh/authorized_keys на ноде: после 00-bootstrap экзит пускает только по нему',
-                      '  2. пароль root в config.yaml', '  3. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде',
-                      '  4. если ОС на ноде только что переустановили, пароль мог ещё не выставиться: повтори ./deploy.sh через минуту']
+            lines += ['Нода отказала во входе по ключу. Проверь на ноде:',
+                      f'  1. в /root/.ssh/authorized_keys есть строка из ./deploy.sh -key: {key_text()}',
+                      '  2. ssh на ноде слушает порт 22 и пускает root по ключу (PermitRootLogin не no)']
         if net:
-            lines += ['Проверь:', '  1. IP ноды в config.yaml', '  2. sshd на ноде запущен и слушает :22',
+            lines += ['Проверь:', '  1. адрес ноды в config.yaml', '  2. sshd на ноде запущен и слушает порт 22',
                       '  3. firewall / geo-блок на стороне провайдера ноды']
-        print(f'\n{R}✗ Недоступны по SSH:{E}\n' + ''.join(f'  {line}\n' for line in lines), end='', flush=True)
-        die(f'pre-flight: недоступных по ssh нод: {len(reasons)}, деплой не запускался')
+        print(f'\n{R}✗ Не пускают по ключу:{E}\n' + ''.join(f'  {line}\n' for line in lines), end='', flush=True)
+        die(f'pre-flight: узлов без входа по ключу: {len(reasons)}, на серверах ничего не менялось')
+
+
+def refused(reason):
+    """Узел ответил и не пустил: ключа нет или вход root закрыт."""
+    return 'Permission denied' in reason or 'Authentication failed' in reason
+
+
+def key_text():
+    return read(f'{orchestrator_key()}.pub') or '(ключа ещё нет)'
 
 
 def install(src, dst, mode):

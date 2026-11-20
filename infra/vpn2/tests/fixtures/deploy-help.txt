@@ -1,5 +1,8 @@
 anysda-vpn2 — деплой
 
+  ./deploy.sh -key                         открытый ключ оркестратора (нет - создаётся): его кладут
+                                           в /root/.ssh/authorized_keys на каждом экзите до установки
+  ./deploy.sh -yaml                        установка по заполненному config.yaml
   ./deploy.sh                              полный pipeline: манифест commit → prereqs → проверки → деплой
   ./deploy.sh --manifest <file>            то же без сети: манифест сборки из файла
   ./deploy.sh --development [stage group]  явный режим разработки с локальными/плавающими образами

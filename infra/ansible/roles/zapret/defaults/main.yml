@@ -56,5 +56,5 @@ zapret_all_off:
           '/usr/local/bin/anysda-yt-check', '/etc/nftables-yt-zapret.conf', '/etc/sysctl.d/97-anysda-yt-zapret.conf',
           '/etc/modules-load.d/anysda-yt-zapret.conf', '/var/anysda/.stamps/19-yt-zapret'] }}
 
-# Окружение шагов - все переменные узла, кроме пароля входа на entry.
-zapret_env: "{{ vpn2_env | dict2items | rejectattr('key', 'eq', 'SSH_PASS') | items2dict }}"
+# Окружение шагов - все переменные узла.
+zapret_env: "{{ vpn2_env }}"

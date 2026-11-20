@@ -22,7 +22,7 @@ spec.loader.exec_module(inventory)
 
 # Имена, похожие на секрет, но открытые: ключ публичный, переключатель и подсказка.
 PUBLIC = {'ADMIN_SSH_PUBKEY', 'SSO_PASSWORD_LOGIN'}
-JINJA = MINIMAL.replace('password: p\n', 'password: "a{{ 1 + 1 }}b{% x %}"\n', 1)
+JINJA = MINIMAL + 'admin:\n  password: "a{{ 1 + 1 }}b{% x %}"\n'
 
 
 def plain(value):
@@ -128,6 +128,7 @@ def test_every_secret_looking_name_is_classified():
 def test_hidden_secrets_leave_no_value_in_output():
     secrets = ('entry-S3CRET', 'exit-S3CRET', 'admin-S3CRET', '77:tok-S3CRET', 'sso-S3CRET', 'pass-S3CRET',
                'ak-S3CRET', 'sk-S3CRET')
+    # Пароли root 1.2.0 (entry, экзит) деплой не берёт вовсе: их нет и в открытом выводе.
     text = (f'entry:\n  host: 198.18.0.1\n  password: "{secrets[0]}"\nexits:\n  - tag: nl\n    host: 198.18.0.2\n'
             f'    password: "{secrets[1]}"\nadmin:\n  password: "{secrets[2]}"\n'
             f'telegram:\n  bot_token: "{secrets[3]}"\n  chat_id: "5"\n'
@@ -138,9 +139,10 @@ def test_hidden_secrets_leave_no_value_in_output():
         _, _, shown = build(text, tmp)
     with tempfile.TemporaryDirectory() as tmp:
         _, _, hidden = build(text, tmp, hide_secrets=True)
-    assert all(secret in json.dumps(shown) for secret in secrets), 'положительный контроль: секреты в выводе есть'
-    assert 'S3CRET' not in json.dumps(hidden)
-    assert envs(hidden)['ru']['SSH_PASS'] == inventory.HIDDEN == hidden['_meta']['hostvars']['nl']['ansible_password']
+    assert all(secret in json.dumps(shown) for secret in secrets[2:]), 'положительный контроль: секреты в выводе есть'
+    assert not any(secret in json.dumps(shown) for secret in secrets[:2])
+    assert 'S3CRET' not in json.dumps(hidden) and envs(hidden)['ru']['ADMIN_PASSWORD'] == inventory.HIDDEN
+    assert not any('password' in name for host in shown['_meta']['hostvars'].values() for name in host)
 
 
 def run_script(tmp, text, **extra):
@@ -153,7 +155,7 @@ def run_script(tmp, text, **extra):
 
 def test_script_shows_secrets_only_on_request():
     with tempfile.TemporaryDirectory() as tmp:
-        env = run_script(tmp, MINIMAL.replace('password: p\n', 'password: entry-S3CRET\n', 1))
+        env = run_script(tmp, MINIMAL + 'admin:\n  password: entry-S3CRET\n')
         outputs = [subprocess.run([sys.executable, str(SCRIPT), '--list'], env=dict(env, **mode), check=True,
                                   capture_output=True, text=True, timeout=30).stdout
                    for mode in ({'VPN2_INVENTORY_SECRETS': 'show'}, {})]
@@ -168,12 +170,12 @@ def test_ansible_reads_values_verbatim_and_inventory_listing_is_masked():
         launcher.write_text(f'#!/bin/sh\ntr "\\0" " " < /proc/$PPID/cmdline >> {tmp}/asked\necho >> {tmp}/asked\n'
                             f'exec {sys.executable} {SCRIPT} "$@"\n', encoding='utf-8')
         launcher.chmod(0o755)
-        message = '{{ ansible_password }}|{{ vpn2_env.SSH_PASS }}|{{ vpn2_env.NOPE | default("") }}|{{ vpn2_node.role }}'
+        message = '{{ vpn2_env.ADMIN_PASSWORD }}|{{ vpn2_env.NOPE | default("") }}|{{ vpn2_node.role }}'
         play = subprocess.run(['ansible', '-i', str(launcher), 'ru', '-c', 'local', '-m', 'ansible.builtin.debug',
                                '-a', 'msg=' + message], env=dict(env, VPN2_INVENTORY_SECRETS='show'), capture_output=True, text=True, timeout=120)
         listing = subprocess.run(['ansible-inventory', '-i', str(launcher), '--list'], env=env,
                                  capture_output=True, text=True, timeout=120)
         asked = (Path(tmp) / 'asked').read_text(encoding='utf-8')
-    assert 'a{{ 1 + 1 }}b{% x %}|a{{ 1 + 1 }}b{% x %}||entry' in play.stdout, play.stdout + play.stderr
-    assert listing.returncode == 0 and '"SSH_PASS": "***"' in listing.stdout, f'инвентарь спрашивали:\n{asked}'
+    assert 'a{{ 1 + 1 }}b{% x %}||entry' in play.stdout, play.stdout + play.stderr
+    assert listing.returncode == 0 and '"ADMIN_PASSWORD": "***"' in listing.stdout, f'инвентарь спрашивали:\n{asked}'
     assert '1 + 1' not in listing.stdout

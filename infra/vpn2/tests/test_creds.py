@@ -313,6 +313,16 @@ class NewServerRestoreTests(Store):
             report.fresh_secrets(deploy, str(name))
         return out.getvalue()
 
+    def test_archive_public_key_is_taken_before_the_deploy(self):
+        """Пара архива на новом сервере до деплоя: деплой не заводит и не показывает свою."""
+        from vpn2.backup import keys
+        real = keys._at
+        with mock.patch.object(keys, '_at', lambda rel, _root='/': real(rel, self.root)):
+            (self.root / 'etc/anysda').mkdir(parents=True)
+            (self.root / keys.UNSEEN).touch()
+            self.fresh({'etc-anysda/backup.pub': b'age1fromarchive\n', 'manifest.json': b'{}'})
+            self.assertEqual((keys.recipient(), keys.unseen()), ('age1fromarchive', False))
+
     def test_archive_keys_win_over_a_key_from_deploy_key(self):
         creds.write('orchestrator_key', 'NEW\n')
         said = self.fresh({'secrets.json': json.dumps({'orchestrator_key': 'OLD\n', 'mgmt_key': 'M\n'}).encode()}, 'latest')

@@ -199,9 +199,13 @@ def fresh_secrets(deploy, path):
             plain = Path(work) / 'archive.tar.gz'
             archive.decrypt(path, plain, *deploy.restore_secret)
             with tarfile.open(plain) as tar:
-                member = next((item for item in tar.getmembers() if item.name.endswith('/secrets.json')), None)
+                members = tar.getmembers()
+                member = next((item for item in members if item.name.endswith('/secrets.json')), None)
                 if member is not None:
                     (Path(work) / 'secrets.json').write_bytes(tar.extractfile(member).read())
+                # Пара архива - сразу: деплой нового сервера своей не заводит и не показывает.
+                if public := next((item for item in members if item.name.endswith('/etc-anysda/backup.pub')), None):
+                    keys.adopt(tar.extractfile(public).read().decode())
             # Архив 1.2.0 без secrets.json: ключ оркестратора уже взят из orchestrator_key config.yaml 1.2.0.
             if member is not None:
                 print(f'  секреты и ключи ssh из {Path(path).name} - в хранилище нового сервера', flush=True)

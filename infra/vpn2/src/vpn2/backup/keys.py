@@ -64,6 +64,13 @@ def issue(root='/'):
     return private
 
 
+def adopt(public, root='/'):
+    """Открытый ключ из архива: закрытый у человека, только что открывшего этот архив, - пара действует."""
+    _at(PUBLIC, root).parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    fsutil.atomic(_at(PUBLIC, root), public.strip() + '\n', mode=0o644)
+    seen(root)
+
+
 def seen(root='/'):
     """Закрытый ключ показан: пара действует, деплой её больше не меняет."""
     _at(UNSEEN, root).unlink(missing_ok=True)

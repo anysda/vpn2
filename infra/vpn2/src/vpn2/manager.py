@@ -206,12 +206,20 @@ class Manager:
         return job
 
     def restore(self, job):
-        """config.yaml до задания; копия ключа оркестратора, что деплой дописал за задание, остаётся."""
-        original, current = (self.folder(job['id']) / 'config.orig').read_text(), self.config.read_text()
-        if current == original:
+        """Состав экзитов - как до задания. Сменился только он - файл целиком прежний (порядок и комментарии
+        убранного экзита), иначе прочие правки деплоя за задание остаются: секреты, ушедшие в хранилище, не вернутся."""
+        folder = self.folder(job['id'])
+        original, current = (folder / 'config.orig').read_text(), self.config.read_text()
+        if self.exits(current) == self.exits(original):
             return
-        keys = [line for line in current.splitlines() if re.match(r'orchestrator_(pub)?key:', line) and line not in original]
-        config.replace(self.config, original.rstrip('\n') + ''.join(f'\n{line}' for line in keys) + '\n')
+        probe = folder / 'config.probe'
+        probe.write_text(original)
+        config.set_exits(probe, self.exits(current))
+        if probe.read_text() == current:
+            config.replace(self.config, original)
+        else:
+            config.set_exits(self.config, self.exits(original))
+        probe.unlink()
 
     def exits(self, text=None):
         return [(node.tag, node.host) for node in config.loads(text or self.config.read_text()).exits]

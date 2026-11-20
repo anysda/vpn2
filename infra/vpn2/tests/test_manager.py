@@ -115,6 +115,7 @@ def test_exit_check_login_and_os(tmp_path, monkeypatch, rc, out, err, text):
 
 
 def test_add_job_failure_restores_config_then_retry_and_forget(fake):
+    fake.config.write_text(CONFIG + 'orchestrator_key: QUJD\n')
     job = call(fake, 'exit.add', tag='nl', host='root@192.0.2.9')
     assert (job['id'], job['kind'], job['state'], job['host']) == (1, 'add', 'running', '192.0.2.9')
     assert fake.spawned == [['exit-add', 'nl']] and tags(fake) == ['se', 'at', 'nl']
@@ -123,12 +124,11 @@ def test_add_job_failure_restores_config_then_retry_and_forget(fake):
     fake.end(1, [{'name': '10-foreign', 'state': 'done', 'nodes': ['nl'], 'failed': []},
                  {'name': '20-ru-router', 'state': 'failed', 'nodes': ['ru'], 'failed': ['ru'], 'offset': 0}])
     (fake.folder(1) / 'log').write_text('[deploy] FATAL: стадия 20-ru-router: одна или несколько нод завершились с ошибкой\n')
-    # Копия ключа оркестратора, что деплой дописал за задание, переживает возврат состава.
-    with open(fake.config, 'a') as text:
-        text.write('orchestrator_key: QUJD\n')
+    # Деплой за задание унёс ключ из config.yaml в хранилище: возврат состава его не воскрешает.
+    fake.config.write_text(fake.config.read_text().replace('orchestrator_key: QUJD\n', ''))
     job = call(fake, 'job.read', job=0)
     assert (job['state'], job['actions']) == ('failed', ['retry', 'forget'])
-    assert fake.config.read_text() == CONFIG + 'orchestrator_key: QUJD\n'
+    assert fake.config.read_text() == CONFIG
     assert job['error'] == 'стадия 20-ru-router: одна или несколько нод завершились с ошибкой'
     assert job['stages'][1] == {'name': '20-ru-router', 'state': 'failed', 'nodes': ['ru'], 'failed': ['ru']}
     assert 'не закрыто' in call(fake, 'exit.add', tag='de', host='192.0.2.8')['refused']
@@ -142,7 +142,7 @@ def test_add_job_failure_restores_config_then_retry_and_forget(fake):
     assert fake.load(1)['state'] == 'forgotten'
     fake.end(0)
     assert call(fake, 'job.read', job=2)['state'] == 'done' and tags(fake) == ['se', 'at']
-    assert config.load(fake.config).raw['orchestrator_key'] == 'QUJD'
+    assert fake.config.read_text() == CONFIG
 
 
 def test_forget_of_add_that_laid_nothing_closes_it(fake):

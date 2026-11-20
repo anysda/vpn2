@@ -330,7 +330,8 @@ class NewServerRestoreTests(Store):
         with mock.patch.object(main.report, 'restore_input', lambda _d, args, fresh: calls.append((args, fresh)) or ['/x/a.age', *args[1:]]), \
                 mock.patch.object(main.report, 'fresh_secrets', lambda _d, path: calls.append(path)), \
                 mock.patch.object(main, 'installed', lambda: False), \
+                mock.patch.object(main, 'admin_key_check', lambda _env: calls.append('ключ человека')), \
                 mock.patch.object(main, 'dispatch', lambda _d, argv, new_server=None: calls.append((argv, new_server)) or 0):
-            self.assertEqual(real(None, ['restore', 'latest', '--force', '--allow-incompatible']), 0)
-        self.assertEqual(calls, [(['latest', '--force', '--allow-incompatible'], True), '/x/a.age', ([], None),
+            self.assertEqual(real(SimpleNamespace(env=dict), ['restore', 'latest', '--force', '--allow-incompatible']), 0)
+        self.assertEqual(calls, ['ключ человека', (['latest', '--force', '--allow-incompatible'], True), '/x/a.age', ([], None),
                                  (['restore', '/x/a.age', '--force', '--allow-incompatible'], False)])

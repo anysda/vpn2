@@ -38,6 +38,9 @@ def dispatch(deploy, argv, new_server=None):
         return subprocess.run(['/usr/local/bin/anysda-backup-list.sh']).returncode
     if action == 'restore' and '--dry-run' not in argv[1:] and new_server is None:
         new_server = not installed()
+        # Деплой нового сервера закроет вход по паролю: без ключа человека отказ - до вопроса о ключе бэкапов.
+        if new_server:
+            admin_key_check(deploy.env())
         argv = ['restore', *report.restore_input(deploy, argv[1:], new_server)]
     if action == 'restore' and new_server:
         # Новый сервер: ключи и секреты архива - до ключа оркестратора, затем деплой и restore архива поверх.

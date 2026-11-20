@@ -15,13 +15,13 @@ const error = ref('')
 const editing = ref('')
 const newHost = ref('')
 // Строка, которую положила в черновик проверка из формы: повторная проверка формы заменяет её.
-let pending: { tag: string, host: string } | null = null
+const pending = ref<{ tag: string, host: string } | null>(null)
 
 async function put(next: DraftExit[]) {
   exits.value = (await putDraft({ exits: next })).exits
 }
 const row = (tag: string, host: string) => ({ tag, host, skipped: false, problems: null })
-const isPending = (e: DraftExit) => !!pending && e.tag === pending.tag && e.host === pending.host
+const isPending = (e: DraftExit) => !!pending.value && e.tag === pending.value.tag && e.host === pending.value.host
 
 async function checked(tag: string) {
   const problems = await transport.check(tag, '')
@@ -34,7 +34,7 @@ const formTransport = {
   // Отказ сервера (формат, тег уже есть) форма показывает текстом, как и сбой проверки.
   check: async (tag: string, host: string) => {
     await put([...exits.value.filter(e => !isPending(e)), row(tag, host)])
-    pending = { tag, host }
+    pending.value = { tag, host }
     return checked(tag)
   },
 }
@@ -58,7 +58,7 @@ async function act(run: () => Promise<unknown>, tag = '') {
 async function finish(skip: boolean, reset: () => void) {
   const done = await act(() => skip ? put(exits.value.map(e => isPending(e) ? { ...e, skipped: true } : e)) : Promise.resolve())
   if (done) {
-    pending = null
+    pending.value = null
     reset()
   }
 }
@@ -124,7 +124,8 @@ defineExpose({ ready, collect: () => ({ patch: { admin_ssh_key: adminKey.value.t
             <button type="button" class="pill red" :disabled="!!busy" @click="act(() => put(exits.filter(e => e !== exit)))">Убрать</button>
           </template>
         </div>
-        <div v-if="exit.problems?.length" class="al red">
+        <!-- Строку, что сейчас в форме, форма и объясняет: замечания второй раз не нужны. -->
+        <div v-if="exit.problems?.length && (exit.skipped || !isPending(exit))" class="al red">
           <b>{{ exit.skipped ? 'Установка пойдёт без этого экзита' : 'Сервер пока не годится' }}</b>
           <span v-for="p in exit.problems" :key="p">{{ p }}</span>
         </div>

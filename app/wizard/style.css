@@ -23,7 +23,7 @@
 .wzbar .on i{background:var(--acc);border-color:var(--acc);color:var(--acc-t);box-shadow:0 0 18px rgba(var(--glow),calc(.25*var(--gk)))}
 .wzbar .on span{color:var(--t1)}
 .wzsec{margin-top:24px}
-.wzrow .fld{margin:0}
+.wzrow .fld{margin:0;flex-wrap:wrap;row-gap:8px}
 .wzrow .fld>span:first-child{width:46px}
 .wzrow .fld code{min-width:0}
 .wzrow .al{margin:0 0 10px}
@@ -34,7 +34,7 @@
 .wzsw{margin-top:10px}
 .wzbk{display:flex;align-items:center;gap:12px;margin:12px 0;padding:12px 14px;border-radius:14px;background:var(--sunk);border:1px solid var(--line)}
 .wzbk code{flex:1;min-width:0;font:12.5px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--t1);word-break:break-all;user-select:all}
-.wzrow code.mono{font:12.5px ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+.wzrow code.mono{flex:1 0 150px;white-space:nowrap;font:12.5px ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 .wzcheck{display:flex;align-items:center;gap:8px;margin-top:4px;color:var(--t1);font-size:13px;cursor:pointer}
 .wzcheck input{width:16px;height:16px;accent-color:var(--acc)}
 .wzsum code{display:flex;flex-direction:column;gap:2px}

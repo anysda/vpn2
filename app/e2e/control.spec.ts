@@ -198,6 +198,8 @@ test.describe('cron-lifecycle', () => {
         if (method === 'collectTraffic') await collect?.()
       } }
     }
+    // Деплой не идёт: сверка предпочтений клиентов в тике разрешена.
+    Object.assign(imports['../utils/client-prefs']!, { deployIdle: async () => true })
     const plugin = serverModule('server/plugins/cron.ts', imports, {
       defineNitroPlugin: (fn: unknown) => fn,
       useLogger: () => ({ error: () => {} }),

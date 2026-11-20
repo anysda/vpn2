@@ -362,7 +362,9 @@ class Manager:
         errors = [failure(*found) for found in re.findall(r'(?m)(?:FATAL:|^✗)\s*(.+)$|^fatal: \[(\S+)\]: FAILED! => (.+)$', text)]
         open_job = job['state'] in ('failed', 'interrupted')
         return {**{name: job[name] for name in ('id', 'kind', 'tag', 'host', 'state', 'skipped')},
-                'stages': [{name: item[name] for name in ('name', 'state', 'nodes', 'failed')} for item in stages],
+                # Оборванное задание не оставляет стадий «идёт».
+                'stages': [{**{name: item[name] for name in ('name', 'nodes', 'failed')}, 'state': 'failed' if (
+                    item['state'] == 'running' and job['state'] != 'running') else item['state']} for item in stages],
                 'log': text, 'error': errors[-1] if errors and open_job else '',
                 'actions': ['retry', *(['skip'] if job['kind'] == 'install' else []), 'forget'] if open_job else [],
                 'result': progress.get('result')}

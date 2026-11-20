@@ -175,12 +175,15 @@ def test_remove_rules(fake):
 
 def test_interrupted_job_after_restart_or_reboot(fake):
     call(fake, 'exit.remove', tag='at')
+    (fake.folder(1) / 'progress.json').write_text(json.dumps(
+        {'stages': [{'name': '20-ru-router', 'state': 'running', 'nodes': ['ru'], 'failed': []}]}))
     fake.running = False  # процесс пропал без итога: kill -9 или перезагрузка
     again = Fake.__new__(Fake)
     manager.Manager.__init__(again, fake.jobs.parent, fake.config, fake.lock, fake.repo)
     again.running, again.spawned, again.recovers = False, [], []
     job = call(again, 'job.read', job=1)
     assert (job['state'], job['actions'], tags(again)) == ('interrupted', ['retry', 'forget'], ['se', 'at'])
+    assert job['stages'][0]['state'] == 'failed'
     assert call(again, 'job.retry', job=1)['state'] == 'running' and again.spawned == [['exit-remove', 'at', '192.0.2.3']]
 
 

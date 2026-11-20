@@ -1481,7 +1481,7 @@ cmd_recover_fresh() {
   entry_run restore-foreign "age-keygen 2>/dev/null | ./deploy.sh --development restore $archive --force" || rc=$?
   (( rc == 4 )) || die "recover: restore с чужим ключом - код $rc, ждём 4"
   [[ $(entry_fingerprint) == "$before" ]] || die 'recover: restore с чужим ключом изменил entry'
-  ssh_node "$ENTRY" "grep -q 'неверный ключ бэкапов; ничего не изменено' /root/restore-foreign.log" \
+  ssh_node "$ENTRY" "grep -q 'неверный ключ бэкапов или архив повреждён; ничего не изменено' /root/restore-foreign.log" \
     || die 'recover: отказ на чужой ключ без понятной причины'
   log 'recover: чужой ключ - отказ кодом 4, состояние entry не изменилось'
   rc=0

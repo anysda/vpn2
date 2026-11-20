@@ -313,7 +313,7 @@ class Openvpn:
 
 def host_tls(environ, tx):
     """Caddyfile, вставки и пара сайта (vpn2 tls --prepare) под охраной выпуска панели;
-    вернуть, менялись ли Caddyfile и пара сайта."""
+    вернуть, менялись ли Caddyfile и вставки, что таймер меняет сам (окно выпуска и пара сайта)."""
     domain, entry = environ.get('PANEL_DOMAIN') or '', environ['ENTRY_HOST']
     if domain:
         host, out = domain, f'{TLS_DIR}/domain'
@@ -329,22 +329,22 @@ def host_tls(environ, tx):
          '--acme-url', environ.get('TLS_ACME_URL') or 'https://acme-v02.api.letsencrypt.org/directory',
          '--acme-root', environ.get('TLS_ACME_ROOT') or ''], check=True)
     after = [_read(path) for path in CADDY[:4]]
-    return after[0] != before[0], after[2:] != before[2:]
+    return after[0] != before[0], after[1:] != before[1:]
 
 
-def caddy(pair=False):
-    """Правила ufw; перезапуск Caddy при смене Caddyfile или окна выпуска, новая пара сайта -
-    перезагрузкой: её меняет и таймер vpn2 tls, отпечаток перезапуска её не помнит."""
+def caddy(reload=False):
+    """Правила ufw; перезапуск Caddy при смене Caddyfile, окно выпуска и пара сайта - перезагрузкой:
+    их меняет и таймер vpn2 tls, отпечаток перезапуска их не помнит."""
     from vpn2 import firewall
     firewall.ufw_reconcile('caddy HTTP + ACME challenge', ['80/tcp'], ['caddy HTTP панель'])
     firewall.ufw_reconcile('caddy HTTPS панель', ['443/tcp'])
     if subprocess.run(['caddy', 'validate', '--config', CADDY[0]], check=False, capture_output=True).returncode:
         raise StageError('конфиг caddy невалиден')
-    if svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', *CADDY[:2]]):
+    if svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', CADDY[0]]):
         return True
-    if pair:
+    if reload:
         subprocess.run(['systemctl', 'reload', 'caddy'], check=True)
-    return pair
+    return reload
 
 
 def diagnose(docker, http_up, kept):
@@ -416,9 +416,9 @@ def stage(environ, docker, tx, image):
     tx.files_restored = openvpn.restored
     # Флаг Secure панель читает только при старте: прежнее false требует перезапуска.
     secure = _read(SECURE)
-    caddyfile, pair = host_tls(environ, tx)
+    caddyfile, snippets = host_tls(environ, tx)
     changed |= caddyfile
-    changed |= caddy(pair)
+    changed |= caddy(snippets)
 
     say('[4/4] run container')
     stamp = compose.prepare_host(STAGE)

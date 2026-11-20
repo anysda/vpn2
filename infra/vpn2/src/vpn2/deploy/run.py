@@ -262,7 +262,7 @@ class Deploy:
             text = found[1].rstrip('\n') if len(found) > 1 else ''
             if text:
                 print(text, flush=True)
-            self.deploy_warnings += re.findall(r'(?m)^\[.*\] ⚠ WARP: .*$', text)
+            self.deploy_warnings += re.findall(r'(?m)^\[.*\] ⚠ (?:WARP: |сертификат самоподписанный).*$', text)
             if code == 0 and found[0] == '2':
                 warn(f'[99-verify → {host}] не все проверки измерены')
                 self.verify_warnings += re.findall(r'(?m)^\[.*\] \? .*не проверено:.*$', text) \

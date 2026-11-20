@@ -15,7 +15,7 @@ import time
 import unittest
 
 import infra_support  # noqa: F401 - путь к пакету vpn2
-from vpn2.containers import panel  # noqa: E402
+from vpn2 import tls  # noqa: E402
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 DOCKER = shlex.split(os.environ.get('DOCKER', 'docker'))
@@ -66,8 +66,7 @@ class PanelProxyTests(unittest.TestCase):
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
         sources = {'app/e2e/support/panel-stand.sh': (ROOT / 'app/e2e/support/panel-stand.sh').read_text(),
-                   'vpn2.containers.panel': panel.CADDYFILE.replace('@TLS_HOST@', '192.0.2.1')
-                   .replace('@SITE@', 'https://192.0.2.1')}
+                   'vpn2.tls': tls.panel_caddyfile({'host': '192.0.2.1', 'caddy_dir': '/etc/caddy'})}
         for path, source in sources.items():
             blocks = list(proxy_blocks(source))
             # Stage 30 keeps one proxy snippet for domain and IP sites.

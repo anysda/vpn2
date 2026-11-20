@@ -17,13 +17,13 @@ from unittest import mock
 
 import pytest
 
-from vpn2 import tls
 from vpn2.emergency import snapshot
 from vpn2.verify import stage as verify_stage
 
 ROOT = Path(__file__).resolve().parents[3]
 # Предел на весь сценарий - защита от зависания, а не мерило скорости.
 SCENARIO_HANG = 120
+SELF_SIGNED = ':'.join(['AB'] * 32)
 MOCK = r'''#!/usr/bin/env python3
 import datetime
 import json
@@ -71,8 +71,13 @@ elif name == 'curl':
     url = sys.argv[-1]
     if fault == url:
         sys.exit(22)
-    if fault == 'panel-closed' and url.startswith('https://'):
-        sys.exit(35)
+    if fault == 'panel-switch' and url.startswith('https://'):
+        # Пара сайта меняется посреди проверки: два первых запроса рвутся.
+        tries = Path(os.environ['SCRAPE_COUNTER'] + '.https')
+        count = int(tries.read_text()) + 1 if tries.exists() else 1
+        tries.write_text(str(count))
+        if count < 3:
+            sys.exit(35)
     if url.endswith('/targets'):
         counter = Path(os.environ['SCRAPE_COUNTER'])
         count = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -288,14 +293,11 @@ def run_verify(fault='', role='ru', youtube='off', extra_env=None):
             hy2_options.write_text(json.dumps({'server_ip': '198.51.100.1', 'port': 18443}))
         config = root / 'router.json'
         config.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
-        tls_config, tls_state, gate = root / 'tls.json', root / 'tls-state.json', root / 'vpn2-panel.conf'
+        tls_config, tls_state = root / 'tls.json', root / 'tls-state.json'
         tls_config.write_text('{"host": "192.0.2.1"}')
-        closed = fault == 'panel-closed'
-        gate.write_text(tls.PANEL_CLOSED if closed else tls.PANEL_OPEN)
-        tls_state.write_text(json.dumps({'failed': True, 'closed': 'сертификат не выпущен',
-                                         'error': 'ACME: rateLimited (HTTP 429), повтор после 2026-11-16 00:02:29 UTC'}
-                                        if closed else {}))
-        paths = {'TLS_CONFIG': tls_config, 'TLS_STATE': tls_state, 'PANEL_GATE': gate, 'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency, 'VENV': venv,
+        tls_state.write_text(json.dumps({'self_signed': SELF_SIGNED, 'failed': True,
+                                         'error': 'ACME: rateLimited (HTTP 429)'} if fault == 'self-signed' else {}))
+        paths = {'TLS_CONFIG': tls_config, 'TLS_STATE': tls_state, 'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency, 'VENV': venv,
                  'EMERGENCY_HY2': hy2_options, 'STAMPS': stamp.parent, 'EMERGENCY_STATE': snapshots}
         script = root / 'verify.py'
         script.write_text(
@@ -321,6 +323,7 @@ def run_verify(fault='', role='ru', youtube='off', extra_env=None):
                'VERIFY_SCRAPE_TIMEOUT': '10' if fault in ('warming-up', 'empty-then-up', 'missing-then-up') else '2',
                'VERIFY_SCRAPE_INTERVAL': '0.02', 'HY2_MGMT_PORT': '' if fault == 'missing-mgmt-port' else '9443',
                'VERIFY_SNAPSHOT_WAIT': '0.2', 'VERIFY_TRAFFIC': str(root / 'traffic.py'), 'VERIFY_REPORT': str(report),
+               'VERIFY_PANEL_WAIT': '5' if fault == 'panel-switch' else '0',
                **(extra_env or {})}
         if env.get('FAKE_BASHRC') is not None:
             env['FAKE_SSH'] = str(root / 'fake-ssh')
@@ -368,14 +371,36 @@ def test_individual_entry_failure(fault, label):
     assert 'verify FAILED:' in result.stdout and 'verify done' not in result.stdout
 
 
-def test_closed_panel_names_reason_even_when_port_80_redirects():
-    """VPN2-976: :80 отвечает редиректом, панель закрыта без сертификата - строка frontend красная с причиной."""
-    result = run_verify('panel-closed')
-    assert result.returncode == 1, result.stdout
-    assert '✓ frontend: Caddy слушает :80' in result.stdout
-    assert failed(result, 'frontend: панель отвечает через Caddy по HTTPS'), result.stdout
-    assert ('панель закрыта снаружи (Caddy отвечает 503): сертификат не выпущен; ACME: rateLimited (HTTP 429), '
-            'повтор после 2026-11-16 00:02:29 UTC') in result.stdout
+def test_panel_switch_during_the_check_is_not_a_failure():
+    """Пара сайта сменилась посреди 99-verify: окно проверки HTTPS переживает оборванные запросы."""
+    result = run_verify('panel-switch')
+    assert result.returncode == 0, result.stdout
+    assert '✓ frontend: панель отвечает через Caddy по HTTPS' in result.stdout
+
+
+def test_self_signed_panel_is_a_warning_with_fingerprint_not_a_failure():
+    result = run_verify('self-signed')
+    warning = f'сертификат самоподписанный, отпечаток SHA-256 {SELF_SIGNED}'
+    assert (result.returncode, result.report['code']) == (0, 0), result.stdout
+    assert '✓ frontend: панель отвечает через Caddy по HTTPS' in result.stdout
+    assert f'[ru] ⚠ {warning}' in result.stdout
+    assert result.report['warnings'] == [warning]
+    assert 'самоподписанный' not in run_verify().stdout
+    # Деплой повторяет ту же строку в итоге, после рамки (report.summary печатает deploy_warnings).
+    from vpn2.deploy.run import Deploy
+    deploy = Deploy.__new__(Deploy)
+    deploy.verify_warnings, deploy.deploy_warnings, deploy.old_layout = [], [], False
+    with tempfile.TemporaryDirectory() as directory:
+        deploy.tmp = directory
+
+        def stage_once(_stage, _nodes, env, **_options):
+            Path(env['VPN2_VERIFY_OUT'], 'ru').write_text(f'0\n{result.stdout}')
+            return 0
+
+        deploy.stage_once = stage_once
+        with redirect_stdout(io.StringIO()):
+            assert deploy.verify('ru') == 0
+    assert deploy.deploy_warnings == [f'[ru] ⚠ {warning}']
 
 
 class VerifyTests(unittest.TestCase):

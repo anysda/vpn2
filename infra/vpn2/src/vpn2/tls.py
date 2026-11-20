@@ -5,8 +5,8 @@ This command, run once a minute by vpn2-tls.timer:
   * pins the renewal window (IP: 5 days after issuance, domain: 7 days
     before expiry) from the lifetime of the certificate actually issued;
   * exports the current pair to <output_dir>/{fullchain,privkey}.pem;
-  * panel role: switches HTTP to HTTPS (redirect, Secure cookie, CSRF origin)
-    after the first certificate;
+  * panel role: the HTTPS site serves the CA pair, without one a stable
+    self-signed pair; a switch is a file swap and `caddy reload`;
   * queues an admin alert on an ACME failure (error, expiry of the current
     certificate; at most once per notify_hours) and "updated" after recovery.
 """
@@ -34,9 +34,52 @@ DAY = 86400
 SHORTLIVED = 160 * 3600
 IP_RENEW_AFTER = 5 * DAY
 DOMAIN_RENEW_BEFORE = 7 * DAY
-# Panel gate (vpn2-panel.conf): open only while a valid CA certificate exists.
-PANEL_OPEN = 'import to_panel\n'
-PANEL_CLOSED = 'respond "panel closed: no valid TLS certificate" 503 {\n    close\n}\n'
+# The pair the panel site serves; extra routes (the install wizard) go before the panel.
+SITE_CERT, SITE_KEY, ROUTES = 'vpn2-site.crt', 'vpn2-site.key', 'vpn2-site.d'
+PANEL_CADDYFILE = '''{
+    # :80 только переадресует на HTTPS. Сайт панели без имени отдаёт выгруженную пару (CA или
+    # самоподписанную); ACME - на сайте loopback: два сайта с одним именем Caddy не принимает,
+    # а без ignore_loaded_certs не выпускает имя, для которого пара уже загружена. Одной строкой:
+    # второй auto_https заменил бы первый.
+    auto_https disable_redirects ignore_loaded_certs
+    default_sni @HOST@
+    # Без HTTP/3: Caddy держал бы *:443/udp, нужный sing-box для возврата UDP через tproxy.
+    servers {
+        protocols h1 h2
+    }
+}
+# Пути бота - только для самой ноды, бот ходит на 127.0.0.1:51821 мимо Caddy.
+(internal_only) {
+    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot
+    respond @internal 404
+}
+# X-Forwarded-For ставит только Caddy: по нему панель считает лимит попыток входа.
+(to_panel) {
+    reverse_proxy 127.0.0.1:51821 {
+        header_up X-Forwarded-For {remote_host}
+        transport http {
+            keepalive off
+        }
+    }
+}
+https://@AUTHORITY@:@PORT@ {
+    bind 127.0.0.1
+    import @DIR@/vpn2-tls.conf
+    respond 404
+}
+https://:443 {
+    tls @DIR@/vpn2-site.crt @DIR@/vpn2-site.key
+    import @DIR@/vpn2-site.d/*.conf
+    @foreign not host @HOST@
+    abort @foreign
+    import internal_only
+    encode gzip
+    import to_panel
+}
+:80 {
+    redir https://@AUTHORITY@{uri} permanent
+}
+'''
 
 
 def read_text(path, default=''):
@@ -95,6 +138,12 @@ def exit_caddyfile(config):
             ':80 {\n    respond 404\n}\n')
 
 
+def panel_caddyfile(config):
+    replace = {'@HOST@': config['host'], '@AUTHORITY@': authority(config['host']),
+               '@PORT@': str(config.get('local_port', 8443)), '@DIR@': config['caddy_dir']}
+    return re.sub('|'.join(replace), lambda match: replace[match[0]], PANEL_CADDYFILE)
+
+
 def certificate(cert, key, host, now):
     """Verify the SAN, validity and key pair before exporting Caddy storage."""
     info = ssl._ssl._test_decode_cert(str(cert))
@@ -118,6 +167,37 @@ def certificate(cert, key, host, now):
             'start': start, 'end': end, 'cert': str(cert), 'key': str(key)}
 
 
+def self_signed(config):
+    """One pair kept on disk while there is no CA certificate: a printed fingerprint stays true
+    across deploys. A new one only for another host or after its ten years."""
+    folder = Path(config['output_dir']).parent / 'self-signed'
+    cert, key, host = folder / 'fullchain.pem', folder / 'privkey.pem', config['host']
+    try:
+        found = certificate(cert, key, host, time.time())
+    except (OSError, ValueError, ssl.SSLError, subprocess.SubprocessError):
+        found = None
+    if found:
+        return found
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes',
+                    '-days', '3650', '-subj', f'/CN={host}', '-addext',
+                    f"subjectAltName={'IP' if is_ip(host) else 'DNS'}:{host}", '-keyout', key, '-out', cert],
+                   check=True, capture_output=True, timeout=30)
+    return certificate(cert, key, host, time.time())
+
+
+def fingerprint(cert):
+    """SHA-256 of the leaf as a browser and `openssl x509 -fingerprint -sha256` show it."""
+    der = ssl.PEM_cert_to_DER_cert(Path(cert).read_text().split('-----END CERTIFICATE-----')[0]
+                                   + '-----END CERTIFICATE-----\n')
+    return ':'.join(f'{byte:02X}' for byte in hashlib.sha256(der).digest())
+
+
+def notice(state):
+    """The one line the deploy and 99-verify print while the panel serves the self-signed pair."""
+    return f"сертификат самоподписанный, отпечаток SHA-256 {state['self_signed']}" if state.get('self_signed') else ''
+
+
 def current_certificate(config, now):
     candidates = []
     # Caddy storage sanitizes IPv6 colons into underscores.
@@ -125,7 +205,8 @@ def current_certificate(config, now):
     for cert in Path(config['storage']).glob(f'certificates/*/{name}/{name}.crt'):
         try:
             metadata = read_json(cert.with_suffix('.json'), {})
-            if metadata.get('issuer_data', {}).get('ca') != config.get('acme_url', LE):
+            # Caddy's internal issuer stores "issuer_data": null.
+            if (metadata.get('issuer_data') or {}).get('ca') != config.get('acme_url', LE):
                 continue
             item = certificate(cert, cert.with_suffix('.key'), config['host'], now)
             if item:
@@ -256,64 +337,38 @@ def journal(state):
     return records
 
 
-def activate(config, cert):
-    """Apply the window of the issued certificate; panel role also turns on
-    the redirect and the Secure flag. Any failure restores the old files."""
+def serve(config, cert, reload=True):
+    """Apply the window of the issued certificate; the panel site gets the CA pair, without one
+    the self-signed pair. Only a difference is written and reloaded: a reload restarts Caddy's
+    ACME job, its back-off would be lost. Any failure restores the old files. Returns the pair
+    the panel site serves (None on an exit)."""
     directory = Path(config['caddy_dir'])
-    files = {directory / 'vpn2-tls.conf': tls_config(config, cert['end'] - cert['start'])}
-    secure_file = config.get('secure_file')
-    if secure_file:
-        files[directory / 'vpn2-http.conf'] = redirect(config)
-        files[directory / 'vpn2-panel.conf'] = PANEL_OPEN
-        files[Path(secure_file)] = 'true\n'
+    files = {directory / 'vpn2-tls.conf': tls_config(config, cert and cert['end'] - cert['start'])}
+    pair = None
+    if config.get('role') == 'panel':
+        pair = cert or self_signed(config)
+        files[directory / SITE_CERT] = Path(pair['cert']).read_text()
+        files[directory / SITE_KEY] = Path(pair['key']).read_text()
+
+    def write(texts):
+        for path, text in texts.items():
+            atomic(path, text, 0o640 if path.name == SITE_KEY else 0o644)
+        # Caddy reads the key as its own user; a test run as a user has no such group.
+        if SITE_KEY in (path.name for path in texts) and os.geteuid() == 0:
+            os.chown(directory / SITE_KEY, -1, grp.getgrnam('caddy').gr_gid)
+
     previous = {path: read_text(path) for path in files}
-    if previous == files:
-        return
-    # The panel startup wrapper rereads the flag on restart (docker restart
-    # alone cannot change container environment). CSRF uses the same flag.
-    restart = (['docker', 'restart', config['panel_container']]
-               if secure_file and config.get('panel_container') and previous[Path(secure_file)].strip() != 'true'
-               else None)
-    for path, text in files.items():
-        atomic(path, text, 0o644)
-    try:
-        subprocess.run(['caddy', 'validate', '--config', str(directory / 'Caddyfile')],
-                       capture_output=True, check=True, timeout=20)
-        if restart:
-            subprocess.run(restart, capture_output=True, check=True, timeout=60)
-        subprocess.run(['systemctl', 'reload', 'caddy'], capture_output=True, check=True, timeout=30)
-    except subprocess.SubprocessError:
-        for path, text in previous.items():
-            atomic(path, text, 0o644)
-        if restart:
-            subprocess.run(restart, capture_output=True, check=True, timeout=60)
-        raise
-
-
-def redirect(config):
-    return 'redir https://' + authority(config['host']) + '{uri} permanent\n'
-
-
-def closed_reason(state, now):
-    expires = state.get('expires')
-    return (f'сертификат истёк {utc(expires)}' if expires and expires <= now
-            else 'сертификат не выпущен')
-
-
-def close_panel(config):
-    """No valid certificate: the HTTPS site answers 503, HTTP keeps only the
-    redirect (Caddy answers HTTP-01 before any route). Returns True on change."""
-    gate = Path(config['caddy_dir']) / 'vpn2-panel.conf'
-    previous = read_text(gate)
-    if previous == PANEL_CLOSED:
-        return False
-    atomic(gate, PANEL_CLOSED, 0o644)
-    try:
-        subprocess.run(['systemctl', 'reload', 'caddy'], capture_output=True, check=True, timeout=30)
-    except subprocess.SubprocessError:
-        atomic(gate, previous, 0o644)
-        raise
-    return True
+    if previous != files:
+        write(files)
+        try:
+            if reload:
+                subprocess.run(['caddy', 'validate', '--config', str(directory / 'Caddyfile')],
+                               capture_output=True, check=True, timeout=20)
+                subprocess.run(['systemctl', 'reload', 'caddy'], capture_output=True, check=True, timeout=30)
+        except subprocess.SubprocessError:
+            write(previous)
+            raise
+    return pair
 
 
 def tick(config, state_path, initial=False):
@@ -324,22 +379,19 @@ def tick(config, state_path, initial=False):
     if initial and not cert:
         error = (error or (state.get('error') if state.get('failed') else None)
                  or f"ACME: initial issuance did not complete within {config.get('wait', 60)}s")
-    closed = None
     if cert:
         export_certificate(config, cert)
-        activate(config, cert)
-        state.pop('closed', None)
-    elif config.get('secure_file'):
-        closed = closed_reason(state, now)
-        changed = close_panel(config)
-        # The unit journal names the reason once per closed state, not every
-        # minute: on closing, and on the first service run that finds the panel
-        # closed silently (by the installation or by a version that did not log
-        # it). The --initial run prints to the installation output only: a line
-        # written from the ssh session does not belong to vpn2-tls.service.
-        if not initial and (changed or state.get('closed') != closed):
-            print(f'TLS: панель закрыта: {closed}; откроется сама после выпуска сертификата')
-            state['closed'] = closed
+    if cert or config.get('role') == 'panel':
+        pair = serve(config, cert)
+        state.pop('self_signed', None)
+        if pair and not cert:
+            state['self_signed'] = fingerprint(pair['cert'])
+            # The unit journal names the fallback once per pair; --initial prints to the installation only.
+            if not initial and state.get('journaled') != state['self_signed']:
+                print(f'TLS: {notice(state)}; CA-сертификат встанет сам после выпуска')
+                state['journaled'] = state['self_signed']
+        else:
+            state.pop('journaled', None)
     observe(config, state, cert, error, now)
     atomic(state_path, json.dumps(state))
     deliver(config, state)
@@ -350,38 +402,78 @@ def tick(config, state_path, initial=False):
                    'Caddy повторит выпуск сам, до него авария на самоподписанном')
     elif initial and cert:
         print(f"TLS: HTTPS готов, сертификат до {utc(cert['end'])}")
-    elif initial and closed:
-        print(f"TLS: панель закрыта: {closed}; {state.get('error', 'ACME pending')}; "
-              'Caddy повторит выпуск сам, панель откроется после него')
+    elif initial:
+        print(f"TLS: {notice(state)}; {state.get('error', 'ACME pending')}; "
+              'Caddy повторит выпуск сам, CA-сертификат встанет без перезапуска панели')
     return bool(cert)
 
 
 def prepare(args):
     authority(args.host)
-    previous = read_json(args.config, {})
     caddy_dir = Path(args.caddy_dir)
     folders = [Path(args.config).parent, caddy_dir] + ([Path(args.secure_file).parent] if args.role == 'panel' else [])
     for folder in folders:
         folder.mkdir(parents=True, exist_ok=True)
     config = {'role': args.role, 'host': args.host, 'output_dir': args.output_dir,
               'acme_url': args.acme_url, 'acme_root': args.acme_root, 'storage': args.storage,
-              'caddy_dir': str(caddy_dir), 'notify_hours': 6, 'cert_group': args.cert_group}
+              'caddy_dir': str(caddy_dir), 'notify_hours': 6, 'cert_group': args.cert_group,
+              'local_port': args.local_port}
     if args.role == 'panel':
-        config.update(secure_file=args.secure_file, panel_container=args.panel_container,
-                      bot_secret=args.bot_secret)
-    else:
-        config.update(local_port=args.local_port)
+        config.update(secure_file=args.secure_file, bot_secret=args.bot_secret)
     atomic(args.config, json.dumps(config))
-    atomic(caddy_dir / 'vpn2-tls.conf', tls_config(config), 0o644)
     if args.role == 'exit':
+        atomic(caddy_dir / 'vpn2-tls.conf', tls_config(config), 0o644)
         atomic(caddy_dir / 'Caddyfile', exit_caddyfile(config), 0o644)
     else:
-        # HTTP only redirects; Caddy answers HTTP-01 before this route.
-        atomic(caddy_dir / 'vpn2-http.conf', redirect(config), 0o644)
-        if previous.get('host') != args.host or not (caddy_dir / 'vpn2-panel.conf').exists():
-            # Closed until vpn2 tls sees a CA certificate for this host.
-            atomic(caddy_dir / 'vpn2-panel.conf', PANEL_CLOSED, 0o644)
-            atomic(args.secure_file, 'false\n', 0o644)
+        # The panel is only ever behind HTTPS: Secure cookie and https CSRF origin from the start.
+        atomic(args.secure_file, 'true\n', 0o644)
+        # The fallback pair exists on every install path, a later expiry serves it at once.
+        self_signed(config)
+        serve(config, current_certificate(config, time.time()), reload=False)
+        atomic(caddy_dir / 'Caddyfile', panel_caddyfile(config), 0o644)
+        # Gate and redirect snippets of 1.2.0: the stage guards them, a failed run gets them back.
+        for name in ('vpn2-panel.conf', 'vpn2-http.conf'):
+            (caddy_dir / name).unlink(missing_ok=True)
+
+
+def install_caddy():
+    """Caddy of the pinned version now, before any stage (stage 30 re-asserts the same)."""
+    from vpn2 import deploy
+    if deploy.svc('caddy_install'):
+        raise RuntimeError('caddy: установка не прошла')
+
+
+def ip_certificate(host, wait=60, acme_url=LE, acme_root=''):
+    """The panel HTTPS site on the entry IP before any stage: a CA certificate within `wait`
+    seconds, else the self-signed pair. Returns the self-signed fingerprint, '' for a CA one."""
+    main(['--prepare', '--host', host, '--acme-url', acme_url, '--acme-root', acme_root])
+    subprocess.run(['systemctl', 'reload-or-restart', 'caddy'], check=True, capture_output=True, timeout=60)
+    main(['--initial', '--wait', str(wait)])
+    return read_json('/etc/vpn2/tls/state.json', {}).get('self_signed', '')
+
+
+def serve_routes(name, routes, caddy_dir='/etc/caddy'):
+    """Routes ahead of the panel on its HTTPS site, kept by stage 30's Caddyfile; '' removes them.
+    Write `route { ... }` / `handle { ... }` blocks: Caddy orders them before the panel proxy."""
+    if not re.fullmatch(r'[a-z0-9-]+', name):
+        raise ValueError('invalid routes name')
+    path = Path(caddy_dir) / ROUTES / f'{name}.conf'
+    previous = read_text(path)
+    if previous == routes:
+        return
+
+    def write(text):
+        path.parent.mkdir(exist_ok=True)
+        atomic(path, text, 0o644) if text else path.unlink(missing_ok=True)
+
+    write(routes)
+    try:
+        subprocess.run(['caddy', 'validate', '--config', str(Path(caddy_dir) / 'Caddyfile')],
+                       capture_output=True, check=True, timeout=20)
+        subprocess.run(['systemctl', 'reload', 'caddy'], capture_output=True, check=True, timeout=30)
+    except subprocess.SubprocessError:
+        write(previous)
+        raise
 
 
 def main(argv=None):
@@ -399,7 +491,6 @@ def main(argv=None):
     parser.add_argument('--storage', default='/var/lib/caddy/.local/share/caddy')
     parser.add_argument('--caddy-dir', default='/etc/caddy')
     parser.add_argument('--secure-file', default='/etc/vpn2/tls/panel/secure')
-    parser.add_argument('--panel-container', default='')
     parser.add_argument('--cert-group', default='root')
     parser.add_argument('--local-port', type=int, default=8443)
     args = parser.parse_args(argv)

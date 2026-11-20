@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -21,8 +22,10 @@ REFUSED = {'level': 'error', 'logger': 'tls.obtain', 'msg': 'could not get certi
                     'Get "https://127.0.0.1:1/directory": dial tcp 127.0.0.1:1: connect: connection refused'}
 FACTS = {'session': 's', 'clash': 'c', 'tgbot': 't', 'admin_user': 'admin', 'agh_password': 'p',
          'sso_enabled': 'false', 'sso_auto_redirect': 'false', 'sso_password_login': 'true', 'sso_redirect_url': ''}
-SNIPPETS = ('etc/caddy/Caddyfile', 'etc/caddy/vpn2-tls.conf', 'etc/caddy/vpn2-http.conf',
+SNIPPETS = ('etc/caddy/Caddyfile', 'etc/caddy/vpn2-tls.conf', 'etc/caddy/vpn2-site.crt', 'etc/caddy/vpn2-site.key',
             'etc/vpn2/tls/config.json', 'etc/vpn2/tls/panel/secure')
+LEGACY = {'etc/caddy/vpn2-http.conf': 'redir https://192.0.2.1{uri} permanent\n',
+          'etc/caddy/vpn2-panel.conf': 'import to_panel\n'}
 
 
 def stage(directory, domain, fail=False):
@@ -45,24 +48,38 @@ def window(config):
 def test_ip_without_domain_gets_https_site_with_shortlived_profile(tmp_path):
     result = stage(tmp_path, '')
     assert result.returncode == 0, result.stderr
-    caddyfile = (tmp_path / 'etc/caddy/Caddyfile').read_text()
-    policy = (tmp_path / 'etc/caddy/vpn2-tls.conf').read_text()
-    assert f'https://192.0.2.1 {{\n    import {tmp_path}/etc/caddy/vpn2-tls.conf' in caddyfile
+    caddy_dir = tmp_path / 'etc/caddy'
+    caddyfile = (caddy_dir / 'Caddyfile').read_text()
+    policy = (caddy_dir / 'vpn2-tls.conf').read_text()
+    # ACME - на сайте loopback; сайт панели без имени отдаёт выгруженную пару, чужое имя обрывает.
+    assert f'https://192.0.2.1:8443 {{\n    bind 127.0.0.1\n    import {caddy_dir}/vpn2-tls.conf' in caddyfile
+    assert (f'https://:443 {{\n    tls {caddy_dir}/vpn2-site.crt {caddy_dir}/vpn2-site.key\n'
+            f'    import {caddy_dir}/vpn2-site.d/*.conf\n    @foreign not host 192.0.2.1\n    abort @foreign\n') in caddyfile
+    assert ':80 {\n    redir https://192.0.2.1{uri} permanent' in caddyfile
+    adapted = json.loads(subprocess.run([caddy(), 'adapt', '--config', str(caddy_dir / 'Caddyfile')],
+                                        capture_output=True, text=True, check=True).stdout)
+    for server in adapted['apps']['http']['servers'].values():
+        assert server['automatic_https'] == {'disable_redirects': True, 'ignore_loaded_certificates': True}
     assert 'default_sni 192.0.2.1' in caddyfile and 'respond @internal 404' in caddyfile
     assert 'protocols h1 h2\n' in caddyfile and 'h3' not in caddyfile.split('servers {')[1].split('}')[0]
     assert 'profile shortlived' in policy and 'renewal_window_ratio 0.250000000' in policy
     assert 'dir https://acme-v02.api.letsencrypt.org/directory' in policy
     assert json.loads((tmp_path / 'etc/vpn2/tls/config.json').read_text())['output_dir'] == f'{tmp_path}/etc/vpn2/tls/ip'
-    # До первого сертификата HTTP только уводит на HTTPS.
-    assert (tmp_path / 'etc/vpn2/tls/panel/secure').read_text() == 'false\n'
-    assert (tmp_path / 'etc/caddy/vpn2-http.conf').read_text() == 'redir https://192.0.2.1{uri} permanent\n'
-    validate(tmp_path / 'etc/caddy/Caddyfile')
+    # Панель всегда за HTTPS: Secure и https-источник CSRF с первого старта, без перезапуска после выпуска.
+    assert (tmp_path / 'etc/vpn2/tls/panel/secure').read_text() == 'true\n'
+    # До сертификата CA сайт отдаёт хранимую самоподписанную пару.
+    kept = tmp_path / 'etc/vpn2/tls/self-signed'
+    assert (caddy_dir / 'vpn2-site.crt').read_text() == (kept / 'fullchain.pem').read_text()
+    assert (caddy_dir / 'vpn2-site.key').read_text() == (kept / 'privkey.pem').read_text()
+    validate(caddy_dir / 'Caddyfile')
 
 
 def test_domain_window_is_seven_days_before_expiry(tmp_path):
     assert stage(tmp_path, 'vpn.example.test').returncode == 0
     policy = (tmp_path / 'etc/caddy/vpn2-tls.conf').read_text()
-    assert f'vpn.example.test {{\n    import {tmp_path}/etc/caddy/vpn2-tls.conf' in (tmp_path / 'etc/caddy/Caddyfile').read_text()
+    caddyfile = (tmp_path / 'etc/caddy/Caddyfile').read_text()
+    assert f'https://vpn.example.test:8443 {{\n    bind 127.0.0.1\n    import {tmp_path}/etc/caddy/vpn2-tls.conf' in caddyfile
+    assert '@foreign not host vpn.example.test\n' in caddyfile and 'redir https://vpn.example.test{uri}' in caddyfile
     assert 'profile' not in policy
     assert window(policy) * 90 == pytest.approx(7, abs=1e-6)
     validate(tmp_path / 'etc/caddy/Caddyfile')
@@ -78,6 +95,13 @@ def test_failed_panel_release_restores_previous_tls_snippets(tmp_path):
     assert stage(tmp_path, 'vpn.example.test', fail=True).returncode != 0
     assert {name: (tmp_path / name).read_bytes() for name in SNIPPETS} == before
     assert 'systemctl reload-or-restart caddy' in (tmp_path / 'systemctl.log').read_text()
+    # Обновление с 1.2.0: его вставки панели упавший выпуск возвращает вместе с прежним Caddyfile, удачный снимает.
+    for name, text in LEGACY.items():
+        (tmp_path / name).write_text(text)
+    assert stage(tmp_path, '', fail=True).returncode != 0
+    assert {name: (tmp_path / name).read_text() for name in LEGACY} == LEGACY
+    assert stage(tmp_path, '').returncode == 0
+    assert [name for name in LEGACY if (tmp_path / name).exists()] == []
 
 
 def test_panel_reads_secure_flag_from_file_on_every_start():
@@ -226,33 +250,45 @@ def test_export_validates_san_key_switches_pair_and_prunes_old(tmp_path):
     assert os.readlink(tmp_path / 'ip/current') == items[2]['fingerprint']
 
 
-def test_activation_and_retry_preserve_working_configuration(tmp_path):
-    config = {'host': '192.0.2.1', 'caddy_dir': str(tmp_path), 'secure_file': str(tmp_path / 'secure'),
-              'panel_container': 'test-panel'}
-    (tmp_path / 'vpn2-http.conf').write_text('import to_panel\n')
-    (tmp_path / 'vpn2-tls.conf').write_text(tls.tls_config(config))
-    (tmp_path / 'secure').write_text('false\n')
-    cert = {'start': 0, 'end': 160 * 3600}
+def test_switch_is_a_file_swap_and_reload_never_a_panel_restart(tmp_path):
+    caddy_dir = tmp_path / 'caddy'
+    caddy_dir.mkdir()
+    config = {'role': 'panel', 'host': '192.0.2.1', 'caddy_dir': str(caddy_dir), 'output_dir': str(tmp_path / 'tls/ip')}
+    own = tls.self_signed(config)
+    assert tls.self_signed(config) == own, 'пара хранится: отпечаток тот же от деплоя к деплою'
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-nodes', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+                    '-days', '6', '-subj', '/CN=ca', '-addext', 'subjectAltName=IP:192.0.2.1',
+                    '-out', tmp_path / 'ca.pem', '-keyout', tmp_path / 'ca.key'], check=True, capture_output=True)
+    ca = tls.certificate(tmp_path / 'ca.pem', tmp_path / 'ca.key', '192.0.2.1', time.time())
+    assert tls.serve(config, None, reload=False) == own
+    before = {path.name: path.read_text() for path in caddy_dir.iterdir()}
     with patch.object(tls.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'caddy')), \
             pytest.raises(subprocess.CalledProcessError):
-        tls.activate(config, cert)
-    assert (tmp_path / 'secure').read_text() == 'false\n'
-    assert (tmp_path / 'vpn2-http.conf').read_text() == 'import to_panel\n'
+        tls.serve(config, ca)
+    assert {path.name: path.read_text() for path in caddy_dir.iterdir()} == before
     with patch.object(tls.subprocess, 'run') as run:
-        tls.activate(config, cert)
-        assert ['docker', 'restart', 'test-panel'] in [call.args[0] for call in run.call_args_list]
+        assert tls.serve(config, ca) == ca
+        assert [call.args[0][:2] for call in run.call_args_list] == [['caddy', 'validate'], ['systemctl', 'reload']]
+        assert (caddy_dir / 'vpn2-site.crt').read_bytes() == (tmp_path / 'ca.pem').read_bytes()
         run.reset_mock()
-        tls.activate(config, cert)
+        tls.serve(config, ca)
         run.assert_not_called()
-    assert (tmp_path / 'secure').read_text() == 'true\n'
-    assert (tmp_path / 'vpn2-http.conf').read_text() == 'redir https://192.0.2.1{uri} permanent\n'
+        # Сертификат CA пропал (истёк): назад та же самоподписанная пара.
+        assert tls.serve(config, None)['fingerprint'] == own['fingerprint']
+        assert [call.args[0][:2] for call in run.call_args_list if call.args[0][0] != 'openssl'] == [
+            ['caddy', 'validate'], ['systemctl', 'reload']]
+    assert (caddy_dir / 'vpn2-site.crt').read_text() == Path(own['cert']).read_text()
+    assert (caddy_dir / 'vpn2-site.key').stat().st_mode & 0o777 == 0o640
+    assert tls.fingerprint(own['cert']) == subprocess.run(
+        ['openssl', 'x509', '-in', own['cert'], '-noout', '-fingerprint', '-sha256'],
+        capture_output=True, text=True, check=True).stdout.strip().split('=')[1]
 
 
-def test_exit_activation_only_updates_window(tmp_path):
+def test_exit_serve_only_updates_window(tmp_path):
     config = {'host': '198.51.100.7', 'caddy_dir': str(tmp_path)}
     (tmp_path / 'vpn2-tls.conf').write_text(tls.tls_config(config))
     with patch.object(tls.subprocess, 'run') as run:
-        tls.activate(config, {'start': 0, 'end': 7 * 86400})
+        assert tls.serve(config, {'start': 0, 'end': 7 * 86400}) is None
     assert [call.args[0][0] for call in run.call_args_list] == ['caddy', 'systemctl']
     assert sorted(os.listdir(tmp_path)) == ['vpn2-tls.conf']
     assert 'renewal_window_ratio 0.285714286' in (tmp_path / 'vpn2-tls.conf').read_text()
@@ -282,3 +318,19 @@ def test_initial_wait_ends_on_refusal_and_is_skipped_while_refusal_is_latched(tm
         config.write_text(json.dumps({'role': 'exit', 'host': '192.0.2.9', 'storage': str(tmp_path / 'storage')}))
         tls.main(['--initial', '--config', str(config), '--wait', '1'])
         assert sleep.called, 'новый хост ждёт первый выпуск'
+
+
+def test_ip_certificate_prepares_the_ip_site_and_returns_the_self_signed_fingerprint(tmp_path):
+    calls = []
+    state = tmp_path / 'state.json'
+    with patch.object(tls, 'main', side_effect=lambda argv: calls.append(argv[0])), \
+            patch.object(tls.subprocess, 'run') as run, patch.object(tls, 'read_json',
+                                                                    side_effect=lambda *_args: json.loads(state.read_text())):
+        state.write_text(json.dumps({'self_signed': 'AB:CD'}))
+        assert tls.ip_certificate('192.0.2.1', wait=5) == 'AB:CD'
+        state.write_text('{}')
+        assert tls.ip_certificate('192.0.2.1') == ''
+    assert calls == ['--prepare', '--initial'] * 2
+    assert run.call_args_list[0].args[0] == ['systemctl', 'reload-or-restart', 'caddy']
+    with pytest.raises(ValueError):
+        tls.serve_routes('../x', 'route {}')

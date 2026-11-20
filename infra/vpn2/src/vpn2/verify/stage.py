@@ -33,7 +33,6 @@ EMERGENCY_HY2 = Path('/etc/vpn2/emergency-hy2.json')
 TLS_CONFIG = Path('/etc/vpn2/tls/config.json')
 TLS_CERT = '/etc/vpn2/tls/ip/fullchain.pem'
 TLS_STATE = Path('/etc/vpn2/tls/state.json')
-PANEL_GATE = Path('/etc/caddy/vpn2-panel.conf')
 NETWORKD_DROPIN = Path('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf')
 IKEV2_STATUS = Path('/etc/anysda/ikev2-status.json')
 SINGBOX_CONFIG = Path('/etc/sing-box/config.json')
@@ -404,21 +403,20 @@ def ip_certificate(config, cert):
     return rc == 0
 
 
-def panel():
-    """Панель, как её видит браузер: HTTPS через Caddy. Закрытую без сертификата называет с причиной
-    из состояния vpn2 tls: ответ :80 и сам Caddy о панели ничего не говорят."""
+def panel(wait):
+    """Панель, как её видит браузер: HTTPS через Caddy, самоподписанная пара тоже годится (-k).
+    Окно `wait` секунд: смена пары, перезагрузка Caddy или его перезапуск посреди проверки - не отказ."""
     try:
         host = tls.authority(json.loads(TLS_CONFIG.read_text())['host'])
     except BROKEN:
         return 1, f'панель: нет настройки TLS {TLS_CONFIG}'
-    rc, out = command('curl', '-fsS', '-k', '--max-time', '5', '-o', '/dev/null', '--connect-to', '::127.0.0.1:443',
-                      f'https://{host}/api/version')
-    if rc == 0 or tls.read_text(PANEL_GATE) != tls.PANEL_CLOSED:
-        return rc, out
-    state = fsutil.read_json(TLS_STATE, {})
-    acme = state.get('error') if state.get('failed') else None
-    reason = '; '.join(filter(None, (tls.closed_reason(state, time.time()), acme)))
-    return 1, f'панель закрыта снаружи (Caddy отвечает 503): {reason}; откроется сама после выпуска сертификата'
+    deadline = time.monotonic() + float(wait)
+    while True:
+        rc, out = command('curl', '-fsS', '-k', '--max-time', '5', '-o', '/dev/null',
+                          '--connect-to', '::127.0.0.1:443', f'https://{host}/api/version')
+        if rc == 0 or time.monotonic() >= deadline:
+            return rc, out
+        time.sleep(1)
 
 
 def snapshot(venv, state_dir, wait):
@@ -641,7 +639,7 @@ def entry(stage):
     stage.checks([
         ('frontend: Caddy слушает :80', command, 'curl', '-sS', '--max-time', '5', '-o', '/dev/null',
          'http://127.0.0.1:80/'),
-        ('frontend: панель отвечает через Caddy по HTTPS', panel),
+        ('frontend: панель отвечает через Caddy по HTTPS', panel, stage.get('VERIFY_PANEL_WAIT', '30')),
         ('vmsingle: 127.0.0.1:8428 healthy', command, *curl, 'http://127.0.0.1:8428/-/healthy'),
         ('менеджер установки отвечает', command, str(VENV / 'bin/vpn2'), 'manager', 'status.read'),
         ('tproxy: правило fwmark 0x42 → table 101', grep, ('ip', 'rule', 'list'), r'fwmark 0x42 lookup 101(\s|$)'),
@@ -649,6 +647,8 @@ def entry(stage):
          r'^local default dev lo(\s|$)'),
         *((f'tproxy: {iface} цепочка и TCP/UDP правила', tproxy_chains, iface, chain_name) for iface, chain_name in
           (('wg0', 'ANYSDA_WG_TPROXY'), ('tun0', 'ANYSDA_OVPN_TPROXY'), ('xfrm0', 'ANYSDA_IKEV2_TPROXY')))])
+    if line := tls.notice(fsutil.read_json(TLS_STATE, {})):
+        stage.warning(line)
     queue = recv_queue()
     if queue:
         stage.line(f'tproxy udp: Recv-Q {queue} (устойчивый рост означает, что sing-box не читает UDP)')

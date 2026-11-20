@@ -92,11 +92,12 @@ base_keys: "{{ (base_orchestrator_keys.splitlines() + [base_admin_key]) | map('t
 # Ключи человека, что уже лежали в authorized_keys entry (заданные у хостера): их выписывает deploy.
 base_host_keys: "{{ lookup('ansible.builtin.file', base_infra ~ '/secrets/rendered/admin_keys', errors='ignore') | default('', true) }}"
 
-# Listener-порты WG, OpenVPN, IKEv2 и панели открывают их роли. Пустые группы
+# Listener-порты WG, OpenVPN и IKEv2 открывают их роли; 80 и 443 Caddy - с первой стадии. Пустые группы
 # снимают правила под Caddy-обманку с экзитов, поставленных раньше.
 base_ufw_entry:
   - {comment: ssh, rules: [22/tcp]}
   - {comment: caddy HTTP + ACME challenge, aliases: [caddy HTTP панель], rules: [80/tcp]}
+  - {comment: caddy HTTPS панель, rules: [443/tcp]}
 base_ufw_exit:
   - {comment: ssh, rules: [22/tcp]}
   - {comment: hysteria2 direct, rules: ["{{ vpn2_env.HY2_DIRECT_PORT | default('') }}/udp"]}

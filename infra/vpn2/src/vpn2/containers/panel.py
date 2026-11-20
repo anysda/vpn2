@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vpn2 import creds, fsutil, resources, svc
+from vpn2 import creds, fsutil, resources, svc, tls
 from vpn2.containers import compose
 from vpn2.containers.compose import PANEL, say
 
@@ -30,7 +30,8 @@ TLS_DIR = '/etc/vpn2/tls'
 TLS_CONFIG = '/etc/vpn2/tls/config.json'
 SECURE = '/etc/vpn2/tls/panel/secure'
 MANAGED = '/etc/vpn2-control/api-managed'
-CADDY = ['/etc/caddy/Caddyfile', '/etc/caddy/vpn2-tls.conf', '/etc/caddy/vpn2-http.conf', '/etc/caddy/vpn2-panel.conf']
+CADDY = ['/etc/caddy/Caddyfile', '/etc/caddy/vpn2-tls.conf', '/etc/caddy/vpn2-site.crt', '/etc/caddy/vpn2-site.key',
+         '/etc/caddy/vpn2-http.conf', '/etc/caddy/vpn2-panel.conf']
 OVPN_CONF = '/etc/openvpn/server/server.conf'
 OVPN_USER = 'management-client-user vpn2-control'
 OVPN_INPUTS = ['/usr/sbin/openvpn', '/usr/lib/systemd/system/openvpn-server@.service', OVPN_CONF,
@@ -254,41 +255,6 @@ def hand_over(password):
     return path
 
 
-CADDYFILE = '''{
-    # :80 только переадресует на HTTPS; панель открыта лишь при сертификате от CA (vpn2-panel.conf).
-    auto_https disable_redirects
-    default_sni @TLS_HOST@
-    # Без HTTP/3: Caddy держал бы *:443/udp, нужный sing-box для возврата UDP через tproxy.
-    servers {
-        protocols h1 h2
-    }
-}
-# Пути бота - только для самой ноды, бот ходит на 127.0.0.1:51821 мимо Caddy.
-(internal_only) {
-    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot
-    respond @internal 404
-}
-# X-Forwarded-For ставит только Caddy: по нему панель считает лимит попыток входа.
-(to_panel) {
-    reverse_proxy 127.0.0.1:51821 {
-        header_up X-Forwarded-For {remote_host}
-        transport http {
-            keepalive off
-        }
-    }
-}
-@SITE@ {
-    import /etc/caddy/vpn2-tls.conf
-    import internal_only
-    encode gzip
-    import /etc/caddy/vpn2-panel.conf
-}
-:80 {
-    import /etc/caddy/vpn2-http.conf
-}
-'''
-
-
 def _read(path):
     try:
         return Path(path).read_text().strip()
@@ -346,33 +312,32 @@ class Openvpn:
 
 
 def host_tls(environ, tx):
-    """Вставки TLS и Caddyfile под охраной выпуска панели; вернуть, менялся ли Caddyfile."""
+    """Caddyfile, вставки и пара сайта (vpn2 tls --prepare) под охраной выпуска панели; вернуть, менялся ли Caddyfile."""
     domain, entry = environ.get('PANEL_DOMAIN') or '', environ['ENTRY_HOST']
     if domain:
-        host, site, out = domain, domain, f'{TLS_DIR}/domain'
+        host, out = domain, f'{TLS_DIR}/domain'
         say(f"  домен панели: {domain} (HTTPS через Let's Encrypt)")
     else:
-        host, site, out = entry, f'https://{entry}', f'{TLS_DIR}/ip'
+        host, out = entry, f'{TLS_DIR}/ip'
         say(f"  домен не задан — HTTPS на IP {entry} (Let's Encrypt, ~6 дней)")
     tx.guard_files([*CADDY, TLS_CONFIG, SECURE, MANAGED, OVPN_CONF])
+    before = _read(CADDY[0])
     subprocess.run(
         [*TLS, '--prepare', '--role', 'panel', '--config', TLS_CONFIG, '--host', host,
-         '--secure-file', SECURE, '--panel-container', PANEL, '--output-dir', out,
+         '--secure-file', SECURE, '--output-dir', out,
          '--acme-url', environ.get('TLS_ACME_URL') or 'https://acme-v02.api.letsencrypt.org/directory',
          '--acme-root', environ.get('TLS_ACME_ROOT') or ''], check=True)
-    return fsutil.publish(CADDY[0], CADDYFILE.replace('@TLS_HOST@', host).replace('@SITE@', site), 0o644)
+    return _read(CADDY[0]) != before
 
 
-def caddy(regated):
-    """Правила ufw и перезапуск Caddy при смене входов; вставку панели перечитывает сам vpn2 tls."""
+def caddy():
+    """Правила ufw и перезапуск Caddy при смене входов; пару сайта дальше меняет сам vpn2 tls."""
     from vpn2 import firewall
     firewall.ufw_reconcile('caddy HTTP + ACME challenge', ['80/tcp'], ['caddy HTTP панель'])
     firewall.ufw_reconcile('caddy HTTPS панель', ['443/tcp'])
     if subprocess.run(['caddy', 'validate', '--config', CADDY[0]], check=False, capture_output=True).returncode:
         raise StageError('конфиг caddy невалиден')
-    if regated:
-        svc.forget('caddy')
-    return svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', *CADDY[:3]])
+    return svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', *CADDY[:4]])
 
 
 def diagnose(docker, http_up, kept):
@@ -394,11 +359,12 @@ def diagnose(docker, http_up, kept):
 
 def summary(environ, admin_user, sso_enabled):
     domain = environ.get('PANEL_DOMAIN') or ''
-    opened = any(line.startswith('import to_panel') for line in _read(CADDY[3]).splitlines())
     secret = f'{admin_user} / пароль не хранится: смена - в профиле панели или secrets.admin_password в config.yaml'
     print()
     say('-------------------------------------------------------------')
-    say(f' Панель:        https://{domain or environ["ENTRY_HOST"]}/{"" if opened else " (закрыта до выпуска сертификата)"}')
+    say(f' Панель:        https://{domain or environ["ENTRY_HOST"]}/')
+    if line := tls.notice(fsutil.read_json(Path(TLS_CONFIG).with_name('state.json'), {})):
+        say(f'                {line}')
     if os.path.isfile(SSO_RUNTIME):
         say(' Вход:          как настроен в профиле панели; break-glass /login?direct=1')
         say(f'                {secret}')
@@ -441,9 +407,10 @@ def stage(environ, docker, tx, image):
     quiet('systemctl', 'stop', 'vpn2-tls.timer', 'vpn2-tls.service')
     openvpn = Openvpn()
     tx.files_restored = openvpn.restored
-    gate = _read(CADDY[3])
+    # Флаг Secure панель читает только при старте: прежнее false требует перезапуска.
+    secure = _read(SECURE)
     changed |= host_tls(environ, tx)
-    changed |= caddy(regated=_read(CADDY[3]) != gate)
+    changed |= caddy()
 
     say('[4/4] run container')
     stamp = compose.prepare_host(STAGE)
@@ -469,8 +436,9 @@ def stage(environ, docker, tx, image):
                 and (current['Config'].get('Labels') or {}).get(compose.SPEC_LABEL) == tx.candidate['labels'][compose.SPEC_LABEL]
                 and (current['Config'].get('Labels') or {}).get(compose.PROJECT_LABEL) == compose.PROJECT
                 and compose.http_ok(HEALTH))
-    if kept and handed.is_file():
-        say('новый пароль админа: панель перезапускается')
+    if kept and (handed.is_file() or secure != 'true'):
+        say('новый пароль админа: панель перезапускается' if handed.is_file()
+            else 'cookie только по HTTPS: панель перезапускается')
         docker.call('restart', PANEL)
         kept, changed = False, True
     elif kept:

@@ -1,9 +1,9 @@
-"""Панель открывается только по HTTPS с годным сертификатом, причина закрытия - в журнале vpn2-tls.
+"""Панель только по HTTPS: без сертификата CA - на хранимой самоподписанной паре, CA встаёт перезагрузкой Caddy.
 
-Настоящий Caddy гоняет Caddyfile стадии панели и вставки vpn2 tls. Заменена только политика
-выпуска (vpn2-tls.conf): её сертификат делает openssl, и самоподписанный или истёкший
-сертификат, который Caddy всё ещё отдаёт, не должен открыть панель.
+Настоящий Caddy гоняет Caddyfile стадии панели на её же файлах; заменены порты и выпуск на сайте
+loopback (его сертификат делает openssl). `systemctl reload caddy` - настоящий `caddy reload`.
 """
+import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -23,16 +23,18 @@ import pytest
 
 from panel_support import SRC, caddy, panel_tls
 from ports_support import start_on_free_ports
+from vpn2 import tls
 
 LE = 'https://acme-v02.api.letsencrypt.org/directory'
 ISSUER = 'acme-v02.api.letsencrypt.org-directory'
+# Политика выпуска стадии, но каталог ACME недоступен: Caddy отказывает и ждёт, ответчик HTTP-01 есть.
+ACME_DOWN, ACME_DOWN_ISSUER = 'http://127.0.0.1:1/directory', '127.0.0.1-1-directory'
 IP = '192.0.2.1'
 DOMAIN = 'vpn.example.test'
 MARK = 'vpn2-panel-backend'
 HOUR = 3600
 PATHS = ('/', '/login', '/api/version', '/api/auth/session')
-CLOSED = 'TLS: панель закрыта: '
-OPEN = 'import to_panel\n'
+NOTICE = 'TLS: сертификат самоподписанный, отпечаток SHA-256 '
 
 
 def stamp(seconds):
@@ -40,7 +42,7 @@ def stamp(seconds):
 
 
 def make_cert(directory, host, start, end):
-    """Самоподписанный лист с SAN узла и заданным сроком (прошлые даты можно)."""
+    """Лист с SAN узла и заданным сроком (прошлые даты можно) - как выпущенный CA."""
     work = Path(tempfile.mkdtemp(dir=directory))
     san = f'IP:{host}' if re.fullmatch(r'[0-9.]+', host) else f'DNS:{host}'
     (work / 'index.txt').write_text('')
@@ -69,18 +71,18 @@ class Backend(BaseHTTPRequestHandler):
         pass
 
 
-def request(port, host, path, tls=False, sni=None):
-    """(код, Location, тело); код None, когда TLS-рукопожатие отвергнуто."""
+def request(port, host, path, tls_on=False, sni=None):
+    """(код, Location, тело); код None, когда соединение оборвано."""
     sock = socket.create_connection(('127.0.0.1', port), timeout=5)
     try:
-        if tls:
-            # Как `curl -k`: клиент принимает истёкший и самоподписанный сертификат.
+        if tls_on:
+            # Как `curl -k` и браузер после «принять риск»: самоподписанная пара годится.
             sock = ssl._create_unverified_context().wrap_socket(sock, server_hostname=sni)
         sock.sendall(f'GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n'.encode())
         response = http.client.HTTPResponse(sock)
         response.begin()
         return response.status, response.getheader('Location', ''), response.read().decode(errors='replace')
-    except (ssl.SSLError, ConnectionError) as error:
+    except (ssl.SSLError, ConnectionError, http.client.HTTPException) as error:
         return None, '', str(error)
     finally:
         sock.close()
@@ -94,8 +96,12 @@ class Entry:
         self.storage = self.dir / 'var/lib/caddy/.local/share/caddy'
         stubs = self.dir / 'bin'
         stubs.mkdir(parents=True)
-        for name in ('docker', 'systemctl', 'journalctl'):
+        for name in ('docker', 'journalctl'):
             (stubs / name).write_text(f'#!/bin/sh\necho "{name} $*" >> {self.dir}/commands.log\n')
+        # reload.sh кладёт запущенный Caddy: без него reload только записан.
+        (stubs / 'systemctl').write_text(f'#!/bin/sh\necho "systemctl $*" >> {self.dir}/commands.log\n'
+                                         f'[ "$1 $2" != "reload caddy" ] || [ ! -f {self.dir}/reload.sh ] '
+                                         f'|| exec sh {self.dir}/reload.sh\n')
         # Всё, что попросили записать через `logger`, в журнал юнита vpn2-tls не попадает.
         (stubs / 'logger').write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> {self.dir}/logger.log\n')
         (stubs / 'caddy').write_text(f'#!/bin/sh\nexec {caddy()} "$@"\n')
@@ -105,7 +111,10 @@ class Entry:
                         PYTHONPATH=str(SRC), XDG_DATA_HOME=str(self.dir / 'validate-data'),
                         XDG_CONFIG_HOME=str(self.dir / 'validate-config'))
         self.journal = []
-        result = panel_tls(self.dir, domain, self.env, entry=IP)
+        self.deploy()
+
+    def deploy(self):
+        result = panel_tls(self.dir, self.domain, self.env, entry=IP)
         assert result.returncode == 0, result.stdout + result.stderr
 
     def tick(self, initial=False):
@@ -118,15 +127,12 @@ class Entry:
             self.journal += result.stdout.splitlines()
         return result.stdout
 
-    def closed(self):
-        return [line for line in self.journal if CLOSED in line]
+    def state(self):
+        return json.loads((self.dir / 'etc/vpn2/tls/state.json').read_text())
 
-    def logged_outside(self):
-        log = self.dir / 'logger.log'
+    def commands(self):
+        log = self.dir / 'commands.log'
         return log.read_text().splitlines() if log.exists() else []
-
-    def opened(self):
-        return (self.dir / 'etc/caddy/vpn2-panel.conf').read_text() == OPEN
 
     def issue(self, start, end):
         """В хранилище Caddy эта пара лежит как выпущенный удостоверяющим центром сертификат узла."""
@@ -137,84 +143,85 @@ class Entry:
         shutil.copy(crt, target / f'{name}.crt')
         shutil.copy(key, target / f'{name}.key')
         (target / f'{name}.json').write_text(json.dumps({'sans': [self.host], 'issuer_data': {'ca': LE}}))
-        return crt, key
+        return crt
 
     def challenge(self, token, key_authorization):
         """Идущий вызов HTTP-01, как его хранит Caddy для распределённого решателя."""
-        target = self.storage / 'acme' / ISSUER / 'challenge_tokens'
+        target = self.storage / 'acme' / ACME_DOWN_ISSUER / 'challenge_tokens'
         target.mkdir(parents=True, exist_ok=True)
         (target / f'{self.host}.json').write_text(json.dumps({
             'type': 'http-01', 'url': '', 'status': 'pending', 'token': token, 'keyAuthorization': key_authorization,
             'identifier': {'type': 'ip' if self.host == IP else 'dns', 'value': self.host}}))
 
-    def serve(self, cert):
-        return Proxy(self, cert)
+    def serve(self):
+        return Proxy(self)
 
 
 class Proxy:
-    """Настоящий Caddy на файлах входа; vpn2-tls.conf отдаёт заданную пару."""
+    """Настоящий Caddy на Caddyfile входа: пара сайта - живые файлы, reload - через admin API."""
 
-    def __init__(self, entry, cert):
-        self.entry, self.cert = entry, cert
+    def __init__(self, entry):
+        self.entry = entry
 
     def __enter__(self):
         self.backend = ThreadingHTTPServer(('127.0.0.1', 0), Backend)
         threading.Thread(target=self.backend.serve_forever, daemon=True).start()
-        run, source = Path(tempfile.mkdtemp(dir=self.entry.dir)), self.entry.dir / 'etc/caddy'
-        for path in source.iterdir():
-            if path.is_file():
-                (run / path.name).write_text(path.read_text().replace(str(source), str(run)))
-        (run / 'vpn2-tls.conf').write_text(f'tls {self.cert[0]} {self.cert[1]}\n')
-        caddyfile = (run / 'Caddyfile').read_text().replace('127.0.0.1:51821', f'127.0.0.1:{self.backend.server_port}')
-        assert caddyfile.startswith('{\n'), caddyfile[:200]
+        caddy_dir = self.entry.dir / 'etc/caddy'
+        run = Path(tempfile.mkdtemp(dir=self.entry.dir))
+        source = (caddy_dir / 'Caddyfile').read_text()
+        assert source.startswith('{\n'), source[:200]
+        (run / 'vpn2-tls.conf').write_text((caddy_dir / 'vpn2-tls.conf').read_text().replace(LE, ACME_DOWN))
+        source = source.replace(f'import {caddy_dir}/vpn2-tls.conf', f'import {run}/vpn2-tls.conf')
+        source = source.replace('127.0.0.1:51821', f'127.0.0.1:{self.backend.server_port}')
         self.log = run / 'caddy.log'
-        # Хранилище входа: из него Caddy читает токены HTTP-01.
         env = dict(self.entry.env, XDG_DATA_HOME=str(self.entry.storage.parent), XDG_CONFIG_HOME=str(run))
 
-        def start(http, https):
-            site = re.sub(r'^:80 \{', f':{http} {{', caddyfile, flags=re.M)
-            (run / 'Caddyfile').write_text(f'{{\n    admin off\n    http_port {http}\n    https_port {https}\n' + site[2:])
+        def start(http, https, loop, admin):
+            site = re.sub(r':8443 \{', f':{loop} {{', source)
+            site = site.replace('https://:443 {', f'https://:{https} {{')
+            site = re.sub(r'^:80 \{', f':{http} {{', site, flags=re.M)
+            (run / 'Caddyfile').write_text(f'{{\n    admin 127.0.0.1:{admin}\n    http_port {http}\n'
+                                           f'    https_port {https}\n' + site[2:])
+            (self.entry.dir / 'reload.sh').write_text(
+                f'exec {caddy()} reload --config {run}/Caddyfile --address 127.0.0.1:{admin} --force\n')
             with self.log.open('w') as log:
                 return subprocess.Popen([caddy(), 'run', '--config', str(run / 'Caddyfile'), '--adapter', 'caddyfile'],
                                         env=env, stdout=log, stderr=subprocess.STDOUT)
 
-        self.process, (self.http, self.https) = start_on_free_ports(start, 2, socket.SOCK_STREAM,
-                                                                    lambda: self.log.read_text()[-3000:])
+        self.process, (self.http, self.https, _loop, _admin) = start_on_free_ports(
+            start, 4, socket.SOCK_STREAM, lambda: self.log.read_text()[-3000:])
         return self
 
     def __exit__(self, *_exc):
+        (self.entry.dir / 'reload.sh').unlink(missing_ok=True)
         self.process.terminate()
         self.process.wait(timeout=20)
         self.backend.shutdown()
         self.backend.server_close()
 
-    def get(self, host, path, tls=False, sni=None):
-        return request(self.https if tls else self.http, host, path, tls, sni)
+    def get(self, host, path, tls_on=False, sni=None):
+        return request(self.https if tls_on else self.http, host, path, tls_on, sni)
 
-    def assert_http_closed(self, *hosts):
-        """По HTTP только уход на https или отказ, ни страниц панели, ни данных API."""
+    def served(self):
+        """Отпечаток пары, которую видит браузер на сайте панели (без SNI на IP, с SNI на домене)."""
+        sock = socket.create_connection(('127.0.0.1', self.https), timeout=5)
+        with ssl._create_unverified_context().wrap_socket(sock, server_hostname=self.entry.domain or None) as wrapped:
+            der = wrapped.getpeercert(binary_form=True)
+        return ':'.join(f'{byte:02X}' for byte in hashlib.sha256(der).digest())
+
+    def assert_http_redirects(self, *hosts):
+        """По HTTP только уход на https, ни страниц панели, ни данных API."""
         for host in hosts:
             for path in PATHS:
                 status, location, body = self.get(host, path)
                 label = f'http://{host}{path}: {status} {location} {body[:80]!r}'
-                assert MARK not in body and status is not None and status >= 300, label
-                assert status >= 400 or location.startswith('https://'), label
-
-    def assert_https_closed(self):
-        for path in PATHS:
-            status, _location, body = self.get(self.entry.host, path, tls=True, sni=self.entry.domain or None)
-            assert MARK not in body and (status is None or status >= 400), f'https://{self.entry.host}{path}: {status}'
+                assert MARK not in body and status in (301, 308), label
+                assert location == f'https://{self.entry.host}{path}', label
 
     def assert_https_open(self):
         for path in PATHS:
-            status, _location, body = self.get(self.entry.host, path, tls=True, sni=self.entry.domain or None)
-            assert (status, body) == (200, MARK), f'https://{self.entry.host}{path}'
-
-    def assert_ip_bypass_closed(self):
-        for path in PATHS:
-            for sni in (None, IP):
-                status, _location, body = self.get(IP, path, tls=True, sni=sni)
-                assert MARK not in body, f'https://{IP}{path} sni={sni}: {status}'
+            status, _location, body = self.get(self.entry.host, path, tls_on=True, sni=self.entry.domain or None)
+            assert (status, body) == (200, MARK), f'https://{self.entry.host}{path}: {status} {body[:200]}'
 
 
 @pytest.fixture(params=['', DOMAIN], ids=['ip', 'domain'])
@@ -222,111 +229,107 @@ def entry(request, tmp_path):
     return Entry(tmp_path, request.param)
 
 
-def test_http_never_serves_panel_before_or_after_certificate(entry):
-    now = time.time()
-    with entry.serve(make_cert(entry.dir, entry.host, now - HOUR, now + 6 * 24 * HOUR)) as proxy:
-        proxy.assert_http_closed(entry.host, IP)
-    cert = entry.issue(now - HOUR, now + 6 * 24 * HOUR)
-    entry.tick()
-    with entry.serve(cert) as proxy:
-        proxy.assert_http_closed(entry.host, IP)
-        # Положительный контроль: тот же Caddy открывает панель по HTTPS.
-        proxy.assert_https_open()
-
-
-def test_not_issued_certificate_keeps_panel_closed_and_says_why(entry):
-    now = time.time()
+def test_without_ca_certificate_panel_is_served_on_the_stable_self_signed_pair(entry):
     output = entry.tick(initial=True)
-    assert CLOSED + 'сертификат не выпущен' in output
-    # Самоподписанная замена, которую Caddy может отдать, панель не открывает - ни после установки, ни по таймеру.
-    self_signed = make_cert(entry.dir, entry.host, now - HOUR, now + 30 * 24 * HOUR)
-    with entry.serve(self_signed) as proxy:
-        proxy.assert_http_closed(entry.host, IP)
-        proxy.assert_https_closed()
-    entry.tick()
-    with entry.serve(self_signed) as proxy:
-        proxy.assert_https_closed()
-
-
-def test_expired_certificate_on_running_entry_closes_panel_and_renewal_reopens_it(entry):
-    now = time.time()
-    cert = entry.issue(now - 5 * 24 * HOUR, now + 24 * HOUR)
-    entry.tick()
-    with entry.serve(cert) as proxy:
+    own = entry.state()['self_signed']
+    assert NOTICE + own + '; ' in output
+    with entry.serve() as proxy:
+        assert proxy.served() == own, 'напечатанный отпечаток - тот, что видит браузер'
         proxy.assert_https_open()
-    # Обновление не удалось, сертификат истёк, Caddy всё ещё его отдаёт.
-    expired = entry.issue(now - 8 * 24 * HOUR, now - HOUR)
-    output = entry.tick()
-    with entry.serve(expired) as proxy:
-        proxy.assert_https_closed()
-        proxy.assert_http_closed(entry.host, IP)
-    assert CLOSED in output
-    # Позже обновление прошло: таймер открывает панель без переустановки.
-    renewed = entry.issue(now - HOUR, now + 6 * 24 * HOUR)
+        proxy.assert_http_redirects(entry.host, IP)
+    # Повторный деплой и таймер пару не меняют: отпечаток, однажды показанный, остаётся верным.
+    entry.deploy()
+    entry.tick(initial=True)
     entry.tick()
-    with entry.serve(renewed) as proxy:
-        proxy.assert_https_open()
+    assert entry.state()['self_signed'] == own
+    assert not [line for line in entry.commands() if line.startswith('docker')]
 
 
-def test_entry_ip_instead_of_domain_does_not_open_panel(tmp_path):
+def test_ca_certificate_replaces_self_signed_by_reload_and_expiry_brings_it_back(entry):
+    entry.tick(initial=True)
+    own = entry.state()['self_signed']
     now = time.time()
+    with entry.serve() as proxy:
+        pid = proxy.process.pid
+        ca = entry.issue(now - HOUR, now + 6 * 24 * HOUR)
+        assert NOTICE not in entry.tick()
+        assert proxy.served() == tls.fingerprint(ca) and 'self_signed' not in entry.state()
+        proxy.assert_https_open()
+        # Обновление не удалось, сертификат истёк: назад та же самоподписанная пара, не закрытая панель.
+        entry.issue(now - 8 * 24 * HOUR, now - HOUR)
+        assert NOTICE + own in entry.tick()
+        assert proxy.served() == own
+        proxy.assert_https_open()
+        renewed = entry.issue(now - HOUR, now + 6 * 24 * HOUR)
+        entry.tick()
+        assert proxy.served() == tls.fingerprint(renewed)
+        assert (proxy.process.poll(), proxy.process.pid) == (None, pid), 'Caddy перечитал пару, не перезапущен'
+    assert entry.commands().count('systemctl reload caddy') == 3
+    assert not [line for line in entry.commands() if line.startswith('docker')]
+
+
+def test_upgrade_with_ca_certificate_serves_it_from_the_first_start(tmp_path):
+    """Обновление с 1.2.0 с рабочим сертификатом: хранилище Caddy то же, самоподписанная пара не появляется."""
+    entry = Entry(tmp_path, '')
+    ca = entry.issue(time.time() - HOUR, time.time() + 6 * 24 * HOUR)
+    entry.deploy()
+    with entry.serve() as proxy:
+        assert proxy.served() == tls.fingerprint(ca)
+    assert NOTICE not in entry.tick(initial=True)
+    assert 'self_signed' not in entry.state()
+
+
+def test_foreign_host_on_the_entry_ip_gets_no_panel(tmp_path):
     entry = Entry(tmp_path, DOMAIN)
-    with entry.serve(make_cert(entry.dir, DOMAIN, now - HOUR, now + 6 * 24 * HOUR)) as proxy:
-        proxy.assert_http_closed(IP)
-        proxy.assert_ip_bypass_closed()
-    cert = entry.issue(now - HOUR, now + 6 * 24 * HOUR)
-    entry.tick()
-    with entry.serve(cert) as proxy:
+    entry.tick(initial=True)
+    with entry.serve() as proxy:
+        for sni in (None, IP):
+            for path in PATHS:
+                status, _location, body = proxy.get(IP, path, tls_on=True, sni=sni)
+                assert MARK not in body and status is None, f'https://{IP}{path} sni={sni}: {status}'
         proxy.assert_https_open()
-        proxy.assert_http_closed(IP)
-        proxy.assert_ip_bypass_closed()
 
 
-def test_http01_challenge_is_answered_while_panel_is_closed_and_open(entry):
-    now = time.time()
+def test_http01_challenge_is_answered_on_self_signed_and_ca_pair(entry):
     entry.challenge('vpn2-token', 'vpn2-token.key-authorization')
     answer = (200, 'vpn2-token.key-authorization')
-    with entry.serve(make_cert(entry.dir, entry.host, now - HOUR, now + 6 * 24 * HOUR)) as proxy:
-        assert proxy.get(entry.host, '/.well-known/acme-challenge/vpn2-token')[::2] == answer, 'closed'
-    cert = entry.issue(now - HOUR, now + 6 * 24 * HOUR)
-    entry.tick()
-    with entry.serve(cert) as proxy:
-        assert proxy.get(entry.host, '/.well-known/acme-challenge/vpn2-token')[::2] == answer, 'open'
-        proxy.assert_https_open()
+    entry.tick(initial=True)
+    with entry.serve() as proxy:
+        assert proxy.get(entry.host, '/.well-known/acme-challenge/vpn2-token')[::2] == answer, 'self-signed'
+        entry.issue(time.time() - HOUR, time.time() + 6 * 24 * HOUR)
+        entry.tick()
+        assert proxy.get(entry.host, '/.well-known/acme-challenge/vpn2-token')[::2] == answer, 'ca'
 
 
 @pytest.mark.parametrize('installed', [False, True], ids=['timer', 'installation'])
-def test_closed_reason_is_in_the_unit_journal_once(entry, installed):
+def test_fallback_is_in_the_unit_journal_once(installed, tmp_path):
+    entry = Entry(tmp_path, '')
     if installed:
-        assert CLOSED + 'сертификат не выпущен' in entry.tick(initial=True)
-    entry.tick()
-    assert entry.closed() == [CLOSED + 'сертификат не выпущен; откроется сама после выпуска сертификата'], entry.journal
-    # Перезапуски и запуски таймера без смены состояния молчат; `logger` из установки в юнит не попадает.
-    entry.tick()
-    entry.tick()
-    assert len(entry.closed()) == 1, entry.journal
-    assert entry.logged_outside() == []
+        assert NOTICE in entry.tick(initial=True)
+    for _ in range(3):
+        entry.tick()
+    lines = [line for line in entry.journal if NOTICE in line]
+    assert len(lines) == 1, entry.journal
+    assert not (entry.dir / 'logger.log').exists()
 
 
-def test_each_state_change_logs_once_and_stale_reason_is_not_written(tmp_path):
-    # Первый вход уже записал причину; на втором сертификат выпущен между установкой и первым запуском службы.
-    running, installed = Entry(tmp_path / 'running', ''), Entry(tmp_path / 'installed', '')
-    running.tick()
-    assert CLOSED + 'сертификат не выпущен' in installed.tick(initial=True)
-    # Скоро истекающий сертификат открывает панель. Нагруженная машина может пропустить запуск таймера.
-    end = time.time() + 40
-    for entry in (running, installed):
-        entry.issue(time.time() - HOUR, end)
-        for _ in range(5):
-            entry.tick()
-            if entry.opened() or time.time() > end - 5:
-                break
-        assert entry.opened(), 'certificate did not open the panel in time'
-    assert [len(running.closed()), len(installed.closed())] == [1, 0], (running.journal, installed.journal)
-    time.sleep(max(0, end + 1 - time.time()))
-    for entry in (running, installed):
-        entry.tick()
-        entry.tick()
-        assert entry.closed()[-1].startswith(CLOSED + 'сертификат истёк'), entry.journal
-        assert entry.logged_outside() == []
-    assert [len(running.closed()), len(installed.closed())] == [2, 1]
+def test_extra_routes_answer_before_the_panel_and_survive_the_stage(tmp_path):
+    """Мастер установки: свой маршрут на сайте панели до стадии 30 и после неё; неверный откатывается."""
+    entry = Entry(tmp_path, '')
+    entry.tick(initial=True)
+
+    def routes(text):
+        code = f'from vpn2 import tls; tls.serve_routes("wizard", {text!r}, {str(entry.dir / "etc/caddy")!r})'
+        return subprocess.run([sys.executable, '-c', code], env=entry.env, capture_output=True, text=True, timeout=60)
+
+    wizard = 'route {\n    respond "wizard" 200\n}\n'
+    with entry.serve() as proxy:
+        assert routes(wizard).returncode == 0
+        assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard')
+        assert routes('route {\n    respond "wizard" 200\n').returncode != 0, 'неверный блок принят'
+        assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard')
+    entry.deploy()
+    with entry.serve() as proxy:
+        assert proxy.get(IP, '/', tls_on=True)[::2] == (200, 'wizard'), 'стадия 30 сняла маршрут мастера'
+        assert routes('').returncode == 0
+        proxy.assert_https_open()

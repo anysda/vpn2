@@ -38,8 +38,6 @@ tx.changed = True
 tx.files_restored = panel.Openvpn().restored
 try:
     panel.host_tls(os.environ, tx)
-    caddyfile = Path(panel.CADDY[0])
-    caddyfile.write_text(caddyfile.read_text().replace('import /etc/caddy/', f'import {root}/etc/caddy/'))
     if fail:
         raise SystemExit(1)
 except BaseException:

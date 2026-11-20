@@ -279,6 +279,7 @@ def test_done_status_then_the_wizard_leaves(setup, monkeypatch):
     assert status['panel_url'] == 'https://192.0.2.1/'
     states = {item['name']: item['state'] for item in status['systems']}
     assert states['Экзит nl'] == 'ok' and states['Экзит de'] == 'warning' and states['Telegram-бот'] == 'warning'
+    assert Client(client.port).login(token)[0] == 401, 'ссылка жива после конца установки, до такта мастера'
     now = time.time()
     wiz.tick(now)
     assert Client(client.port).login(token)[0] == 401, 'ссылка жива после конца установки'

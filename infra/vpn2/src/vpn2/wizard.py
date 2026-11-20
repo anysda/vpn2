@@ -145,9 +145,9 @@ class Wizard:
         self.failures[address] = recent
         if len(recent) >= ATTEMPTS:
             raise Refusal(429, 'Слишком много попыток - подождите 10 минут')
-        data = self.tokens()
+        data, meta = self.tokens(), self.meta()
         if (type(token) is not str or not data['token'] or not secrets.compare_digest(sha(token), data['token'])
-                or data['expires'] < now or self.meta().get('done_at')):
+                or data['expires'] < now or meta.get('done_at') or meta.get('job') and self.phase(self.job()) == 'done'):
             recent.append(now)
             raise Refusal(401, EXPIRED)
         cookie = secrets.token_urlsafe(32)

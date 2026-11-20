@@ -35,13 +35,14 @@ SHORTLIVED = 160 * 3600
 IP_RENEW_AFTER = 5 * DAY
 DOMAIN_RENEW_BEFORE = 7 * DAY
 # The pair the panel site serves; extra routes (the install wizard) go before the panel. With a domain the
-# entry IP may have a site of its own (the wizard keeps its IP pair while the panel moves to the domain).
+# entry IP may have a site of its own (the wizard keeps its IP pair while the panel moves to the domain);
+# default_sni is the entry IP then: a browser opening the IP sends no SNI.
 SITE_CERT, SITE_KEY, ROUTES, SITES = 'vpn2-site.crt', 'vpn2-site.key', 'vpn2-site.d', 'vpn2-sites.d'
 PANEL_CADDYFILE = '''{
     # :80 только переадресует на HTTPS. Сайт панели без имени отдаёт выгруженную пару (CA или
     # самоподписанную); ACME - на сайте loopback: два сайта с одним именем Caddy не принимает,
     # а без ignore_loaded_certs не выпускает имя, для которого пара уже загружена. Одной строкой:
-    # второй auto_https заменил бы первый. Без SNI (браузер по IP) - имя рукопожатия IP entry.
+    # второй auto_https заменил бы первый.
     auto_https disable_redirects ignore_loaded_certs
     default_sni @SNI@
     # Без HTTP/3: Caddy держал бы *:443/udp, нужный sing-box для возврата UDP через tproxy.
@@ -420,7 +421,9 @@ def prepare(args):
     config = {'role': args.role, 'host': args.host, 'output_dir': args.output_dir,
               'acme_url': args.acme_url, 'acme_root': args.acme_root, 'storage': args.storage,
               'caddy_dir': str(caddy_dir), 'notify_hours': 6, 'cert_group': args.cert_group,
-              'local_port': args.local_port, 'sni': args.sni or args.host}
+              'local_port': args.local_port}
+    if args.sni and args.sni != args.host:
+        config['sni'] = args.sni
     if args.role == 'panel':
         config.update(secure_file=args.secure_file, bot_secret=args.bot_secret)
     atomic(args.config, json.dumps(config))

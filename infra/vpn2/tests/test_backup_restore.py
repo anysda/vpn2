@@ -1,4 +1,5 @@
 """Полный ход restore на поддельном узле: архив снимает vpn2.backup.run, восстанавливает vpn2.backup.restore."""
+import io
 import os
 import shutil
 import sqlite3
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from test_backup_run import STUBS, create, make_node, put, values, write_env
-from vpn2.backup import restore
+from vpn2.backup import keys, restore
 
 needs_tools = pytest.mark.skipif(
     any(shutil.which(name) is None for name in ('bash', 'sqlite3', 'tar', 'shred')),
@@ -94,8 +95,8 @@ def node(tmp_path, monkeypatch, capsys, creds_store):
     return SimpleNamespace(tmp=tmp_path, root=root, paths=paths, vals=vals, name=name, capsys=capsys)
 
 
-def go(node, argv=('latest',)):
-    code = restore.main(list(argv), root=str(node.root), env_file=node.paths.env_file)
+def go(node, argv=('latest',), typed='AGE-SECRET-KEY-1STUB\n'):
+    code = restore.main(list(argv), root=str(node.root), env_file=node.paths.env_file, stdin=io.StringIO(typed))
     captured = node.capsys.readouterr()
     return code, captured.out, captured.err
 
@@ -129,6 +130,32 @@ def test_restore_returns_archived_state(node):
     assert (tmp / '30-frontend.env').read_text() == 'AGH_PORT=3000 HOST=ru ADMIN_PASSWORD=unset VPN2_DEVELOPMENT=false\n'
     assert (root / 'tmp/anysda/anysda-config.yaml.tpl').read_text() == 'tpl\n'
     assert not leftovers(root)
+
+
+@needs_tools
+def test_password_archive_of_1_2_0(node):
+    """Архив 1.2.0 зашифрован паролем: restore спрашивает пароль, а не ключ; пароль из его backup.env на диске не остаётся."""
+    root, paths = node.root, node.paths
+    archive_path = root / 'out dir' / node.name
+    data = archive_path.read_bytes().replace(b'-> X25519 stub', b'-> scrypt stub', 1)
+    archive_path.write_bytes(data)
+    assert keys.kind(archive_path) == 'password'
+    put(root / 'etc/anysda/backup.env', Path(paths.env_file).read_text() + "ANYSDA_BACKUP_PASSPHRASE='old pass'\n", 0o600)
+    code, _out, err = go(node, typed='old pass\n')
+    assert code == 0, err
+    assert 'ANYSDA_BACKUP_PASSPHRASE' not in Path(paths.env_file).read_text()
+    assert keys.recipient(str(root)) == 'age1stub'
+
+
+@needs_tools
+def test_archive_key_replaces_unseen_pair(node):
+    """Ключ архива только что открыл его: открытая часть из архива действует, непоказанная пара узла снята."""
+    root = node.root
+    put(root / keys.PUBLIC, 'age1unseen\n')
+    put(root / keys.UNSEEN)
+    code, _out, err = go(node)
+    assert code == 0, err
+    assert keys.recipient(str(root)) == 'age1stub' and not keys.unseen(str(root))
 
 
 @needs_tools
@@ -185,7 +212,7 @@ def test_failed_step_rolls_back_with_code_10(node, monkeypatch):
 
 
 @needs_tools
-def test_refusals_before_any_change(node, monkeypatch):
+def test_refusals_before_any_change(node):
     tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
     assert go(node, ['latest', '--bogus'])[::2] == (2, 'anysda-restore: неизвестный аргумент: --bogus\n')
     code, _out, err = go(node, ['/any/dir/anysda-vpn2-2020-01-01T000000Z.tar.gz.age'])
@@ -197,13 +224,15 @@ def test_refusals_before_any_change(node, monkeypatch):
     conn.close()
     code, _out, err = go(node)
     assert code == 6 and 'ABORT — текущая db.sqlite не пустая (1 клиентов' in err
-    monkeypatch.setenv('STUB_AGE_FAIL', '1')
+    for typed, said in (('AGE-SECRET-KEY-1OTHER\n', 'неверный ключ бэкапов или архив повреждён; ничего не изменено'),
+                        ('старый пароль\n', 'введено не то - ключ начинается с AGE-SECRET-KEY-1; ничего не изменено'),
+                        ('', 'введено не то')):
+        code, _out, err = go(node, ['latest', '--force'], typed)
+        assert code == 4 and said in err, err
+    put(root / 'out dir/anysda-vpn2-2030-01-01T000000Z.tar.gz.age', 'not age\n')
     code, _out, err = go(node, ['latest', '--force'])
-    assert code == 4 and 'дешифровка провалилась (age exit=1)' in err
-    write_env(root, {**vals, 'ANYSDA_BACKUP_PASSPHRASE': ''})
-    code, _out, err = go(node)
-    assert (code, err) == (2, f'anysda-restore FATAL: ANYSDA_BACKUP_PASSPHRASE пуст в {paths.env_file}.\n'
-                              '  Заполни backup.passphrase в config.yaml и прогони ./deploy.sh 26-backup ru\n')
+    assert code == 5 and 'не архив бэкапа (нет заголовка age); ничего не изменено' in err
+    os.unlink(root / 'out dir/anysda-vpn2-2030-01-01T000000Z.tar.gz.age')
     os.unlink(paths.env_file)
     assert go(node)[::2] == (2, f'anysda-restore: {paths.env_file} не доступен\n')
     assert (Path(paths.etc_anysda) / 'admin-password').read_text() == 'changed\n'

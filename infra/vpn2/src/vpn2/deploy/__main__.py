@@ -36,11 +36,14 @@ def dispatch(deploy, argv, new_server=None):
         return report.backup()
     if action == 'backup-list':
         return subprocess.run(['/usr/local/bin/anysda-backup-list.sh']).returncode
-    if action == 'restore' and '--dry-run' not in argv[1:] and (not installed() if new_server is None else new_server):
+    if action == 'restore' and '--dry-run' not in argv[1:] and new_server is None:
+        new_server = not installed()
+        argv = ['restore', *report.restore_input(deploy, argv[1:], new_server)]
+    if action == 'restore' and new_server:
         # Новый сервер: ключи и секреты архива - до ключа оркестратора, затем деплой и restore архива поверх.
-        found = report.fresh_secrets(argv[1:])
-        flags = [arg for arg in argv[1:] if arg.startswith('-') and arg != '--force']
-        return dispatch(deploy, []) or dispatch(deploy, ['restore', found, '--force', *flags], new_server=False)
+        report.fresh_secrets(deploy, argv[1])
+        flags = [arg for arg in argv[2:] if arg != '--force']
+        return dispatch(deploy, []) or dispatch(deploy, ['restore', argv[1], '--force', *flags], new_server=False)
     if action == 'restore':
         if '--dry-run' in argv[1:]:
             return report.restore(deploy, argv[1:])[0]
@@ -76,6 +79,8 @@ def dispatch(deploy, argv, new_server=None):
         if code := svc('apt_auto_pause', tag='ru'):
             return code
     install_prereqs()
+    if action in report.KEY_ACTIONS and deploy.backup_key is None:
+        deploy.backup_key = report.backup_key_start(bool(deploy.progress))
     if action != '99-verify':
         deploy.release_start(action, argv[1] if action == 'exit-add' else scope)
     if action in ('', 'recover'):
@@ -158,6 +163,7 @@ def main(argv):
         deploy = Deploy(os.environ.get('VPN2_DEVELOPMENT') == 'true', manifest)
         deploy.progress = progress
         deploy.admin_generated = bool(generated)
+        deploy.backup_key = deploy.restore_secret = deploy.restore_pulled = None
         code = dispatch(deploy, argv)
     except subprocess.CalledProcessError as error:
         code = error.returncode
@@ -170,8 +176,15 @@ def main(argv):
             deploy.close(code)
         if progress:
             progress.finish(code, deploy and deploy.result)
-        if generated and panel_admin():
+        # Вывод задания менеджера ложится в журнал задания на диске: секретов в нём нет.
+        if generated and panel_admin() and not progress:
             print(f'\n  {G}Пароль панели: {generated}{E}  (показан один раз и нигде не хранится)\n', flush=True)
+        if deploy and deploy.backup_key is not None and not progress:
+            try:
+                report.show_backup_key(deploy.backup_key)
+            except (creds.CredsError, OSError) as error:
+                print(f'✗ ключ бэкапов не показан: {error}', file=sys.stderr)
+                code = code or 1
     return code
 
 

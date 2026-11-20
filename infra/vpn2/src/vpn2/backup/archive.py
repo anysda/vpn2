@@ -1,4 +1,4 @@
-"""Архив бэкапа: рабочий каталог, sha компонентов, tar.gz и шифрование age через pty."""
+"""Архив бэкапа: рабочий каталог, sha компонентов, tar.gz, шифрование age открытым ключом и расшифровка."""
 import calendar
 import contextlib
 import fcntl
@@ -191,19 +191,33 @@ def pty_run(argv, passphrase, prompts, *, timeout=TIMEOUT):
     return proc.wait()
 
 
-def encrypt(src, dst, passphrase):
-    """`age -p -o dst src` с паролем через pty; src затирается. Отказ - ArchiveError (код age или 3)."""
-    rc = pty_run(['age', '-p', '-o', str(dst), str(src)], passphrase, (b'Enter passphrase', b'Confirm passphrase'))
+def encrypt(src, dst, recipient):
+    """`age -r <открытый ключ> -o dst src`; src затирается. Отказ - ArchiveError (код age или 3)."""
+    rc = code(['age', '-r', recipient, '-o', str(dst), str(src)])
     wipe(src)
     if rc or not fsutil.filled(dst):
         raise ArchiveError(rc if rc > 0 else 3, f'anysda-backup FATAL: шифрование age не дало файла {dst}')
 
 
-def decrypt(src, dst, passphrase):
-    """`age -d -o dst src` с паролем через pty; отказ - dst удаляется и ArchiveError(4)."""
-    rc = pty_run(['age', '-d', '-o', str(dst), str(src)], passphrase, (b'Enter passphrase',))
+def _with_identity(argv, private):
+    """age с закрытым ключом из канала /dev/fd/N: ключ не ложится на диск и не виден в argv."""
+    read, write = os.pipe()
+    os.write(write, private.encode() + b'\n')
+    os.close(write)
+    try:
+        return code([*argv[:2], '-i', f'/dev/fd/{read}', *argv[2:]], pass_fds=(read,), stderr=subprocess.DEVNULL)
+    finally:
+        os.close(read)
+
+
+def decrypt(src, dst, secret, what):
+    """Расшифровать src в dst: what 'key' - закрытым ключом бэкапов, 'password' - паролем архива 1.2.0 через pty.
+    Отказ - dst удаляется и ArchiveError(4)."""
+    argv = ['age', '-d', '-o', str(dst), str(src)]
+    rc = _with_identity(argv, secret) if what == 'key' else pty_run(argv, secret, (b'Enter passphrase',))
     if rc or not fsutil.filled(dst):
         with contextlib.suppress(OSError):
             os.unlink(dst)
-        raise ArchiveError(4, f'anysda-restore: дешифровка провалилась (age exit={rc})'
-                              ' — неверный passphrase или повреждённый архив')
+        wrong = 'неверный ключ бэкапов' if what == 'key' else 'неверный пароль'
+        raise ArchiveError(4, f'anysda-restore: архив не расшифрован (age exit={rc}) — {wrong} или архив повреждён;'
+                              ' ничего не изменено')

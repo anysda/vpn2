@@ -8,6 +8,7 @@
 - {section: files, name: '/etc/anysda/*-secret.txt', field: sha256, reason: случайный секрет создаётся при установке}
 - {section: files, name: '/etc/anysda/hy2-*', field: sha256, reason: пароли и сертификат Hysteria2 создаются при установке}
 - {section: files, name: '/etc/anysda/reality.*', field: sha256, reason: ключи Reality создаются при установке}
+- {section: files, name: /etc/anysda/backup.pub, field: sha256, reason: пара ключей бэкапов создаётся при установке}
 - {section: files, name: '/etc/anysda/wgcf-*', field: sha256, reason: учётная запись WARP регистрируется при установке}
 - {section: files, name: '/etc/openvpn/server/pki/*', field: sha256, reason: удостоверяющий центр OpenVPN создаётся при установке}
 - {section: files, name: '/etc/strongswan/pki/*', field: sha256, reason: удостоверяющий центр IKEv2 создаётся при установке}

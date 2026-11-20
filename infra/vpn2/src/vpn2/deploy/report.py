@@ -11,8 +11,8 @@ import urllib.request
 from pathlib import Path
 
 from vpn2 import config, creds
-from vpn2.backup import archive, env as backup_env, restore as node_restore
-from vpn2.deploy import B, E, G, CONFIG, die, elapsed, install_prereqs, prep_keys, read, warn
+from vpn2.backup import archive, env as backup_env, keys, restore as node_restore
+from vpn2.deploy import B, E, G, CONFIG, elapsed, install_prereqs, prep_keys, read, warn
 
 ETC = Path('/etc/anysda')
 BACKUP, RESTORE = '/usr/local/bin/anysda-backup.sh', '/usr/local/bin/anysda-restore.sh'
@@ -132,7 +132,9 @@ def restore(deploy, args, capture=False):
             target.write_bytes(Path(archive).read_bytes())
             target.chmod(0o600)
         archive = base
-    done = subprocess.run([RESTORE, archive, *flags], **output)
+    # Ключ архива спрошен деплоем один раз: проверке и самому restore он идёт в stdin.
+    secret = getattr(deploy, 'restore_secret', None)
+    done = subprocess.run([RESTORE, archive, *flags], **{**output, **({'input': secret[0] + '\n', 'text': True} if secret else {})})
     if done.returncode or '--dry-run' in flags or '--preflight' in flags:
         return done.returncode, done.stdout or ''
     # Пароль панели - в восстановленной базе: стадии после restore его не задают.
@@ -150,19 +152,21 @@ def fresh_settings(cfg):
     backup = cfg.raw.get('backup') or {}
     s3, local = backup.get('s3') or {}, backup.get('local') or {}
     return backup_env.Settings(backend=backup.get('backend') or 'local',
-                               local_dir=local.get('dir') or backup_env.Settings.local_dir,
-                               passphrase=creds.read('backup_passphrase'), s3_endpoint=s3.get('endpoint') or '',
+                               local_dir=local.get('dir') or backup_env.Settings.local_dir, s3_endpoint=s3.get('endpoint') or '',
                                s3_bucket=s3.get('bucket') or '', s3_region=s3.get('region') or backup_env.Settings.s3_region,
                                s3_access_key=creds.read('s3_access_key'), s3_secret_key=creds.read('s3_secret_key'))
 
 
-def fresh_secrets(args):
-    """restore на новом сервере, до деплоя: секреты и ключи ssh архива - в хранилище. Экзиты знают только ключ
-    из архива, поэтому деплой нового сервера входит на них им, без строки ./deploy.sh -key. Вернуть путь к архиву."""
-    settings = fresh_settings(config.load(CONFIG))
-    install_prereqs('age', *(['rclone'] if settings.backend == 's3' else []))
-    name = args[0] if args and not args[0].startswith('-') else 'latest'
+def restore_input(deploy, args, fresh):
+    """Архив restore - локальным файлом, его ключ или пароль - один раз и в самом начале: дальше их ждут деплой
+    нового сервера, проверка архива и сам restore. Вернуть args с путём к архиву вместо имени."""
+    name, flags = (args[0], args[1:]) if args and not args[0].startswith('-') else ('latest', args)
     try:
+        if fresh:
+            settings = fresh_settings(config.load(CONFIG))
+            install_prereqs('age', *(['rclone'] if settings.backend == 's3' else []))
+        else:
+            settings = backup_env.settings(backup_env.read_env(), lazy_s3=True)
         if os.path.isfile(name):
             path = Path(name).resolve()
         else:
@@ -171,21 +175,42 @@ def fresh_secrets(args):
             path = Path(settings.local_dir) / os.path.basename(name)
             if not path.is_file():
                 node_restore.s3_pull(settings, path.name)
+                deploy.restore_pulled = path
+        deploy.restore_secret = node_restore.secret_for(path, tell=True)
+    except (node_restore.RestoreError, backup_env.BackupEnvError) as error:
+        restore_refused(deploy)
+        print(str(error), file=sys.stderr, flush=True)
+        raise SystemExit(error.code) from None
+    return [str(path), *flags]
+
+
+def restore_refused(deploy):
+    """Отказ до изменений: архив, скачанный этим прогоном из S3, не остаётся."""
+    if pulled := getattr(deploy, 'restore_pulled', None):
+        Path(pulled).unlink(missing_ok=True)
+
+
+def fresh_secrets(deploy, path):
+    """restore на новом сервере, до деплоя: секреты и ключи ssh архива - в хранилище. Экзиты знают только ключ
+    из архива, поэтому деплой нового сервера входит на них им, без строки ./deploy.sh -key. Неверный ключ или
+    битый архив - отказ здесь, до деплоя."""
+    try:
         with tempfile.TemporaryDirectory() as work:
             plain = Path(work) / 'archive.tar.gz'
-            archive.decrypt(path, plain, settings.passphrase)
+            archive.decrypt(path, plain, *deploy.restore_secret)
             with tarfile.open(plain) as tar:
                 member = next((item for item in tar.getmembers() if item.name.endswith('/secrets.json')), None)
                 if member is not None:
                     (Path(work) / 'secrets.json').write_bytes(tar.extractfile(member).read())
             # Архив 1.2.0 без secrets.json: ключ оркестратора уже взят из orchestrator_key config.yaml 1.2.0.
             if member is not None:
-                print(f'  секреты и ключи ssh из {path.name} - в хранилище нового сервера', flush=True)
+                print(f'  секреты и ключи ssh из {Path(path).name} - в хранилище нового сервера', flush=True)
                 if note := creds.replaced_note(creds.unbundle(Path(work) / 'secrets.json')):
                     print(f'  {note}', flush=True)
-    except (node_restore.RestoreError, archive.ArchiveError) as error:
-        die(str(error).removeprefix('anysda-restore: '))
-    return str(path)
+    except (archive.ArchiveError, tarfile.TarError) as error:
+        restore_refused(deploy)
+        print(str(error), file=sys.stderr, flush=True)
+        raise SystemExit(getattr(error, 'code', 5)) from None
 
 
 def restore_preflight(deploy, args):
@@ -195,5 +220,45 @@ def restore_preflight(deploy, args):
     if code == 2 and 'неизвестный аргумент: --preflight' in out:
         code, out = restore(deploy, [*args, '--dry-run'], capture=True)
     if code:
+        restore_refused(deploy)
         print(out, end='', file=sys.stderr)
     return code
+
+
+# Прогоны, после которых у включённых бэкапов есть действующая пара ключей.
+KEY_ACTIONS = ('', 'recover', 'restore', '26-backup')
+
+
+def backup_key_start(manager):
+    """Пары нет или её никто не видел - новая; закрытая часть - в памяти до show_backup_key в конце прогона.
+    Задание менеджера пару только заводит, если её нет: показ - дело мастера (vpn2.backup.keys.issue()).
+    Вернуть (закрытый ключ, открытый, архивы с непоказанной парой) или False."""
+    try:
+        cfg = config.load(CONFIG).raw.get('backup') or {}
+    except (OSError, config.ConfigError):
+        return False
+    if str(cfg.get('enabled', '')).lower() not in config.TRUE_WORDS:
+        return False
+    if keys.recipient() and (manager or not keys.unseen()):
+        return False
+    lost = keys.since_unseen((cfg.get('local') or {}).get('dir') or backup_env.Settings.local_dir)
+    install_prereqs('age')
+    private = keys.issue()
+    return False if manager else (private, keys.recipient(), lost)
+
+
+def show_backup_key(issued):
+    """Конец прогона в терминале: новый ключ бэкапов, если он ещё действует, и пароль архивов 1.2.0 - один раз.
+    Пароль после показа уходит с сервера: из хранилища, backup.env и config.yaml."""
+    if issued and keys.recipient() == issued[1]:
+        print(keys.shown_text(issued[0], issued[2]), end='', flush=True)
+        keys.seen()
+    old = creds.read('backup_passphrase')
+    old = keys.forget_password() or old
+    if not old:
+        return
+    print(f'Пароль архивов, сделанных до перехода на ключ: {old}\n'
+          '  Сохраните его рядом с ключом: restore таких архивов спросит его; на сервере его больше нет.\n', flush=True)
+    creds.write('backup_passphrase', '')
+    if CONFIG.is_file():
+        config.wipe_secrets(CONFIG, keep=tuple({*config.LEGACY_SECRETS.values(), *config.AREA_NAMES, ''} - {'backup_passphrase'}))

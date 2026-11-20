@@ -209,7 +209,6 @@ def test_positive_control_extra_and_changed_key_are_caught():
     (MINIMAL + 'wireguard:\n  mtu: 100\n', 'wireguard.mtu'),
     (MINIMAL + 'alerts:\n  window: 5\n', 'alerts.window'),
     (MINIMAL + 'panel:\n  domain: http://x\n', 'panel.domain'),
-    (MINIMAL + 'backup:\n  enabled: true\n', 'secrets.backup_passphrase'),
     (MINIMAL + 'youtube:\n  route: tor\n', 'youtube.route'),
     (MINIMAL + 'youtube:\n  quic: maybe\n', 'youtube.quic'),
     (MINIMAL + 'youtube:\n  window_scale: 15\n', 'youtube.window_scale'),

@@ -125,7 +125,26 @@ def run(*args, **kwargs):
                           stderr=subprocess.STDOUT, check=False, **kwargs)
 
 
+def pair():
+    """Ключ бэкапов теста: закрытый и открытый, как их делает деплой."""
+    made = subprocess.run(['age-keygen'], capture_output=True, text=True, check=True).stdout
+    private = next(line for line in made.splitlines() if line.startswith('AGE-SECRET-KEY-1'))
+    return private, subprocess.run(['age-keygen', '-y'], input=private, capture_output=True, text=True,
+                                   check=True).stdout.strip()
+
+
+KEY, PUBLIC = pair()
+OLD_PASSWORD = 'test-backup-passphrase'
+
+
 def decrypt(archive, destination):
+    if b'-> X25519 ' in Path(archive).read_bytes()[:4096]:
+        write('/test-output/identity', KEY + '\n')
+        result = run('age', '-d', '-i', '/test-output/identity', '-o', str(destination), str(archive))
+        Path('/test-output/identity').unlink()
+        if result.returncode:
+            raise AssertionError(result.stdout)
+        return
     env = dict(os.environ, AGE_SOURCE=str(archive), AGE_TARGET=str(destination))
     result = run('expect', env=env, input='''
 log_user 0
@@ -143,19 +162,7 @@ exit [lindex $result 3]
 
 
 def encrypt(source, archive):
-    env = dict(os.environ, AGE_SOURCE=str(source), AGE_TARGET=str(archive))
-    result = run('expect', env=env, input='''
-log_user 0
-set timeout 60
-spawn age -p -o $env(AGE_TARGET) $env(AGE_SOURCE)
-expect {
-    "Enter passphrase*" { send -- "test-backup-passphrase\\r"; exp_continue }
-    "Confirm passphrase*" { send -- "test-backup-passphrase\\r"; exp_continue }
-    eof
-}
-catch wait result
-exit [lindex $result 3]
-''')
+    result = run('age', '-r', PUBLIC, '-o', str(archive), str(source))
     if result.returncode:
         raise AssertionError(result.stdout)
 
@@ -181,6 +188,7 @@ BACKUP_LOCAL_DIR=/var/backups/anysda-vpn2
 BACKUP_RETENTION=2
 ANYSDA_BACKUP_PASSPHRASE=test-backup-passphrase
 ''')
+        write('/etc/anysda/backup.pub', PUBLIC + '\n', 0o644)
         write('/test-bin/systemctl', '#!/bin/sh\nexit 0\n', 0o755)
         write('/test-bin/docker', '''#!/bin/sh
 if [ "$1" = stop ] && [ -f /test-output/stop-fails ]; then exit 1; fi
@@ -214,10 +222,11 @@ exit 0
         self.conn.commit()
         self.assertGreater(Path(str(DB) + '-wal').stat().st_size, 0)
 
-    def script(self, name, *args, hook=False):
-        # Как на узле: /usr/local/bin/anysda-<name>.sh запускает `vpn2 <name>` пакета из клона.
+    def script(self, name, *args, hook=False, typed=KEY):
+        # Как на узле: /usr/local/bin/anysda-<name>.sh запускает `vpn2 <name>` пакета из клона;
+        # restore без терминала читает ключ (или пароль архива 1.2.0) из stdin.
         command = ('-c', HOOKED_BACKUP) if hook else ('-m', 'vpn2.cli', name, *args)
-        return run('python3', '-B', *command,
+        return run('python3', '-B', *command, input=typed + '\n' if name == 'restore' else None,
                    env=dict(self.env, PYTHONPATH=str(REPO / 'infra/vpn2/src')))
 
     def backup(self, hook=False):
@@ -313,7 +322,7 @@ sys.stdin.read()
         write('/test-output/legacy-backup.sh', legacy.read_text().replace('cp -aL', 'cp -a'))
         result = run('bash', '/test-output/legacy-backup.sh', env=self.env)
         self.assertEqual(result.returncode, 0, result.stdout)
-        result = self.script('restore', 'latest', '--force')
+        result = self.script('restore', 'latest', '--force', typed=OLD_PASSWORD)
         print(f'legacy_symlink_restore_rc={result.returncode}', flush=True)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(Path('/etc/wireguard/server.priv').read_text().strip(), WG_KEYS['archived'])
@@ -331,7 +340,11 @@ sys.stdin.read()
             write(path, body(path, 'live'))
         write('/etc/wireguard/keys/server.priv', WG_KEYS['live'])
         result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 4, result.stdout)
+        self.assertIn('архив сделан до перехода на ключ', result.stdout)
+        result = self.script('restore', 'latest', '--force', typed=OLD_PASSWORD)
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn(OLD_PASSWORD, Path('/etc/anysda/backup.env').read_text())
         with sqlite3.connect(DB) as restored:
             self.assertEqual(restored.execute('SELECT name FROM clients').fetchall(), [('archived-client',)])
         for path in FILES:
@@ -401,7 +414,7 @@ cmp /tmp/anysda/anysda-config.yaml.tpl "$VPN2_PANEL_CONFIG_TPL"
         self.backup()
         # Отказ только при шифровании страховочного архива.
         write('/test-bin/age', '''#!/bin/sh
-case "$*" in *-p*pre-restore*) exit 42;; esac
+case "$*" in *-r*pre-restore*) exit 42;; esac
 exec /usr/bin/age "$@"
 ''', 0o755)
         result = self.script('restore', 'latest', '--force')
@@ -674,6 +687,28 @@ esac
         paths = [Path(p) for p in (*FILES, *EXTRA)] + [Path('/etc/wireguard/keys/server.priv')]
         paths += sorted(p for p in Path('/etc/openvpn').rglob('*') if p.is_file())
         return {**{str(p): p.read_bytes() for p in paths}, **self.dir_state()}
+
+    def test_wrong_key_or_broken_archive_refused_before_any_change(self):
+        """Неверный ключ, ключ другой установки, пароль вместо ключа, обрезанный архив: отказ до изменений."""
+        self.backup()
+        self.conn.execute("INSERT INTO clients VALUES ('live-client')")
+        self.conn.commit()
+        write(FILES[0], body(FILES[0], 'live'))
+        before = self.host_state()
+        archive = next(BACKUPS.glob('*.age'))
+        whole = archive.read_bytes()
+        for name, typed, cut, code in (('wrong key', KEY[:-6] + 'QQQQQQ', False, 4), ('other install', pair()[0], False, 4),
+                                       ('password instead of key', OLD_PASSWORD, False, 4), ('truncated', KEY, True, 4)):
+            with self.subTest(name):
+                archive.write_bytes(whole[:len(whole) // 2] if cut else whole)
+                result = self.script('restore', 'latest', '--force', typed=typed)
+                self.assertEqual(result.returncode, code, result.stdout)
+                self.assertIn('ничего не изменено', result.stdout)
+                self.assertEqual(self.host_state(), before)
+                self.assertFalse((BACKUPS / '.pre-restore').exists())
+                self.assertEqual(self.conn.execute('SELECT name FROM clients').fetchall(),
+                                 [('archived-client',), ('live-client',)])
+        print('restore_wrong_key_refused=PASS', flush=True)
 
     def test_restore_keeps_live_directory_owner_and_mode(self):
         self.backup()

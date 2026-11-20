@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-CONFIG = (ROOT / 'config.example.yaml').read_text().replace('  backup_passphrase:\n', '  backup_passphrase: test pass\n')
+CONFIG = (ROOT / 'config.example.yaml').read_text().replace('  s3_secret_key:\n', '  s3_secret_key: test pass\n')
 TREE = ('deploy.sh', 'infra/deploy.sh', 'infra/lib', 'infra/ansible', 'infra/vpn2/src', 'infra/vpn2/pyproject.toml')
 # Заглушка ansible-playbook: строка JSON на вызов; FAKE_RULES - [подстрока аргументов, код, пауза].
 PLAYBOOK = r'''#!PYTHON
@@ -52,6 +52,7 @@ RUNNER = '''import sys
 from vpn2.deploy import __main__ as main, run
 main.install_prereqs = run.prep_keys = lambda: None
 main.svc = lambda *_args, **_options: 0
+main.report.backup_key_start = lambda _manager: False
 sys.exit(main.main(sys.argv[1:]))
 '''
 
@@ -126,6 +127,7 @@ def inproc(tree, capfd, monkeypatch):
         reload()
         main.install_prereqs = run.prep_keys = lambda: None
         main.svc = lambda *args, **_options: services.append(args) or 0
+        main.report.backup_key_start = lambda _manager: False
         capfd.readouterr()
         code = main.main(list(args))
         out, err = capfd.readouterr()
@@ -324,7 +326,7 @@ def test_stage_run_moves_secrets_and_keeps_an_unapplied_admin_password(tree, inp
     left = (tree / 'config.yaml').read_text()
     assert "'7:new'" not in left and '  admin_password: fresh pw\n' in left
     assert inproc('30-frontend', 'ru').returncode == 0
-    assert (tree / 'config.yaml').read_text() == CONFIG.replace('  backup_passphrase: test pass\n', '  backup_passphrase:\n')
+    assert (tree / 'config.yaml').read_text() == CONFIG.replace('  s3_secret_key: test pass\n', '  s3_secret_key:\n')
 
 
 def test_root_passwords_of_1_2_0_leave_config_after_a_good_deploy_only(tree, inproc):
@@ -336,7 +338,7 @@ def test_root_passwords_of_1_2_0_leave_config_after_a_good_deploy_only(tree, inp
     assert failed.returncode and (tree / 'config.yaml').read_text() == legacy
     done = inproc(FAKE_RULES='[]')
     assert done.returncode == 0, done.stderr
-    wiped = CONFIG.replace('  backup_passphrase: test pass\n', '  backup_passphrase:\n')
+    wiped = CONFIG.replace('  s3_secret_key: test pass\n', '  s3_secret_key:\n')
     assert (tree / 'config.yaml').read_text() == wiped and (tree / 'config.yaml').stat().st_mode & 0o777 == 0o600
     assert 'пароли root entry и экзитов убраны из config.yaml' in done.stderr
     assert 'секреты перенесены в зашифрованное хранилище entry и стёрты из config.yaml' in done.stderr

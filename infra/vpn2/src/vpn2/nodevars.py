@@ -288,12 +288,9 @@ def _sso(sso, present):
     return env
 
 
-def _backup(backup, present):
+def _backup(backup):
     if not _flag(backup.get('enabled', '')):
         return {}
-    if 'backup_passphrase' not in present:
-        raise ConfigError('secrets.backup_passphrase', 'пустой при включённом бэкапе - задай его '
-                          'или выключи backup.enabled')
     env = {'BACKUP_ENABLED': 'true', 'BACKUP_BACKEND': backup.get('backend', 'local'),
            'BACKUP_RETENTION': backup.get('retention', '10'),
            'BACKUP_SCHEDULE': backup.get('schedule', 'daily'),
@@ -325,7 +322,7 @@ def _entry(sec, development, present):
         env['TELEGRAM_CHAT_ID'] = telegram['chat_id']
         if telegram.get('admin_username'):
             env['TELEGRAM_ADMIN_USERNAME'] = telegram['admin_username']
-    return {**env, **_youtube(sec['youtube']), **_sso(sec['sso'], present), **_backup(sec['backup'], present)}
+    return {**env, **_youtube(sec['youtube']), **_sso(sec['sso'], present), **_backup(sec['backup'])}
 
 
 def _exit(item, octet, direct):

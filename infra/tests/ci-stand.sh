@@ -755,6 +755,44 @@ snapshot_base() {
   log "база слепка обоих узлов снята за $((SECONDS - started)) с"
 }
 
+# Строк нет нигде на entry: ни в файлах (кроме журналов и файлов самого стенда: /root/*.log, /root/*.rc,
+# фикстуры infra/tests клона), ни в журнале systemd. /proc, /sys, /dev не читаются.
+secrets_absent() {  # <что проверяется> <строка>...
+  local what=$1 found
+  shift
+  found=$(printf '%s\n' "$@" | ssh_node "$ENTRY" 'umask 077; cat > /run/vpn2-needles
+    { grep -rlsF -D skip --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev -f /run/vpn2-needles / \
+        | grep -vE "^(/root/[^/]*\.(log|rc)|/run/vpn2-needles|/opt/anysda-vpn2/infra/tests/.*)$"
+      journalctl -o cat --no-pager -q | grep -qF -f /run/vpn2-needles && echo "журнал systemd"; } || true
+    rm -f /run/vpn2-needles') || die "$what: диск entry не прочитан"
+  [[ -z $found ]] || die "$what: секрет лежит на entry: ${found//$'\n'/, }"
+  log "$what: на диске entry и в журнале systemd секрета нет ($# строк)"
+}
+
+# Ключ бэкапов показан ровно один раз в выводе прогона <имя> (как его видит человек): ключ - в
+# $STAND_DIR/backup-key стенда, на entry его нет нигде.
+backup_key_shown() {  # <имя прогона entry_run>
+  local key
+  key=$(ssh_node "$ENTRY" "grep -o 'AGE-SECRET-KEY-1[0-9A-Z]*' /root/$1.log | sort -u") || die "$1: ключ бэкапов не показан"
+  [[ -n $key && $key != *$'\n'* ]] || die "$1: ключей бэкапов в выводе не один"
+  [[ $(ssh_node "$ENTRY" "grep -c 'Ключ бэкапов - показан один раз' /root/$1.log") == 1 ]] || die "$1: ключ показан не один раз"
+  ssh_node "$ENTRY" "test -s /etc/anysda/backup.pub && test ! -e /etc/anysda/backup.pub.unseen" \
+    || die "$1: открытого ключа бэкапов нет или пара не отмечена показанной"
+  ( umask 077; printf '%s\n' "$key" > "$STAND_DIR/backup-key" )
+  secrets_absent "$1: закрытый ключ бэкапов" "$key"
+}
+
+# Отпечаток состояния entry для отказов restore: данные и ключи, клиенты в базе, наши службы и контейнеры.
+entry_fingerprint() {
+  ssh_node "$ENTRY" 'set -o pipefail
+    { find /etc/anysda /etc/wireguard /etc/openvpn /etc/swanctl /var/lib/vpn2-secrets /var/lib/caddy /var/lib/anysda-vpn2 \
+        /opt/anysda-vpn2/config.yaml -xdev -type f ! -name "db.sqlite*" -print0 2>/dev/null | sort -z | xargs -0 sha256sum
+      sqlite3 -readonly /var/lib/anysda-vpn2/db.sqlite "SELECT id, name FROM clients ORDER BY id; SELECT id, client_id, name FROM devices ORDER BY id"
+      systemctl list-units --type=service,timer --state=active --no-legend --plain | awk "{print \$1}" \
+        | grep -E "^(anysda|vpn2|sing-box|openvpn|strongswan|wg-quick|caddy|docker)" | sort
+      docker ps --format "{{.Names}} {{.ID}}" | sort; } | sha256sum'
+}
+
 cmd_deploy() {
   local image=${1:?образ панели (docker-образ на этой машине)}
   host_stats 'до деплоя'
@@ -769,6 +807,7 @@ cmd_deploy() {
   entry_run deploy './deploy.sh --development -yaml' || rc=$?
   wait "$loader" || (( rc )) || rc=1
   (( rc )) || password_refused || rc=1
+  (( rc )) || backup_key_shown deploy
   log "деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   warm_report
   host_stats 'после деплоя'
@@ -1149,9 +1188,14 @@ cmd_deploy_again() {
   close_entry_mux
   ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" \
     || die 'замок деплоя на entry не освободился за 70 с'
+  local public
+  public=$(ssh_node "$ENTRY" 'cat /etc/anysda/backup.pub') || die 'повторный деплой: открытого ключа бэкапов нет'
   entry_run deploy-again './deploy.sh --development' || rc=$?
   log "повторный деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
+  ssh_node "$ENTRY" "! grep -qE 'AGE-SECRET-KEY-1|Ключ бэкапов - показан' /root/deploy-again.log" \
+    || die 'повторный деплой показал ключ бэкапов'
+  [[ $(ssh_node "$ENTRY" 'cat /etc/anysda/backup.pub') == "$public" ]] || die 'повторный деплой сменил пару ключей бэкапов'
   ssh_node "$ENTRY" "grep -qF 'ansible: пины те же' /opt/vpn2/ansible-venv.log" \
     || die 'повторный деплой переустановил venv с ansible'
   local changed
@@ -1179,6 +1223,13 @@ cmd_deploy_upgrade() {
   log "обновление с $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
   password_refused || die 'обновление: вход по паролю не закрыт'
+  # Пароль архивов 1.2.0 (stand-etalon из config.yaml выпуска) показан рядом с новым ключом и ушёл с сервера.
+  [[ $(ssh_node "$ENTRY" "grep -c 'Пароль архивов, сделанных до перехода на ключ: stand-etalon' /root/deploy.log") == 1 ]] \
+    || die 'обновление: пароль архивов 1.2.0 не показан один раз'
+  ssh_node "$ENTRY" 'test ! -e /var/lib/vpn2-secrets/backup_passphrase.cred && ! grep -q PASSPHRASE /etc/anysda/backup.env' \
+    || die 'обновление: пароль архивов 1.2.0 остался в хранилище или backup.env'
+  backup_key_shown deploy
+  secrets_absent 'обновление: пароль архивов 1.2.0' stand-etalon
   # config.yaml выпуска нёс пароли root: обновление их стёрло.
   ssh_node "$ENTRY" "! grep -nE '^[[:space:]]*(- )?password:' /opt/anysda-vpn2/config.yaml" || die 'обновление: пароли root остались в config.yaml'
   [[ $(ssh_node "$ENTRY" "grep -v '^#' $STATE/mgmt-ips.txt") == "$mgmt" ]] \
@@ -1352,11 +1403,13 @@ cmd_restore_check() {
   [[ -f $archive ]] || die "фикстуры нет: $archive"
   [[ -f $expect ]] || die "фикстуры нет: $expect"
   ssh_node "$ENTRY" 'cat > /root/etalon.tar.gz.age' < "$archive" || die "архив не загружен на entry"
+  # Архив 1.2.0 зашифрован паролем: restore спрашивает его, без терминала читает из stdin.
+  local password=stand-etalon before=''
   if (( foreign )); then
-    ssh_node "$ENTRY" "sed -i 's/^\\(ANYSDA_BACKUP_PASSPHRASE=\\).*/\\1stand-foreign/' /etc/anysda/backup.env" \
-      || die "пароль архива в backup.env не заменён"
+    password=stand-foreign before=$(entry_fingerprint) || die 'отпечаток entry не снят'
     log 'отрицательный контроль: чужой пароль архива'
   fi
+  printf '%s\n' "$password" | ssh_node "$ENTRY" 'umask 077; cat > /run/vpn2-restore.pass' || die 'пароль архива не лёг на entry'
   close_entry_mux
   ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" \
     || die 'замок деплоя на entry не освободился за 70 с'
@@ -1368,13 +1421,20 @@ cmd_restore_check() {
 import sys, tarfile, tempfile
 from vpn2.backup import archive
 with tempfile.TemporaryDirectory() as work:
-    archive.decrypt('/root/etalon.tar.gz.age', f'{work}/a.tar.gz', 'stand-etalon')
+    archive.decrypt('/root/etalon.tar.gz.age', f'{work}/a.tar.gz', 'stand-etalon', 'password')
     with tarfile.open(f'{work}/a.tar.gz') as tar:
         member = next(m for m in tar.getmembers() if m.name.endswith('/etc-anysda/admin-password.txt'))
         sys.stdout.write(tar.extractfile(member).read().decode())
 PY
-  entry_run restore './deploy.sh --development restore /root/etalon.tar.gz.age --force' || rc=$?
+  entry_run restore './deploy.sh --development restore /root/etalon.tar.gz.age --force < /run/vpn2-restore.pass' || rc=$?
+  ssh_node "$ENTRY" 'rm -f /run/vpn2-restore.pass'
   log "restore: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  if (( foreign )); then
+    [[ $(entry_fingerprint) == "$before" ]] || die 'чужой пароль: restore изменил entry'
+    ssh_node "$ENTRY" "grep -q 'неверный пароль или архив повреждён; ничего не изменено' /root/restore.log" \
+      || die 'чужой пароль: отказ restore без понятной причины'
+    log "чужой пароль: отказ кодом $rc, состояние entry не изменилось"
+  fi
   (( rc == 0 )) || return "$rc"
   ssh_node "$ENTRY" "mv $ADMIN_PASSWORD_FILE.etalon $ADMIN_PASSWORD_FILE"
   # Токен бота из архива 1.2.0 - в хранилище entry, в runtime-файле его нет (sha256 в expect - файл без токена).
@@ -1412,6 +1472,19 @@ cmd_recover_fresh() {
   archive=$(ssh_node "$ENTRY" 'ls -t /var/backups/anysda-vpn2/anysda-vpn2-*.tar.gz.age | head -1') \
     || die 'recover: архива живой entry нет'
   ssh_node "$ENTRY" "cat $archive" > "$STAND_DIR/recover.tar.gz.age" || die 'recover: архив не скопирован с entry'
+  [[ -s $STAND_DIR/backup-key ]] || die 'recover: ключа бэкапов от деплоя стенда нет'
+  # Чужой ключ (пара другой установки): отказ кодом 4 до любых изменений.
+  local before public
+  before=$(entry_fingerprint) && public=$(ssh_node "$ENTRY" 'cat /etc/anysda/backup.pub') || die 'recover: отпечаток entry не снят'
+  close_entry_mux
+  ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" || die 'замок деплоя на entry не освободился за 70 с'
+  entry_run restore-foreign "age-keygen 2>/dev/null | ./deploy.sh --development restore $archive --force" || rc=$?
+  (( rc == 4 )) || die "recover: restore с чужим ключом - код $rc, ждём 4"
+  [[ $(entry_fingerprint) == "$before" ]] || die 'recover: restore с чужим ключом изменил entry'
+  ssh_node "$ENTRY" "grep -q 'неверный ключ бэкапов; ничего не изменено' /root/restore-foreign.log" \
+    || die 'recover: отказ на чужой ключ без понятной причины'
+  log 'recover: чужой ключ - отказ кодом 4, состояние entry не изменилось'
+  rc=0
   key=$(ssh_node "$ENTRY" '/opt/anysda-vpn2/deploy.sh -key 2>/dev/null') && mgmt=$(ssh_node "$ENTRY" "$mgmt_pub") \
     && authorized=$(ssh_node "$EXIT" 'sha256sum /root/.ssh/authorized_keys') \
     && host=$(ssh_node "$ENTRY" 'cat /etc/ssh/ssh_host_ed25519_key.pub') || die 'recover: ключи живой entry не прочитаны'
@@ -1425,8 +1498,9 @@ cmd_recover_fresh() {
   push_tree
   ssh_node "$ENTRY" 'umask 077; cat > /root/recover.tar.gz.age' < "$STAND_DIR/recover.tar.gz.age" \
     || die 'recover: архив не лёг на новую entry'
+  ssh_node "$ENTRY" 'umask 077; cat > /run/vpn2-restore.key' < "$STAND_DIR/backup-key" || die 'recover: ключ бэкапов не лёг на entry'
   load_panel "$PANEL_REF" & loader=$!
-  entry_run recover './deploy.sh --development restore /root/recover.tar.gz.age' || rc=$?
+  entry_run recover './deploy.sh --development restore /root/recover.tar.gz.age < /run/vpn2-restore.key' || rc=$?
   wait "$loader" || (( rc )) || rc=1
   log "recover: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || die "recover: ./deploy.sh restore на новой entry - код $rc"
@@ -1437,6 +1511,21 @@ cmd_recover_fresh() {
     || die 'recover: authorized_keys экзита изменились - ключ лёг не из архива'
   ssh_node "$ENTRY" "ssh -o BatchMode=yes $EXIT_TAG true" || die "recover: ssh $EXIT_TAG с новой entry не прошёл"
   log "recover: новая entry с ключами из архива ($key), ssh $EXIT_TAG проходит, экзит не тронут"
+  # Ключ спрошен один раз, в самом начале; новой пары деплой не показал - действует пара из архива.
+  [[ $(ssh_node "$ENTRY" "grep -c 'архив зашифрован ключом бэкапов' /root/recover.log") == 1 ]] \
+    || die 'recover: ключ бэкапов спрошен не один раз'
+  ssh_node "$ENTRY" "! grep -qE 'AGE-SECRET-KEY-1|Ключ бэкапов - показан' /root/recover.log && test ! -e /etc/anysda/backup.pub.unseen" \
+    || die 'recover: новая entry показала новый ключ бэкапов'
+  [[ $(ssh_node "$ENTRY" 'cat /etc/anysda/backup.pub') == "$public" ]] || die 'recover: открытый ключ бэкапов - не из архива'
+  # Бэкап по таймеру - только открытым ключом; архив открывает закрытый ключ человека.
+  ssh_node "$ENTRY" 'set -o pipefail; before=$(ls /var/backups/anysda-vpn2 | wc -l)
+    systemctl start anysda-backup.service || exit 1
+    new=$(ls -t /var/backups/anysda-vpn2/anysda-vpn2-*.tar.gz.age | head -1)
+    (( $(ls /var/backups/anysda-vpn2 | wc -l) > before )) && age -d -i /run/vpn2-restore.key "$new" | tar tz > /dev/null' \
+    || die 'recover: бэкап таймера не снят или не открывается ключом бэкапов'
+  ssh_node "$ENTRY" 'rm -f /run/vpn2-restore.key'
+  log 'recover: ключ спрошен один раз, пара из архива, бэкап таймера открывается ключом'
+  secrets_absent 'recover: закрытый ключ бэкапов' "$(cat "$STAND_DIR/backup-key")"
 }
 
 # Состояние apt каждого узла и журнал прокси раннера - в отчёт при любом исходе.

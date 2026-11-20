@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from vpn2 import config, creds, deploy
@@ -292,7 +293,8 @@ class NewServerRestoreTests(Store):
                 tar.addfile(info, io.BytesIO(data))
         return name
 
-    def fresh(self, members, *args):
+    def fresh(self, members, *args, typed='AGE-SECRET-KEY-1A'):
+        """Новый сервер: архив выбран, ключ спрошен один раз (restore_input), секреты архива - в хранилище."""
         from vpn2.deploy import report
         local = self.root / 'backups'
         local.mkdir(exist_ok=True)
@@ -300,22 +302,24 @@ class NewServerRestoreTests(Store):
         cfg.write_text(ROOT.joinpath('config.example.yaml').read_text().replace(
             '    dir: /var/backups/anysda-vpn2', f'    dir: {local}'))
         name = self.archive(local, members)
-        out = io.StringIO()
+        out, deploy = io.StringIO(), SimpleNamespace(restore_pulled=None)
+        decrypt = lambda src, dst, secret, what: secret == 'AGE-SECRET-KEY-1A' and what == 'key' and shutil.copy(src, dst)  # noqa: E731
         with mock.patch.object(report, 'CONFIG', cfg), mock.patch.object(report, 'install_prereqs'), \
-                mock.patch.object(report.archive, 'decrypt', lambda src, dst, word: word == 'pass' and shutil.copy(src, dst)), \
-                contextlib.redirect_stdout(out):
-            self.assertEqual(report.fresh_secrets(list(args)), str(name))
+                mock.patch.object(report.archive, 'decrypt', decrypt), \
+                mock.patch.object(report.keys, 'kind', lambda _path: 'key'), \
+                mock.patch('sys.stdin', io.StringIO(typed + '\n')), contextlib.redirect_stdout(out):
+            self.assertEqual(report.restore_input(deploy, list(args), True), [str(name)])
+            self.assertEqual(deploy.restore_secret, (typed, 'key'))
+            report.fresh_secrets(deploy, str(name))
         return out.getvalue()
 
     def test_archive_keys_win_over_a_key_from_deploy_key(self):
-        creds.write('backup_passphrase', 'pass')
         creds.write('orchestrator_key', 'NEW\n')
         said = self.fresh({'secrets.json': json.dumps({'orchestrator_key': 'OLD\n', 'mgmt_key': 'M\n'}).encode()}, 'latest')
         self.assertEqual((creds.read('orchestrator_key'), creds.read('mgmt_key')), ('OLD\n', 'M\n'))
         self.assertEqual(said.count('экзиты знают ключи из архива'), 1)
 
     def test_archive_of_1_2_0_keeps_the_key_from_its_config(self):
-        creds.write('backup_passphrase', 'pass')
         creds.write('orchestrator_key', 'KEY\n')
         self.fresh({'manifest.json': b'{}'})
         self.assertEqual(creds.read('orchestrator_key'), 'KEY\n')
@@ -323,9 +327,10 @@ class NewServerRestoreTests(Store):
     def test_new_server_takes_secrets_then_deploys_then_restores(self):
         from vpn2.deploy import __main__ as main
         calls, real = [], main.dispatch
-        with mock.patch.object(main.report, 'fresh_secrets', lambda args: calls.append(args) or '/x/a.age'), \
+        with mock.patch.object(main.report, 'restore_input', lambda _d, args, fresh: calls.append((args, fresh)) or ['/x/a.age', *args[1:]]), \
+                mock.patch.object(main.report, 'fresh_secrets', lambda _d, path: calls.append(path)), \
                 mock.patch.object(main, 'installed', lambda: False), \
                 mock.patch.object(main, 'dispatch', lambda _d, argv, new_server=None: calls.append((argv, new_server)) or 0):
             self.assertEqual(real(None, ['restore', 'latest', '--force', '--allow-incompatible']), 0)
-        self.assertEqual(calls, [['latest', '--force', '--allow-incompatible'], ([], None),
+        self.assertEqual(calls, [(['latest', '--force', '--allow-incompatible'], True), '/x/a.age', ([], None),
                                  (['restore', '/x/a.age', '--force', '--allow-incompatible'], False)])

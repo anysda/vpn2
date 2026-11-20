@@ -24,9 +24,10 @@
   него новая entry раздала бы экзитам адреса заново;
 - `manifest.json` с SHA-256 каждого компонента.
 
-Архив шифруется [`age`](https://github.com/FiloSottile/age) (symmetric
-passphrase) на entry до записи на диск: открытый `.tar.gz` не попадает ни в
-`/var/backups`, ни в S3.
+Архив шифруется [`age`](https://github.com/FiloSottile/age) открытым ключом
+`/etc/anysda/backup.pub` на entry до записи на диск: открытый `.tar.gz` не
+попадает ни в `/var/backups`, ни в S3. Закрытого ключа на entry нет: его
+показывает первый `./deploy.sh` один раз, в конце установки.
 
 ## Команды
 
@@ -91,14 +92,14 @@ backup:
   #   region: ru-central-1    # обязателен: cloud.ru → ru-central-1,
   #                           # yandex → ru-central1, selectel → ru-1
 secrets:
-  backup_passphrase: ABC123XYZ...   # age symmetric passphrase
   # s3_access_key: ""
   # s3_secret_key: ""
 ```
 
-Passphrase и ключи S3 деплой переносит в хранилище секретов entry и стирает
-из `config.yaml`; посмотреть на entry (только root) -
-`cat /run/vpn2-secrets/root/backup_passphrase`. Стадия
+Ключи S3 деплой переносит в хранилище секретов entry и стирает из
+`config.yaml`. Обновление с 1.2.0 показывает новый ключ вместе с прежним
+паролем архивов и убирает пароль с entry: архивы 1.2.0 restore открывает
+этим паролем. Стадия
 `26-backup` ставит `age`, `sqlite3` (и `rclone` при `backend: s3`),
 кладёт скрипты `/usr/local/bin/anysda-{backup,restore,backup-list}.sh`,
 рендерит `/etc/anysda/backup.env` и включает таймер. Сами скрипты - короткий
@@ -111,10 +112,9 @@ Passphrase и ключи S3 деплой переносит в хранилищ�
 
 После деплоя в `config.yaml` секретов нет: они в зашифрованном хранилище
 entry, копия которого на другой машине не открывается. Вне entry храните
-`config.yaml`, passphrase бэкапов и ключи S3: без passphrase архив не
-открыть, потеря passphrase - потеря всех архивов. При компрометации entry
-смените passphrase (`secrets.backup_passphrase` и `./deploy.sh`) и снимите
-новый архив.
+`config.yaml`, ключ бэкапов (`AGE-SECRET-KEY-1…`) и ключи S3: без ключа
+архив не открыть, потеря ключа - потеря всех архивов, выдать его заново
+нельзя. Архивы 1.2.0 открывает их прежний пароль.
 
 ## Восстановление entry-ноды с нуля
 
@@ -137,14 +137,15 @@ chmod 600 config.yaml
 
 # 4. в config.yaml: entry.password - root-пароль новой машины, entry.host -
 #    новый IP, если сменился; иначе deploy остановится на входе по SSH.
-#    В secrets: backup_passphrase и при s3 - s3_access_key, s3_secret_key.
+#    При s3 в secrets: s3_access_key, s3_secret_key.
 #    Временно panel.domain: "" и sso.enabled: false (SSO требует HTTPS):
 #    деплой restore откроет панель по IP и не выпустит сертификат на домен
 #    до восстановления архива
 # 5. восстановить: секреты и ключи ssh прежней entry берутся из архива до
 #    деплоя, экзиты пускают новую entry прежним ключом - строку
 #    ./deploy.sh -key на экзиты класть не нужно; затем полный деплой и
-#    restore архива
+#    restore архива. Ключ бэкапов restore спросит один раз, в начале, без
+#    эха; без терминала читает его из stdin: < файл-с-ключом
 #    backend: s3 - самый свежий архив или имя из ./deploy.sh backup-list
 ./deploy.sh restore latest
 #    backend: local - путь к архиву, restore сам положит его в каталог

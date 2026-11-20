@@ -229,15 +229,13 @@ admin:
 # панели и бота), WG server private key (/etc/wireguard/wg0.conf), OpenVPN
 # CA + PKI (/etc/openvpn/server/pki/, server.conf, ccd/), IKEv2
 # (/etc/strongswan/, /etc/swanctl/) + manifest.json
-# с SHA-256 каждого компонента. Архив шифруется age (symmetric passphrase)
-# на entry ДО записи на диск/выгрузки в S3 — plaintext .tar.gz никогда не
-# покидает mktemp-dir и не остаётся в файловой системе.
+# с SHA-256 каждого компонента. Архив шифруется age открытым ключом на entry
+# ДО записи на диск/выгрузки в S3 — plaintext .tar.gz никогда не покидает
+# mktemp-dir и не остаётся в файловой системе.
 #
-# Пароль архива - secrets.backup_passphrase в конце файла, единственный секрет
-# бэкапа. Потерял = бэкапы нечитаемы. Обязателен при enabled: true, иначе deploy
-# остановится на проверке конфига (крепкий: openssl rand -base64 32).
-# На компрометацию оркестратора — ротировать пароль И re-encrypt
-# существующие бэкапы (см. README §Backup & Disaster Recovery).
+# Закрытый ключ бэкапов deploy создаёт сам и показывает один раз в конце
+# установки; на сервере его нет. Сохраните его вне entry: потеряете ключ -
+# бэкапы не расшифровать. ./deploy.sh restore спрашивает его.
 backup:
   enabled: true                # отключить — заменить true на false в этой строке
   backend: local               # local | s3
@@ -266,5 +264,4 @@ secrets:
   s3_access_key:
   s3_secret_key:
   sso_client_secret:
-  backup_passphrase:
   admin_password:

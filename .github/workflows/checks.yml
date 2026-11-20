@@ -57,7 +57,6 @@ jobs:
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
           cp config.example.yaml "$d/config.yaml"
-          sed -i 's/^  backup_passphrase:$/  backup_passphrase: ci pass/' "$d/config.yaml"
           export PYTHONPATH=infra/vpn2/src VPN2_CONFIG="$d/config.yaml" VPN2_STATE_DIR="$d/state"
           python3 -B infra/ansible/inventory.py --prepare
           python3 -B infra/ansible/inventory.py --env ru > "$d/ru.env"

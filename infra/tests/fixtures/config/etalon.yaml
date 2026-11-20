@@ -12,7 +12,6 @@ panel:
 backup:
   enabled: true
   backend: local
-  passphrase: "stand-etalon"
   retention: 10
   schedule: off
   local:

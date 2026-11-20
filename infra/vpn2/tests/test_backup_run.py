@@ -10,16 +10,26 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from vpn2.backup import archive, env, listing, restore
+from vpn2.backup import archive, env, keys, listing, restore
 from vpn2.backup import run as backup_run
 
 needs_tools = pytest.mark.skipif(
     any(shutil.which(name) is None for name in ('bash', 'sqlite3', 'tar', 'shred')),
     reason='нужны bash, sqlite3, tar, shred')
 SECRET = 'bot-token-value'
-# age-заглушка: «шифрование» - копия файла, пароль с терминала не читается.
+# age-заглушка: «шифрование» - заголовок age и копия файла; ключ из -i сверяется с STUB_AGE_KEY.
+AGE = '''#!/bin/sh
+[ -z "$STUB_AGE_FAIL" ] || exit "$STUB_AGE_FAIL"
+mode=enc
+while [ $# -gt 1 ]; do
+  case "$1" in -o) dst=$2 ;; -d) mode=dec ;; -i) [ "$(cat "$2")" = "${STUB_AGE_KEY:-AGE-SECRET-KEY-1STUB}" ] || exit 1 ;; esac
+  shift
+done
+if [ $mode = enc ]; then { printf 'age-encryption.org/v1\\n-> X25519 stub\\n--- stub\\n'; cat "$1"; } > "$dst"
+else tail -n +4 "$1" > "$dst"; fi
+'''
 STUBS = {
-    'age': '#!/bin/sh\n[ -z "$STUB_AGE_FAIL" ] || exit "$STUB_AGE_FAIL"\ncp "$4" "$3"\n',
+    'age': AGE,
     'git': '#!/bin/sh\necho abc1234\n',
     'curl': '#!/bin/sh\necho \'{"version":"9.9"}\'\n',
     'rclone': '#!/bin/sh\necho "rclone $*" >> "$STUB_LOG"\n[ "$1" != lsl ] || cat "$STUB_S3_LIST"\n'
@@ -51,6 +61,7 @@ def make_node(root):
     put(etc / 'anysda/tgbot-secret.txt', SECRET + '\n', 0o600)
     put(etc / 'anysda/файл с пробелом.txt', 'данные\n')
     put(etc / 'anysda/source-root', '/nonexistent/src\n')
+    put(etc / 'anysda/backup.pub', 'age1stub\n')
     for name in ('wg0.conf', 'server.priv', 'server.pub'):
         put(etc / 'wireguard' / name, name + '\n', 0o600)
     put(etc / 'openvpn/server/.pki.lock')
@@ -74,8 +85,7 @@ def make_node(root):
 
 
 def values(root, **extra):
-    return {'BACKUP_BACKEND': 'local', 'BACKUP_LOCAL_DIR': str(root / 'out dir'), 'BACKUP_RETENTION': '10',
-            'ANYSDA_BACKUP_PASSPHRASE': 'парольная фраза', **extra}
+    return {'BACKUP_BACKEND': 'local', 'BACKUP_LOCAL_DIR': str(root / 'out dir'), 'BACKUP_RETENTION': '10', **extra}
 
 
 def write_env(root, vals):
@@ -113,7 +123,9 @@ def test_create_archive_manifest_and_summary(node, capsys):
     out = capsys.readouterr().out
     assert f"\n{'backup:':<12} {final}\n{'size:':<12} {final.stat().st_size} bytes\n" in out
     assert out.endswith(f"{'backend:':<12} local\n{'retention:':<12} keep last 10\n")
-    with tarfile.open(final) as tar:
+    assert keys.kind(final) == 'key'
+    archive.decrypt(final, root / 'plain.tar.gz', 'AGE-SECRET-KEY-1STUB', 'key')
+    with tarfile.open(root / 'plain.tar.gz') as tar:
         tar.extractall(root / 'x', filter='tar')
     bundle = root / 'x' / final.name.removesuffix('.tar.gz.age')
     manifest = json.loads((bundle / 'manifest.json').read_text())
@@ -154,13 +166,13 @@ def test_mismatch_in_every_slice_is_warning_code_4(node, capsys):
 
 
 @needs_tools
-def test_empty_passphrase_is_one_event(node, capsys):
+def test_no_public_key_is_one_event(node, capsys):
     root, paths, events = node
-    assert create(root, paths, values(root, ANYSDA_BACKUP_PASSPHRASE='')) == 2
+    (root / 'etc/anysda/backup.pub').unlink()
+    assert create(root, paths) == 2
     err = capsys.readouterr().err
-    assert err.startswith('anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.')
-    assert paths.env_file in err
-    assert [event for event, _kw in events] == [{'type': 'backup_failed', 'detail': 'нет пароля шифрования'}]
+    assert err.startswith('anysda-backup FATAL: нет открытого ключа бэкапов /etc/anysda/backup.pub.')
+    assert [event for event, _kw in events] == [{'type': 'backup_failed', 'detail': 'нет ключа шифрования'}]
     assert events[0][1]['secret_file'] == f'{root}/run/vpn2-secrets/root/tgbot_secret'
 
 
@@ -192,8 +204,7 @@ S3 = {'BACKUP_BACKEND': 's3', 'BACKUP_S3_BUCKET': 'b', 'BACKUP_S3_ENDPOINT': 'ht
     (S3, {}, 1, 'выгрузка в S3 не прошла: архива нет в списке бакета'),
     ({}, {'STUB_SQLITE': 'database or disk is full'}, 1,
      'снимок базы и ключей не снят: нет места на диске'),
-    (S3, {'STUB_SQLITE': 'bad access-key secret-key парольная фраза'}, 1,
-     'снимок базы и ключей не снят: sqlite3: bad *** *** ***'),
+    (S3, {'STUB_SQLITE': 'bad access-key secret-key'}, 1, 'снимок базы и ключей не снят: sqlite3: bad *** ***'),
 ])
 def test_failure_event_names_step_and_cause(node, monkeypatch, extra, stub_env, code, detail):
     """Событие о сбое (панель шлёт его админу в Telegram) называет шаг и причину, без секретов."""
@@ -241,7 +252,7 @@ def test_settings_defaults_and_required():
     assert caught.value.code == 1
     with pytest.raises(env.BackupEnvError, match='BACKUP_S3_BUCKET не задан'):
         env.settings({'BACKUP_BACKEND': 's3'})
-    lazy = env.settings({'BACKUP_BACKEND': 's3', 'ANYSDA_BACKUP_PASSPHRASE': 'секрет'}, lazy_s3=True)
+    lazy = env.settings({'BACKUP_BACKEND': 's3', 'ANYSDA_S3_SECRET_KEY': 'секрет'}, lazy_s3=True)
     assert 'секрет' not in repr(lazy)
     assert env.s3(lazy, 'lsl', 's3:') == (1, '', 'BACKUP_S3_BUCKET: parameter null or not set')
 

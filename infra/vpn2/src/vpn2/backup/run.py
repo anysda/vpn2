@@ -17,24 +17,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from vpn2 import creds, fsutil, notify
-from vpn2.backup import archive, check, env
+from vpn2.backup import archive, check, env, keys
 
 VERSION_URL = 'http://127.0.0.1:51821/api/version'
 LOCK_WAIT = 60
 SLICES = 10
 SECRETS = 'secrets.json'
 SLICE_NAMES = ('db.sqlite', 'etc-wireguard', 'etc-openvpn', 'etc-strongswan', 'etc-swanctl')
-FATAL_TEXT = '''anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.
-
-Ожидается в {env_file}. Источник:
-  config.yaml (backup.passphrase)  →
-  стадия 26-backup рендерит /etc/anysda/backup.env (chmod 600)  →
-  source в Bash-скрипте anysda-backup.sh (вручную или из systemd).
-
-Действия:
-  1. Заполни backup.passphrase в config.yaml на entry.
-  2. ./deploy.sh 26-backup ru — стадия пересоздаст {env_file}.
-  3. Перезапусти бэкап вручную: /usr/local/bin/anysda-backup.sh
+FATAL_TEXT = '''anysda-backup FATAL: нет открытого ключа бэкапов {public}.
+  ./deploy.sh создаст пару и один раз покажет закрытый ключ; затем повтори ./deploy.sh backup
 '''
 
 
@@ -272,10 +263,10 @@ def upload_s3(settings, final, key, retention):
 
 def _make(settings, paths, enter, check, pause, wait):
     """Ход бэкапа; enter(шаг) - чем кончился бы сбой с этого места, для события панели."""
-    if not settings.passphrase:
-        sys.stderr.write(FATAL_TEXT.format(env_file=paths.env_file))
-        raise Stop(2, reason='нет пароля шифрования')
     root = paths.root
+    if not (recipient := keys.recipient(root or '/')):
+        sys.stderr.write(FATAL_TEXT.format(public=f'/{keys.PUBLIC}'))
+        raise Stop(2, reason='нет ключа шифрования')
     retention = int(settings.retention) if settings.retention.isdecimal() else 0
     enter('каталог для архива не подготовлен')
     os.makedirs(settings.local_dir, exist_ok=True)
@@ -299,7 +290,7 @@ def _make(settings, paths, enter, check, pause, wait):
         final = f'{settings.local_dir}/{name}.tar.gz.age'
         enter('упаковка и шифрование не прошли')
         archive.pack(work, name, work / f'{name}.tar.gz')
-        archive.encrypt(work / f'{name}.tar.gz', work / f'{name}.tar.gz.age', settings.passphrase)
+        archive.encrypt(work / f'{name}.tar.gz', work / f'{name}.tar.gz.age', recipient)
         enter('архив не сохранён на диск')
         shutil.move(work / f'{name}.tar.gz.age', final)
         os.chmod(final, 0o600)
@@ -352,12 +343,12 @@ def _error_cause(exc):
 
 
 def _masked(text, settings, secret_file):
-    """Пароль и ключи в событие не попадают."""
+    """Ключи в событие не попадают."""
     try:
         panel_secret = Path(secret_file).read_text().strip()
     except OSError:
         panel_secret = ''
-    for secret in (settings.passphrase, settings.s3_access_key, settings.s3_secret_key, panel_secret):
+    for secret in (settings.s3_access_key, settings.s3_secret_key, panel_secret):
         if secret:
             text = text.replace(secret, '***')
     return text

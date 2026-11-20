@@ -25,13 +25,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from vpn2 import creds, wg
-from vpn2.backup import archive, check, env, revoke
+from vpn2.backup import archive, check, env, keys, revoke
 from vpn2.backup import run as run_backup
 from vpn2.fsutil import filled
 from vpn2.release.state import migration_history
 
-NO_PASSPHRASE = ('anysda-restore FATAL: ANYSDA_BACKUP_PASSPHRASE пуст в {env_file}.\n'
-                 '  Заполни backup.passphrase в config.yaml и прогони ./deploy.sh 26-backup ru')
 FLAGS = {'--force': 'force', '-f': 'force', '--dry-run': 'dry_run', '--allow-incompatible': 'allow_incompatible',
          '--preflight': 'preflight'}
 CONTAINER_MIGRATIONS = 'anysda-vpn2:/app/server/database/migrations'
@@ -202,10 +200,10 @@ def s3_pull(settings, name):
 
 # Проверки архива до любых изменений
 
-def _open(archive_path, work, passphrase):
+def _open(archive_path, work, secret, what):
     """Расшифровать и распаковать архив в work; вернуть каталог набора anysda-vpn2-*."""
     plain = work / 'restore.tar.gz'
-    archive.decrypt(archive_path, plain, passphrase)
+    archive.decrypt(archive_path, plain, secret, what)
     archive.unpack(plain, work)
     archive.wipe(plain)
     found = sorted(path for path in glob.glob(os.path.join(glob.escape(str(work)), 'anysda-vpn2-*'))
@@ -391,6 +389,9 @@ def pre_restore_snapshot(settings, work, root, live_db):
         if rc := archive.code(argv, capture_output=True, **kwargs):
             raise RestoreError(rc, f'anysda-restore: {argv[0]} завершился с кодом {rc}')
 
+    if not (recipient := keys.recipient(root)):
+        raise RestoreError(5, f'anysda-restore: нет ключа бэкапов /{keys.PUBLIC} для страховочной копии — '
+                              'сначала ./deploy.sh; данные не изменены')
     now = datetime.now(UTC)
     stamp = now.strftime('%Y-%m-%dT%H%M%S.') + f'{now.microsecond * 1000:09d}Z'
     snap_dir = Path(settings.local_dir) / '.pre-restore'
@@ -412,7 +413,7 @@ def pre_restore_snapshot(settings, work, root, live_db):
     tar_path, encrypted = work / 'pre-restore.tar.gz', work / 'pre-restore.tar.gz.age'
     archive.pack(tree, '.', tar_path)
     try:
-        archive.encrypt(tar_path, encrypted, settings.passphrase)
+        archive.encrypt(tar_path, encrypted, recipient)
     except archive.ArchiveError:
         raise RestoreError(5, 'anysda-restore: пустой страховочный архив') from None
     shutil.move(encrypted, final)
@@ -628,9 +629,14 @@ def _db(rb):
 
 
 def _etc_anysda(rb):
+    """/etc/anysda из набора. Открытый ключ бэкапов архива сильнее здешнего: его закрытый только что открыл архив.
+    Пароль архива 1.2.0 из его backup.env на диске не остаётся."""
     rb.touched.append('etc/anysda')
-    rb.must(['rm', '-f', f'{rb.bundle}/etc-anysda/source-root'])
+    rb.must(['rm', '-f', f'{rb.bundle}/etc-anysda/source-root', f'{rb.bundle}/etc-anysda/{os.path.basename(keys.UNSEEN)}'])
     rb.copy_into(f'{rb.bundle}/etc-anysda', rb.live('etc/anysda'))
+    if os.path.isfile(f'{rb.bundle}/etc-anysda/{os.path.basename(keys.PUBLIC)}'):
+        keys.seen(rb.root)
+    keys.forget_password(rb.root)
     for name in ('sso-runtime.json', 'telegram-from-config.json'):
         if not os.path.isfile(f'{rb.bundle}/etc-anysda/{name}'):
             rb.must(['rm', '-f', rb.live(f'etc/anysda/{name}')])
@@ -848,16 +854,24 @@ def smoke(source_root, env_file, presnap_final):
         raise RestoreError(7, f'anysda-restore: 99-verify FAILED — проверь руками; pre-restore снимок: {presnap_final}')
 
 
-def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE):
-    """Восстановить узел из архива; ошибки шагов - RestoreError с кодом выхода и текстом для stderr."""
+def secret_for(path, stdin=None, tell=None):
+    """(ключ или пароль, 'key' | 'password') архива path: вид - по самому архиву, человеку сказано, что вводить."""
+    if not (what := keys.kind(path)):
+        raise RestoreError(5, f'anysda-restore: {path} — не архив бэкапа (нет заголовка age); ничего не изменено')
+    try:
+        return keys.ask(what, stdin, tell), what
+    except keys.NoKey as error:
+        raise RestoreError(4, f'anysda-restore: {error}; ничего не изменено') from None
+
+
+def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE, stdin=None):
+    """Восстановить узел из архива (ключ или пароль - с терминала или из stdin); ошибки шагов - RestoreError с кодом выхода и текстом для stderr."""
     try:
         settings = env.settings(env.read_env(env_file), env_file, lazy_s3=True)
     except env.BackupEnvError as exc:
         text = f'anysda-restore: {env_file} не доступен' if exc.code == 2 else str(exc)
         raise RestoreError(exc.code, text) from None
     args = parse_args(argv)
-    if not settings.passphrase:
-        raise RestoreError(2, NO_PASSPHRASE.format(env_file=env_file))
     name, source = _pick(args, settings)
     if args.dry_run:
         return _say(f'dry-run — восстановил бы {name} ({source}), ничего не изменено')
@@ -866,6 +880,12 @@ def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE):
     archive_path = os.path.join(settings.local_dir, name)
     _say(f'source = {archive_path}')
     try:
+        secret, what = secret_for(archive_path, stdin)
+    except RestoreError:
+        if source == 'S3':
+            os.unlink(archive_path)
+        raise
+    try:
         # Клон, из которого шёл деплой (отметку пишет стадия 26-backup).
         source_root = Path(root, 'etc/anysda/source-root').read_text(errors='surrogateescape').rstrip('\n')
     except OSError:
@@ -873,7 +893,12 @@ def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE):
     source_root = source_root or '/opt/anysda-vpn2'
     live_db = os.path.join(root, DB)
     with archive.workdir(os.path.join(root, DB_DIR), '.restore-tmp.') as work:
-        bundle = _open(archive_path, work, settings.passphrase)
+        try:
+            bundle = _open(archive_path, work, secret, what)
+        except RestoreError:
+            if source == 'S3':
+                os.unlink(archive_path)
+            raise
         manifest = check_manifest(bundle, name)
         check_compat(manifest, bundle, work, source_root, args.allow_incompatible)
         check_bundle_report(bundle)

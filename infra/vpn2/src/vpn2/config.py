@@ -401,8 +401,7 @@ def drop_passwords(path):
     return rewrite(path, edit)
 
 
-AREA_NAMES = ('telegram_bot_token', 's3_access_key', 's3_secret_key', 'sso_client_secret', 'backup_passphrase',
-              'admin_password')
+AREA_NAMES = ('telegram_bot_token', 's3_access_key', 's3_secret_key', 'sso_client_secret', 'admin_password')
 AREA = ['# Секреты. Деплой переносит их в зашифрованное хранилище entry и стирает здесь;',
         '# пустое значение - секрет прежний, новое значение - применится при следующем ./deploy.sh.',
         'secrets:', *(f'  {name}:' for name in AREA_NAMES)]

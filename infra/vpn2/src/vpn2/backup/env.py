@@ -7,8 +7,7 @@ from vpn2 import creds
 from vpn2.backup import archive
 
 DEFAULT_ENV_FILE = '/etc/anysda/backup.env'
-STORED = {'ANYSDA_BACKUP_PASSPHRASE': 'backup_passphrase', 'ANYSDA_S3_ACCESS_KEY': 's3_access_key',
-          'ANYSDA_S3_SECRET_KEY': 's3_secret_key'}
+STORED = {'ANYSDA_S3_ACCESS_KEY': 's3_access_key', 'ANYSDA_S3_SECRET_KEY': 's3_secret_key'}
 S3_NAMES = {'s3_bucket': 'BACKUP_S3_BUCKET', 's3_access_key': 'ANYSDA_S3_ACCESS_KEY',
             's3_secret_key': 'ANYSDA_S3_SECRET_KEY', 's3_endpoint': 'BACKUP_S3_ENDPOINT'}
 
@@ -43,7 +42,6 @@ class Settings:
     backend: str
     local_dir: str = '/var/backups/anysda-vpn2'
     retention: str = '10'
-    passphrase: str = field(default='', repr=False)
     s3_endpoint: str = ''
     s3_bucket: str = ''
     s3_region: str = 'us-east-1'
@@ -52,8 +50,8 @@ class Settings:
 
 
 def settings(env, env_file=DEFAULT_ENV_FILE, *, lazy_s3=False):
-    """Settings из словаря read_env; пустое значение - как отсутствующее. Пароль архива и ключи S3 - из
-    хранилища секретов; backup.env прежнего выпуска с ними (restore архива 1.2.0) тоже читается.
+    """Settings из словаря read_env; пустое значение - как отсутствующее. Ключи S3 - из хранилища секретов;
+    backup.env прежнего выпуска с ними (restore архива 1.2.0) тоже читается.
 
     lazy_s3 - не требовать переменные S3 сразу: restore спрашивает их только при обращении к облаку.
     """
@@ -63,7 +61,6 @@ def settings(env, env_file=DEFAULT_ENV_FILE, *, lazy_s3=False):
     values = Settings(backend=env['BACKUP_BACKEND'],
                       local_dir=env.get('BACKUP_LOCAL_DIR') or Settings.local_dir,
                       retention=env.get('BACKUP_RETENTION') or Settings.retention,
-                      passphrase=env.get('ANYSDA_BACKUP_PASSPHRASE', ''),
                       s3_region=env.get('BACKUP_S3_REGION') or Settings.s3_region,
                       **{key: env.get(name, '') for key, name in S3_NAMES.items()})
     if values.backend == 's3' and not lazy_s3 and (unset := _s3_unset(values)):

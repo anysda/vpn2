@@ -77,10 +77,6 @@ def rejected():
                   (CONFIG + f'    hy2_direct_port: {value}\n', 'exits[0].hy2_direct_port')]
     cases += [(CONFIG.replace('tag: se', f'tag: {tag}'), 'exits[0].tag')
               for tag in ('ru', 'all', 'exits', 'foreign', 'SE', '-us', 'us-', 'US', 'us_2')]
-    for enabled in ('true', 'yes'):
-        cases += [(backup(enabled, line), 'secrets.backup_passphrase')
-                  for line in ("passphrase: ''", 'passphrase: ""', 'passphrase:')]
-    cases.append((backup('true'), 'secrets.backup_passphrase'))
     cases += [(CONFIG + extra, key) for extra, key in (
         ('sso:\n  enabeld: true\n', 'sso.enabeld'), ('panle:\n  domain: vpn.example.com\n', 'panle'),
         ('ports:\n  hy2_driect: 4443\n', 'ports.hy2_driect'), ('sso:\n  enabled: tru\n', 'sso.enabled'),

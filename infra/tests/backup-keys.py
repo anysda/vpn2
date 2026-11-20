@@ -35,10 +35,28 @@ def put(path, body, mode=0o600):
     path.chmod(mode)
 
 
+def pair():
+    private = next(line for line in run('age-keygen').stdout.splitlines() if line.startswith('AGE-SECRET-KEY-1'))
+    return private, run('age-keygen', '-y', input_text=private).stdout.strip()
+
+
+KEY, PUBLIC = pair()
+
+
+def restore():
+    """vpn2 restore latest --force без терминала: ключ бэкапов из stdin, архиву старой ветки - её пароль."""
+    archive = max(BACKUPS.glob('*.age'))
+    typed = 'disposable-test-only' if b'-> scrypt ' in archive.read_bytes()[:4096] else KEY
+    return run('env', f'PYTHONPATH={ROOT}/infra/vpn2/src', 'python3', '-B', '-m', 'vpn2.cli', 'restore', 'latest',
+               '--force', input_text=typed + '\n', check=False)
+
+
 def fixture():
     DATA.mkdir(parents=True, exist_ok=True)
+    # Пароль - для архива старой ветки (LEGACY_ROOT), новый код шифрует открытым ключом.
     put('/etc/anysda/backup.env', 'BACKUP_BACKEND=local\n'
         f'BACKUP_LOCAL_DIR={BACKUPS}\nANYSDA_BACKUP_PASSPHRASE=disposable-test-only\n')
+    put('/etc/anysda/backup.pub', PUBLIC + '\n', 0o644)
     put(WG / 'server.priv', run('wg', 'genkey').stdout)
     put(WG / 'server.pub', run('wg', 'pubkey', input_text=(WG / 'server.priv').read_text()).stdout)
     put(WG / 'wg0.conf', '[Interface]\nAddress = 192.0.2.1/24\nListenPort = 51820\n'
@@ -121,8 +139,7 @@ class BackupRestore(unittest.TestCase):
         for item in (ROOT / 'infra/vpn2/src/vpn2').iterdir():
             if item.name != 'verify':
                 (package / item.name).symlink_to(item)
-        put(clone / 'config.yaml', (ROOT / 'config.example.yaml').read_text()
-            .replace('  backup_passphrase:\n', '  backup_passphrase: disposable-test-only\n'))
+        put(clone / 'config.yaml', (ROOT / 'config.example.yaml').read_text())
         put('/opt/vpn2/venv/bin/vpn2', '#!/bin/sh\nexit 0\n', 0o755)
 
     def roundtrip(self, backup_root, bare=False, legacy=False):
@@ -142,7 +159,8 @@ class BackupRestore(unittest.TestCase):
         else:
             DATA.mkdir(parents=True)
             put('/etc/anysda/backup.env', env)
-        result = run('env', f'PYTHONPATH={ROOT}/infra/vpn2/src', 'python3', '-B', '-m', 'vpn2.cli', 'restore', 'latest', '--force', check=False)
+            put('/etc/anysda/backup.pub', PUBLIC + '\n', 0o644)
+        result = restore()
         print(f'\n{self.id()}: restore exit={result.returncode}\n'
               + '\n'.join((result.stdout + result.stderr).splitlines()[-8:]), flush=True)
         self.assertEqual(result.returncode, 0)
@@ -191,7 +209,7 @@ class BackupRestore(unittest.TestCase):
         clean_host()
         fixture()
         original = identity()
-        result = run('env', f'PYTHONPATH={ROOT}/infra/vpn2/src', 'python3', '-B', '-m', 'vpn2.cli', 'restore', 'latest', '--force', check=False)
+        result = restore()
         self.assertEqual(result.returncode, 5)
         self.assertNotIn('останавливаю сервисы', result.stdout)
         self.assertFalse(Path('/test-panel-started').exists())
@@ -208,7 +226,7 @@ class BackupRestore(unittest.TestCase):
         run('env', f'PYTHONPATH={ROOT}/infra/vpn2/src', 'python3', '-B', '-m', 'vpn2.cli', 'backup')
         clean_host()
         fixture()
-        result = run('env', f'PYTHONPATH={ROOT}/infra/vpn2/src', 'python3', '-B', '-m', 'vpn2.cli', 'restore', 'latest', '--force')
+        result = restore()
         self.assertIn('anysda-restore: SUCCESS', result.stdout)
         # Шаг роли ikev2 после restore; службы и swanctl - заглушки.
         # Установка сразу с доменом своего CA не имеет: с ним сервер отдавал бы обе цепочки.

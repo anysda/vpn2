@@ -1,4 +1,5 @@
 """./deploy.sh на чистой системе: пара IP мастеру, службы менеджера и мастера, ссылка в терминал."""
+import inspect
 import subprocess
 import time
 
@@ -24,7 +25,8 @@ def caddy(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(tls, 'install_caddy', lambda: calls.append('install'))
     monkeypatch.setattr(tls, 'ip_certificate', lambda host, **kw: calls.append(('cert', host, kw)) or 'AB:CD')
-    monkeypatch.setattr(tls, 'serve_routes', lambda name, routes, site: calls.append(('routes', name, routes, site)))
+    real = inspect.signature(tls.serve_routes)
+    monkeypatch.setattr(tls, 'serve_routes', lambda *a, **kw: calls.append(('routes', dict(real.bind(*a, **kw).arguments))))
     return tmp_path, calls
 
 
@@ -40,7 +42,7 @@ def test_wizard_keeps_a_copy_of_the_ip_pair_and_not_a_domain_one(caddy, monkeypa
         assert copied, f'после пары {host} у мастера не пара IP'
     assert calls[1] == ('cert', IP, {'acme_url': 'https://198.18.0.1:14000/dir', 'acme_root': ''})
     routes, site = wizard.site(IP)
-    assert calls[2] == ('routes', 'wizard', routes, site)
+    assert calls[2] == ('routes', {'name': 'wizard', 'routes': routes, 'site': site})
     assert '@wizard not path /api/version' in routes and f'https://{IP} {{\n    tls {folder}/vpn2-wizard.crt' in site
     assert f'reverse_proxy 127.0.0.1:{wizard.PORT}' in routes and 'import to_panel' in site
 

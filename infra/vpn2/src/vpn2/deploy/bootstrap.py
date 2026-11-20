@@ -63,7 +63,8 @@ def certificate(ip):
             shutil.copy(key, wizard.CADDY / 'vpn2-wizard.key')
             if os.geteuid() == 0:
                 shutil.chown(wizard.CADDY / 'vpn2-wizard.key', group='caddy')
-    tls.serve_routes('wizard', *wizard.site(ip))
+    routes, own = wizard.site(ip)
+    tls.serve_routes('wizard', routes, site=own)
     return fingerprint
 
 

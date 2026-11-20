@@ -454,3 +454,7 @@ def main(argv):
     reply = call(argv[0], json.loads(argv[1]) if len(argv) == 2 else {})
     print(json.dumps(reply, ensure_ascii=False, indent=2))
     return 0 if reply.get('ok') and 'refused' not in reply.get('result', {}) else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

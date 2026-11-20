@@ -236,6 +236,7 @@ def backup_key_start(manager):
     Пароль архивов 1.2.0 из backup.env - сразу в хранилище: снимки отката деплоя берут /etc/anysda целиком."""
     if (old := keys.forget_password()) and not creds.read('backup_passphrase'):
         creds.write('backup_passphrase', old)
+    keys.scrub_rollback()
     try:
         cfg = config.load(CONFIG).raw.get('backup') or {}
     except (OSError, config.ConfigError):

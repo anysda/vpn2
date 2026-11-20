@@ -4,9 +4,13 @@
 никто не видел: деплой делает новую. Закрытой части на сервере нет; архивы 1.2.0 открывает их прежний пароль.
 """
 import getpass
+import hashlib
+import io
+import json
 import os
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 from vpn2 import fsutil
@@ -17,6 +21,7 @@ UNSEEN = 'etc/anysda/backup.pub.unseen'
 BACKUP_ENV = 'etc/anysda/backup.env'
 OLD_VARIABLE = 'ANYSDA_BACKUP_PASSPHRASE'
 PREFIX = 'AGE-SECRET-KEY-1'
+ROLLBACK = ('var/lib/vpn2-deploy/backups', 'var/lib/vpn2-deploy/panel/backups')
 LOST = 'Потеряете ключ - бэкапы не расшифровать: на сервере его нет, восстановить его нельзя.'
 ASKED = {'key': ('архив зашифрован ключом бэкапов', 'Закрытый ключ бэкапов (AGE-SECRET-KEY-1…)'),
          'password': ('архив сделан до перехода на ключ (выпуск 1.2.0 и раньше) и зашифрован паролем',
@@ -119,10 +124,43 @@ def forget_password(root='/'):
         value = env.read_env(path).get(OLD_VARIABLE, '')
     except (OSError, env.BackupEnvError):
         return ''
-    kept = [line for line in lines if not line.lstrip().removeprefix('export ').startswith(f'{OLD_VARIABLE}=')]
+    kept = _without_password(lines)
     if kept != lines:
         fsutil.atomic(path, ''.join(kept), mode=0o600)
     return value
+
+
+def _without_password(lines):
+    return [line for line in lines if not line.lstrip().removeprefix('export ').startswith(f'{OLD_VARIABLE}=')]
+
+
+def scrub_rollback(root='/'):
+    """Снимки отката деплоя берут /etc/anysda целиком: из их backup.env пароль архивов 1.2.0 уходит, сумма
+    снимка в complete.json - новая, откат по снимку работает как прежде."""
+    for top in ROLLBACK:
+        for snapshot in sorted(_at(top, root).glob('*/configuration.tar')):
+            with tarfile.open(snapshot) as tar:
+                try:
+                    lines = tar.extractfile(BACKUP_ENV).read().decode().splitlines(keepends=True)
+                except (KeyError, AttributeError):
+                    continue
+                if (kept := _without_password(lines)) == lines:
+                    continue
+                members = [(m, tar.extractfile(m).read() if m.isfile() else None) for m in tar.getmembers()]
+            body = ''.join(kept).encode()
+            fresh = snapshot.with_name('configuration.tar.new')
+            with tarfile.open(fresh, 'w') as out:
+                for member, data in members:
+                    if member.name == BACKUP_ENV:
+                        member.size, data = len(body), body
+                    out.addfile(member, None if data is None else io.BytesIO(data))
+            os.chmod(fresh, 0o600)
+            os.replace(fresh, snapshot)
+            done = snapshot.with_name('complete.json')
+            if done.is_file():
+                sums = json.loads(done.read_text())
+                sums['configuration.tar'] = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                fsutil.atomic(done, json.dumps(sums))
 
 
 def shown_text(private, lost_archives=()):

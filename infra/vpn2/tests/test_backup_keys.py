@@ -1,13 +1,16 @@
 """Ключ бэкапов: пара age, показ один раз, пароль архивов 1.2.0 уходит с сервера, расшифровка по виду архива."""
 import io
+import json
 import os
 import shutil
+import tarfile
 from pathlib import Path
 
 import pytest
 from vpn2 import config, creds
 from vpn2.backup import archive, keys
 from vpn2.deploy import report
+from vpn2.release import state
 
 needs_age = pytest.mark.skipif(not (shutil.which('age') and shutil.which('age-keygen')), reason='нужен age')
 EXAMPLE = Path(__file__).resolve().parents[3] / 'config.example.yaml'
@@ -27,6 +30,26 @@ def entry(tmp_path, monkeypatch):
     monkeypatch.setattr(report, 'CONFIG', cfg)
     monkeypatch.setattr(report, 'install_prereqs', lambda *_names: None)
     return root, backups, cfg
+
+
+def rollback_snapshot(root, backup_env):
+    """Снимок отката деплоя 1.2.0: /etc/anysda с backup.env, сумма в complete.json."""
+    snapshot = root / 'var/lib/vpn2-deploy/panel/backups/1'
+    snapshot.mkdir(parents=True)
+    with tarfile.open(snapshot / 'configuration.tar', 'w') as tar:
+        tar.addfile(_dir('etc/anysda'))
+        for name, data in (('etc/anysda/backup.env', backup_env), ('etc/anysda/other', b'kept')):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    (snapshot / 'complete.json').write_text(json.dumps({'configuration.tar': state.sha256(snapshot / 'configuration.tar')}))
+    return snapshot
+
+
+def _dir(name):
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.DIRTYPE
+    return info
 
 
 def disk_has(root, *needles):
@@ -88,7 +111,12 @@ def test_upgrade_from_1_2_0_prints_key_and_old_password_together_then_drops_it(e
     creds.write('backup_passphrase', 'old 1.2.0 pass')
     (root / 'etc/anysda/backup.env').write_text("BACKUP_BACKEND=local\nANYSDA_BACKUP_PASSPHRASE='old 1.2.0 pass'\n")
     creds.write('backup_passphrase', '')
+    snapshot = rollback_snapshot(root, (root / 'etc/anysda/backup.env').read_bytes())
     issued = report.backup_key_start(manager=False)
+    state.verify_backup(snapshot)
+    with tarfile.open(snapshot / 'configuration.tar') as tar:
+        assert tar.extractfile('etc/anysda/backup.env').read() == b'BACKUP_BACKEND=local\n'
+        assert tar.extractfile('etc/anysda/other').read() == b'kept'
     assert (root / 'etc/anysda/backup.env').read_text() == 'BACKUP_BACKEND=local\n', 'до снимков отката деплоя'
     assert creds.read('backup_passphrase') == 'old 1.2.0 pass'
     report.show_backup_key(issued)

@@ -132,7 +132,8 @@ jobs:
             { python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" install -q ./infra/vpn2
               echo $? > "$RUNNER_TEMP/venv.rc"; } > "$RUNNER_TEMP/venv.log" 2>&1 &
           fi
-          { sudo infra/tests/ci-stand.sh up-wait > "$RUNNER_TEMP/up.log" 2>&1; echo $? > "$RUNNER_TEMP/up.rc"
+          # set +e: шаг идёт под bash -e, упавший деплой последним в && оборвал бы группу до deploy.rc - ожидание висело бы
+          { set +e; sudo infra/tests/ci-stand.sh up-wait > "$RUNNER_TEMP/up.log" 2>&1; echo $? > "$RUNNER_TEMP/up.rc"
             part=${{ matrix.part }}
             [ "$(cat "$RUNNER_TEMP/up.rc")" = 0 ] && { [ "$part" != tls ] && [ "$part" != wizard-noacme ] || sudo infra/tests/ci-stand.sh acme-down; } \
               && sudo infra/tests/ci-stand.sh "$([ "${part#wizard}" = "$part" ] && echo deploy || echo wizard)" vpn2-stand/panel:${{ github.sha }}

@@ -69,16 +69,19 @@ jobs:
         run: python3 .github/reuse.py stand
 
   deploy:
-    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой' || 'restore' }}"
+    name: "стенд развёртывание Ubuntu ${{ matrix.os }}, ${{ matrix.part == 'again' && 'повторный деплой' || matrix.part == 'tls' && 'TLS без ACME' || 'restore' }}"
     needs: reuse
     if: ${{ !cancelled() && needs.reuse.outputs.run != 'skip' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.part == 'tls' && 45 || 30 }}
     strategy:
       fail-fast: false
       matrix:
         os: ['24.04', '26.04']
         part: [again, restore]
+        # Установка при недоступном ACME: самоподписанная пара, потом смена на пару CA.
+        include:
+          - {os: '26.04', part: tls}
     env:
       STAND_OS: ${{ matrix.os }}
     steps:
@@ -127,7 +130,8 @@ jobs:
               echo $? > "$RUNNER_TEMP/venv.rc"; } > "$RUNNER_TEMP/venv.log" 2>&1 &
           fi
           { sudo infra/tests/ci-stand.sh up-wait > "$RUNNER_TEMP/up.log" 2>&1; echo $? > "$RUNNER_TEMP/up.rc"
-            [ "$(cat "$RUNNER_TEMP/up.rc")" = 0 ] && sudo infra/tests/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
+            [ "$(cat "$RUNNER_TEMP/up.rc")" = 0 ] && { [ "${{ matrix.part }}" != tls ] || sudo infra/tests/ci-stand.sh acme-down; } \
+              && sudo infra/tests/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
             echo $? > "$RUNNER_TEMP/deploy.rc"; } > "$RUNNER_TEMP/deploy.log" 2>&1 &
 
       - uses: docker/setup-buildx-action@v4
@@ -170,6 +174,11 @@ jobs:
           until [ -s "$RUNNER_TEMP/deploy.rc" ]; do sleep 0.5; done
           sleep 1; kill "$shown"
           exit "$(cat "$RUNNER_TEMP/deploy.rc")"
+
+      - name: "TLS: самоподписанная пара, потом пара CA без перезапуска панели"
+        if: matrix.part == 'tls'
+        timeout-minutes: 20
+        run: sudo infra/tests/ci-stand.sh tls-switch
 
       # ansible с entry достаёт все узлы стенда.
       - name: ansible ping
@@ -284,7 +293,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: verify-report-${{ matrix.part == 'restore' && 'restore-' || '' }}ubuntu-${{ matrix.os }}
+          name: verify-report-${{ matrix.part != 'again' && format('{0}-', matrix.part) || '' }}ubuntu-${{ matrix.os }}
           path: stand-report/
           if-no-files-found: warn
 

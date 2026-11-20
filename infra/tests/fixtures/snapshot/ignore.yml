@@ -46,6 +46,8 @@
 - {section: files, name: '/etc/vpn2/tls/ip/????????????????????????????????????????????????????????????????*', field: '*', reason: каталог выпуска назван отпечатком сертификата - он и его содержимое каждый раз новые}
 - {section: files, name: '/etc/vpn2/tls/ip/current', field: '*', reason: ссылка на каталог выпуска с отпечатком нового сертификата}
 - {section: files, name: '/etc/vpn2/tls/ip/*.pem', field: sha256, reason: сертификат на IP выпускается при установке}
+- {section: files, name: '/etc/vpn2/tls/self-signed/*.pem', field: sha256, reason: самоподписанная пара панели создаётся при установке}
+- {section: files, name: '/etc/caddy/vpn2-site.*', field: sha256, reason: пара сайта панели - сертификат, выпущенный при установке}
 - {section: files, name: '/etc/ld.so.cache', field: sha256, reason: кэш линковщика пересобирает любое обновление пакетов образа}
 
 # Состояние, которое службы пишут во время работы

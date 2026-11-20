@@ -1224,6 +1224,9 @@ cmd_deploy_upgrade() {
     || die 'обновление: адреса mesh выпуска не прочитаны'
   ssh_node "$ENTRY" "install -m 600 /etc/anysda/admin-password.txt $ADMIN_PASSWORD_FILE" \
     || die 'обновление: пароля панели выпуска нет'
+  local cert_before issued
+  cert_before=$(served_fp)
+  issued=$(openssl s_client -connect "$ENTRY:443" </dev/null 2>/dev/null | openssl x509 -noout -startdate | cut -d= -f2)
   push_tree --over "$tag"
   load_panel "$image" || return 1
   entry_run deploy './deploy.sh --development' || rc=$?
@@ -1244,6 +1247,71 @@ cmd_deploy_upgrade() {
   ssh_node "$ENTRY" "test -s $STATE/known_hosts" || die "обновление: нет $STATE/known_hosts"
   left=$(ssh_node "$ENTRY" "ls -d $OLD_STATE ${OLD_STATE%/state}/.known_hosts* 2>/dev/null") || true
   [[ -z $left ]] || die "обновление: состояние деплоя осталось в checkout: $left"
+  # Сертификат выпуска переживает обновление: новый лист - только если подошло его обновление (5 суток).
+  local cert_after
+  cert_after=$(served_fp)
+  log "сертификат панели: до $cert_before, после $cert_after (выпущен $issued)"
+  [[ -z $cert_before || $cert_after == "$cert_before" ]] || (( $(date +%s) - $(date -d "$issued" +%s) > 4 * 86400 )) \
+    || die 'обновление: сертификат панели выпущен заново'
+}
+
+# Отпечаток SHA-256 пары, которую сайт панели отдаёт браузеру (без SNI, как на IP).
+served_fp() {
+  openssl s_client -connect "$ENTRY:443" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2
+}
+
+cmd_acme_down() {
+  pkill -f "$STAND_DIR/acme/pebble -config" || true
+  log 'тестовый ACME остановлен: выпуск сертификата отказывает'
+}
+
+# Установка шла без ACME: итог деплоя называет отпечаток отданной самоподписанной пары, браузер
+# входит поверх неё. Потом ACME поднимается: пара CA встаёт сама, контейнер панели тот же, сессия
+# живёт, запросы с cookie и 99-verify посреди смены не падают.
+cmd_tls_switch() {
+  local pw=$STAND_DIR/playwright url=https://$ENTRY version printed own started pass jar=$STAND_DIR/tls.jar
+  version=$(sed -n 's/.*"@playwright\/test": "\([^"]*\)".*/\1/p' "$REPO_ROOT/app/package.json")
+  docker pull -q "mcr.microsoft.com/playwright:v$version-noble" >/dev/null &
+  local pulled=$!
+  printed=$(ssh_node "$ENTRY" "sed 's/\x1b\[[0-9;]*m//g' /root/deploy.log" \
+    | sed -n '/деплой завершён/,$s/.*⚠ сертификат самоподписанный, отпечаток SHA-256 \([0-9A-F:]*\)$/\1/p' | tail -1)
+  own=$(served_fp)
+  log "итог деплоя: '$printed', отдаёт сайт: '$own'"
+  [[ -n $printed && $printed == "$own" ]] || die 'отпечаток в итоге деплоя не тот, что отдаёт сайт панели'
+  pass=$(ssh_node "$ENTRY" "cat $ADMIN_PASSWORD_FILE")
+  wait "$pulled" || die 'образ playwright не скачан'
+  mkdir -p "$pw"
+  browser() {
+    docker run --rm --network host -e PANEL_PASSWORD="$pass" -e NODE_PATH=/pw/node_modules -v "$pw:/pw" \
+      -v "$REPO_ROOT/infra/tests:/t:ro" "mcr.microsoft.com/playwright:v$version-noble" \
+      bash -c "[ -d /pw/node_modules/playwright ] || npm i -s --prefix /pw playwright@$version >/dev/null; node /t/stand-tls-login.cjs $1 $url /pw/state.json"
+  }
+  browser login || die 'браузер не вошёл в панель поверх самоподписанной пары'
+  python3 -c 'import json,sys; print(json.dumps({"username": "anysda", "password": sys.stdin.read().strip()}))' <<<"$pass" \
+    | curl -fsSk -o /dev/null -c "$jar" -H "Origin: $url" -H 'Content-Type: application/json' -d @- "$url/api/auth/sign-in/username" \
+    || die 'вход curl через Caddy не прошёл'
+  started=$(ssh_node "$ENTRY" "docker inspect -f '{{.State.StartedAt}}' anysda-vpn2")
+  acme_up
+  local deadline=$((SECONDS + 900)) runs=0 requests=0 failed=0
+  while [[ $(served_fp) == "$own" ]]; do
+    (( SECONDS < deadline )) || die 'пара CA не встала за 15 мин после подъёма ACME'
+    curl -fsSk -b "$jar" "$url/api/auth/get-session" | grep -q '"anysda"' || failed=$((failed + 1))
+    requests=$((requests + 1))
+    if (( runs < 20 )); then
+      entry_run verify-switch './deploy.sh --development 99-verify all' >/dev/null || die '99-verify упал, пока ждал смену пары'
+      runs=$((runs + 1))
+    else
+      sleep 2
+    fi
+  done
+  log "пара CA встала: $(served_fp); 99-verify во время ожидания: $runs, запросов с cookie: $requests, отказов: $failed"
+  (( failed == 0 )) || die "запросы с cookie падали во время смены пары: $failed"
+  [[ $(ssh_node "$ENTRY" "docker inspect -f '{{.State.StartedAt}}' anysda-vpn2") == "$started" ]] \
+    || die 'контейнер панели перезапущен при смене пары'
+  curl -fsSk -b "$jar" "$url/api/auth/get-session" | grep -q '"anysda"' || die 'сессия curl не пережила смену пары'
+  browser check || die 'сессия браузера не пережила смену пары'
+  entry_run verify-after './deploy.sh --development 99-verify all' || die '99-verify после смены пары упал'
+  ! ssh_node "$ENTRY" "grep -q самоподписанный /root/verify-after.log" || die '99-verify с парой CA всё ещё предупреждает'
 }
 
 # Положительный контроль: правка файла продукта, которую сверка с эталоном
@@ -1616,6 +1684,8 @@ case "${1:-}" in
   deploy-upgrade) cmd_deploy_upgrade "${@:2}" ;;
   deploy-udp) cmd_deploy_udp ;;
   deploy-again) cmd_deploy_again "${@:2}" ;;
+  acme-down) cmd_acme_down ;;
+  tls-switch) cmd_tls_switch ;;
   ansible-ping) cmd_ansible_ping ;;
   verify) cmd_verify "${@:2}" ;;
   udp-cut) cmd_udp_cut "${@:2}" ;;

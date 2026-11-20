@@ -483,6 +483,18 @@ fi
         self.assertEqual((self.safety() / 'var/lib/anysda-vpn2/state/mgmt-ips.txt').read_text(), 'nl 2\n')
         print('deploy_state_round_trip=PASS', flush=True)
 
+    def test_new_server_keeps_its_own_host_keys(self):
+        # Чистый сервер на том же адресе: ключ хоста у него новый, архив знает прежний.
+        state = Path('/var/lib/anysda-vpn2/state')
+        self.addCleanup(shutil.rmtree, state, ignore_errors=True)
+        write(str(state / 'known_hosts'), '192.0.2.1 ssh-ed25519 OLD\n192.0.2.2 ssh-ed25519 EXIT\n', 0o600)
+        self.backup()
+        write(str(state / 'known_hosts'), '192.0.2.1 ssh-ed25519 NEW\n', 0o600)
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((state / 'known_hosts').read_text(), '192.0.2.1 ssh-ed25519 NEW\n192.0.2.2 ssh-ed25519 EXIT\n')
+        print('new_server_keeps_its_own_host_keys=PASS', flush=True)
+
     def test_without_caddy_storage(self):
         # То же содержимое бандла, что до появления Caddy в формате v1.
         bundle = self.backup()

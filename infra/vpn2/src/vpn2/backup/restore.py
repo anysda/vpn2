@@ -704,11 +704,18 @@ def _deploy_state(rb):
         owner = os.stat(manifest)
         shutil.copy2(manifest, kept)
         os.chown(kept, owner.st_uid, owner.st_gid)
+    hosts = f'{state}/known_hosts'
+    own = Path(hosts).read_text().splitlines(keepends=True) if os.path.isfile(hosts) else None
     try:
         rb.copy_into(f'{rb.bundle}/deploy-state', state)
     finally:
         if installed:
             os.replace(kept, manifest)
+    # Ключи хостов этого сервера сильнее архивных: чистый сервер на прежнем адресе - с новым ключом хоста.
+    if own is not None:
+        known = {line.split()[0] for line in own if line.strip()}
+        archived = Path(hosts).read_text().splitlines(keepends=True) if os.path.isfile(hosts) else []
+        Path(hosts).write_text(''.join(own + [line for line in archived if line.strip() and line.split()[0] not in known]))
 
 
 APPLY = (('установка БД', 'db.sqlite', _db), ('восстановление /etc/anysda', 'etc-anysda', _etc_anysda),

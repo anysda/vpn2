@@ -198,8 +198,12 @@ class Manager:
         """Задание, чей процесс кончился: итог из хода; не done - config.yaml к составу до задания."""
         if job['state'] != 'running' or self.alive():
             return job
-        code = fsutil.read_json(self.folder(job['id']) / 'progress.json', {}).get('exit')
+        progress = fsutil.read_json(self.folder(job['id']) / 'progress.json', {})
+        code = progress.get('exit')
         job['state'] = 'done' if code in (0, 2) else 'failed' if code is not None else 'interrupted'
+        # Что-то легло на узлы хоть в одной попытке: повтор, упавший раньше, этого не стирает.
+        job['laid'] = job.get('laid') or any(item['state'] != 'pending' and item['name'] != 'preflight'
+                                             for item in progress.get('stages', []))
         if job['state'] != 'done':
             self.restore(job)
         self.save(job)
@@ -305,8 +309,7 @@ class Manager:
         job = self.closed(number)
         job['state'] = 'forgotten'
         self.save(job)
-        stages = fsutil.read_json(self.folder(job['id']) / 'progress.json', {}).get('stages', [])
-        if job['kind'] != 'add' or all(item['state'] == 'pending' or item['name'] == 'preflight' for item in stages):
+        if job['kind'] != 'add' or not job.get('laid'):
             return self.view(job)
         # Добавление успело что-то положить: entry перестраивается без экзита, сервер чистится.
         cleanup = {'id': self.latest() + 1, 'kind': 'remove', 'tag': job['tag'], 'host': job['host'], 'state': 'new', 'skipped': []}

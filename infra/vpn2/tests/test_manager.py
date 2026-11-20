@@ -153,6 +153,17 @@ def test_forget_of_add_that_laid_nothing_closes_it(fake):
     assert (fake.latest(), tags(fake)) == (1, ['se', 'at'])
 
 
+def test_forget_remembers_what_an_earlier_attempt_laid(fake):
+    call(fake, 'exit.add', tag='nl', host='192.0.2.9')
+    fake.end(1, [{'name': '10-foreign', 'state': 'failed', 'nodes': ['nl'], 'failed': ['nl']}])
+    call(fake, 'job.read', job=1)
+    call(fake, 'job.retry', job=1)
+    fake.end(1, [{'name': 'preflight', 'state': 'failed', 'nodes': ['ru'], 'failed': ['ru']},
+                 {'name': '10-foreign', 'state': 'pending', 'nodes': [], 'failed': []}])
+    call(fake, 'job.read', job=1)
+    assert call(fake, 'job.forget', job=1)['kind'] == 'remove' and fake.spawned[-1] == ['exit-remove', 'nl', '192.0.2.9']
+
+
 def test_release_check_refusal_names_the_node(fake):
     call(fake, 'exit.add', tag='nl', host='192.0.2.9')
     (fake.folder(1) / 'log').write_text(

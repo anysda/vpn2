@@ -334,3 +334,12 @@ def test_ip_certificate_prepares_the_ip_site_and_returns_the_self_signed_fingerp
     assert run.call_args_list[0].args[0] == ['systemctl', 'reload-or-restart', 'caddy']
     with pytest.raises(ValueError):
         tls.serve_routes('../x', 'route {}')
+
+
+def test_install_caddy_runs_the_pinned_installer_and_fails_loudly():
+    from vpn2 import deploy
+    with patch.object(deploy, 'svc', return_value=0) as svc:
+        tls.install_caddy()
+    svc.assert_called_once_with('caddy_install')
+    with patch.object(deploy, 'svc', return_value=1), pytest.raises(RuntimeError):
+        tls.install_caddy()

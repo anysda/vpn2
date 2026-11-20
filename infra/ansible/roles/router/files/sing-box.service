@@ -18,6 +18,10 @@ ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 # (или pkill по имени) кладёт маршрутизацию насовсем.
 Restart=always
 RestartSec=2s
+# Обычная остановка - десятки мс; подключения, зависшие на дозвоне к выключенному экзиту,
+# держат её секундами (клиенты всё это время без связи). Состояние sing-box на диске -
+# cache.db (bbolt), убийство его не портит.
+TimeoutStopSec=300ms
 LimitNOFILE=1048576
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW

@@ -232,7 +232,10 @@ KEY_ACTIONS = ('', 'recover', 'restore', '26-backup')
 def backup_key_start(manager):
     """Пары нет или её никто не видел - новая; закрытая часть - в памяти до show_backup_key в конце прогона.
     Задание менеджера пару только заводит, если её нет: показ - дело мастера (vpn2.backup.keys.issue()).
-    Вернуть (закрытый ключ, открытый, архивы с непоказанной парой) или False."""
+    Вернуть (закрытый ключ, открытый, архивы с непоказанной парой) или False.
+    Пароль архивов 1.2.0 из backup.env - сразу в хранилище: снимки отката деплоя берут /etc/anysda целиком."""
+    if (old := keys.forget_password()) and not creds.read('backup_passphrase'):
+        creds.write('backup_passphrase', old)
     try:
         cfg = config.load(CONFIG).raw.get('backup') or {}
     except (OSError, config.ConfigError):

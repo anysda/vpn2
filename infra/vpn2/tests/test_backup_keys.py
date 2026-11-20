@@ -87,7 +87,10 @@ def test_upgrade_from_1_2_0_prints_key_and_old_password_together_then_drops_it(e
     cfg.write_text(cfg.read_text().replace('backup:\n  enabled: true', 'backup:\n  passphrase: "old 1.2.0 pass"\n  enabled: true'))
     creds.write('backup_passphrase', 'old 1.2.0 pass')
     (root / 'etc/anysda/backup.env').write_text("BACKUP_BACKEND=local\nANYSDA_BACKUP_PASSPHRASE='old 1.2.0 pass'\n")
+    creds.write('backup_passphrase', '')
     issued = report.backup_key_start(manager=False)
+    assert (root / 'etc/anysda/backup.env').read_text() == 'BACKUP_BACKEND=local\n', 'до снимков отката деплоя'
+    assert creds.read('backup_passphrase') == 'old 1.2.0 pass'
     report.show_backup_key(issued)
     out = capsys.readouterr().out
     assert issued[0] in out and 'Пароль архивов, сделанных до перехода на ключ: old 1.2.0 pass' in out

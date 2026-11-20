@@ -61,7 +61,7 @@ def tree(tmp_path):
 def manifest_of(root, tmp_path):
     digests = tmp_path / 'digests'
     digests.mkdir()
-    for name in ('panel', 'tgbot', 'emergency'):
+    for name in ('panel', 'tgbot', 'emergency', 'wizard'):
         (digests / f'{name}.txt').write_text('sha256:' + 'a' * 64)
     output = tmp_path / 'release-manifest.json'
     with patch.object(build, 'resolve_image', return_value=IMAGE), \

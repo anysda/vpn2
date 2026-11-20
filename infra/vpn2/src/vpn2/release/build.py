@@ -12,7 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from . import GITHUB_API, ReleaseError, command, digest, download, sha256, source_files, versions
+from . import COMPONENTS, GITHUB_API, ReleaseError, command, digest, download, sha256, source_files, versions
 
 
 def fetch(url, timeout=60):
@@ -104,7 +104,7 @@ def build(argv):
     args = parser.parse_args(argv)
     root = args.root
     images = {name: resolve_image(args.repository + '/' + name, (args.digests / (name + '.txt')).read_text().strip())
-              for name in ('panel', 'tgbot', 'emergency')}
+              for name in COMPONENTS}
     journal = json.loads((root / 'app/server/database/migrations/meta/_journal.json').read_text())
     entries = journal['entries']
     history = [{'when': e['when'], 'sha256': sha256(root / f"app/server/database/migrations/{e['tag']}.sql")}

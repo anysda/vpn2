@@ -8,6 +8,7 @@ app/.output
 app/.data
 app/.cache
 infra/emergency/vpn2_emergency/static
+app/wizard/dist
 **/__pycache__
 **/.env
 **/.env.*

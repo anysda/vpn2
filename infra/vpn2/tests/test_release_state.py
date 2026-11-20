@@ -93,7 +93,7 @@ def build_manifest(directory, migrations_after_tag):
     (repo / 'notes').write_text('later commit')
     commit(2 + migrations_after_tag, 'later')
     output = work / 'release-manifest.json'
-    for name in ('panel', 'tgbot', 'emergency'):
+    for name in ('panel', 'tgbot', 'emergency', 'wizard'):
         (work / (name + '.txt')).write_text(A)
     argv = ['build-manifest', '--root', str(repo), '--digests', str(work), '--output', str(output)]
     with patch.object(build, 'resolve_image', return_value={}), patch.object(build, 'binary_specs', return_value={}), \

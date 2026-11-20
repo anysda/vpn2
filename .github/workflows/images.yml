@@ -49,6 +49,7 @@ jobs:
             ghcr.io/${{ github.repository }}/panel
             ghcr.io/${{ github.repository }}/tgbot
             ghcr.io/${{ github.repository }}/emergency
+            ghcr.io/${{ github.repository }}/wizard
           tags: &image-tags |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -59,7 +60,7 @@ jobs:
           TAGS: ${{ steps.meta.outputs.tags }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          for name in panel tgbot emergency; do
+          for name in panel tgbot emergency wizard; do
             image="ghcr.io/$GITHUB_REPOSITORY/$name"
             src="$image:sha-dev-${GITHUB_SHA::7}"
             mapfile -t tags < <(grep "^$image:" <<< "$TAGS" | sed 's/^/--tag=/')
@@ -87,6 +88,11 @@ jobs:
           - name: emergency
             context: .
             file: infra/emergency/Dockerfile
+          # Статика мастера установки: вторая цель того же Dockerfile.
+          - name: wizard
+            context: .
+            file: infra/emergency/Dockerfile
+            target: wizard
     steps:
       - uses: actions/checkout@v7
 
@@ -118,6 +124,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
           build-args: |
             VPN2_VERSION=${{ steps.version.outputs.version }}
             VPN2_REVISION=${{ github.sha }}
@@ -196,12 +203,25 @@ jobs:
           done
           exit 1
 
+      # Мастер установки: статику bootstrap копирует из остановленного контейнера.
+      - name: smoke wizard
+        if: matrix.name == 'wizard'
+        run: |
+          work=$(mktemp -d)
+          trap 'docker rm -f smoke >/dev/null; rm -rf "$work"' EXIT
+          docker create --name smoke --network none smoke/wizard >/dev/null
+          docker cp smoke:/opt/vpn2-wizard/. "$work/"
+          python3 -c 'import json, sys; json.load(open(sys.argv[1]))["revision"]' "$work/image.json"
+          grep -q '<title>vpn2 · Установка</title>' "$work/static/index.html"
+          ls "$work"/static/assets/*.js "$work"/static/assets/color-mode.js >/dev/null
+
       - name: push
         id: push
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
           build-args: |
             VPN2_VERSION=${{ steps.version.outputs.version }}
             VPN2_REVISION=${{ github.sha }}

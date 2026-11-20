@@ -26,6 +26,8 @@ from vpn2.fsutil import read_json
 # CI publishes each images build's manifest next to the panel image, tagged
 # release-<full commit>: the package is public, anonymous pull needs no account.
 RELEASE_SOURCE = 'https://ghcr.io/anysda/vpn2/panel'
+# Images of one build, pinned by digest in its manifest; wizard - static of the install wizard (982).
+COMPONENTS = ('panel', 'tgbot', 'emergency', 'wizard')
 MANIFEST_MEDIA_TYPE = 'application/vnd.anysda.vpn2.release-manifest.v1+json'
 # A freshly started dockerd can break a layer extraction (snapshot not found,
 # context canceled); the same pull a few seconds later succeeds.
@@ -407,7 +409,7 @@ def main(argv=None):
     download.add_argument('root')
     download.add_argument('--source', default=os.environ.get('VPN2_RELEASE_SOURCE') or RELEASE_SOURCE)
     img = sub.add_parser('image')
-    img.add_argument('component', choices=('panel', 'tgbot', 'emergency'))
+    img.add_argument('component', choices=COMPONENTS)
     img.add_argument('--requested', default='')
     img.add_argument('--offline', action='store_true')
     art = sub.add_parser('artifact')

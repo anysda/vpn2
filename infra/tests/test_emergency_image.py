@@ -128,10 +128,26 @@ class EmergencyImageTests(unittest.TestCase):
             self.assertIn(needle, ignore)
         self.assertNotIn('!infra/vpn2/src/vpn2', ignore)
 
+    def test_wizard_static_is_a_second_carrier(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/images.yml').read_text())
+        build = workflow['jobs']['build']
+        entry = {item['name']: item for item in build['strategy']['matrix']['include']}['wizard']
+        self.assertEqual((entry['file'], entry['target']), ('infra/emergency/Dockerfile', 'wizard'))
+        steps = {step.get('name', step.get('id')): step for step in build['steps']}
+        for name in ('build', 'push'):
+            self.assertEqual(steps[name]['with']['target'], '${{ matrix.target }}')
+        self.assertIn('/opt/vpn2-wizard/', steps['smoke wizard']['run'])
+        text = (ROOT / 'infra/emergency/Dockerfile').read_text()
+        self.assertIn('RUN pnpm wizard:build', text)
+        stage = text.split('\nFROM scratch AS wizard\n', 1)[1].split('\nFROM ', 1)[0]
+        for needle in ('LABEL vpn2.component=wizard', 'wizard/dist /opt/vpn2-wizard/static\n', 'image.json'):
+            self.assertIn(needle, stage)
+        self.assertIn('app/wizard/dist', (ROOT / 'infra/emergency/Dockerfile.dockerignore').read_text().splitlines())
+
     def test_release_manifest_pins_emergency_image(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest, _ = test_release.ReleaseTests().build_manifest(Path(directory), migrations_after_tag=0)
-        self.assertEqual(sorted(manifest['images']), ['emergency', 'panel', 'tgbot'])
+        self.assertEqual(sorted(manifest['images']), ['emergency', 'panel', 'tgbot', 'wizard'])
         result = subprocess.run([sys.executable, '-m', 'vpn2.release', '--manifest',
                                  '/nonexistent/release-manifest.json', 'image', 'emergency', '--offline'],
                                 env=dict(os.environ, PYTHONPATH=str(ROOT / 'infra/vpn2/src')),

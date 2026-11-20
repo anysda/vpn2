@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from vpn2 import config, creds
+from vpn2 import config, creds, wizard
 from vpn2.config import STATE_DIR
 
 INFRA = Path(os.environ.get('DEPLOY_ROOT') or Path(__file__).resolve().parents[3])
@@ -301,15 +301,20 @@ def install_prereqs(*extra):
     for name in commands:
         print(f'  {name:<10} {G}✓{E}', flush=True)
     # Docker свежего entry (им проверяются образы выпуска) и его compose ставятся, пока собирается venv.
-    docker = None
-    if not shutil.which('docker') and not installed():
-        docker = subprocess.Popen(['bash', '-c', 'set -euo pipefail; HOST_TAG=ru; source "$0"; docker_apt_source; apt_update_if_stale\n'
-                                   'DEBIAN_FRONTEND=noninteractive apt_get install -y -qq "${DOCKER_PKGS[@]}" "${DOCKER_SKIP[@]/#docker-compose-plugin-/docker-compose-plugin}" >/dev/null\n'
-                                   'systemctl enable --now docker', INFRA / 'lib/anysda-svc.sh'], stdin=subprocess.DEVNULL)
+    docker = docker_install()
     ensure_venv()
     if docker and docker.wait():
         die('Docker на entry не установился, причина выше')
     os.environ['VPN2_WHEEL'] = str(wheel_path())
+
+
+def docker_install():
+    """Docker свежего entry фоном: процесс установки или None - он уже есть."""
+    if shutil.which('docker') or installed():
+        return None
+    return subprocess.Popen(['bash', '-c', 'set -euo pipefail; HOST_TAG=ru; source "$0"; docker_apt_source; apt_update_if_stale\n'
+                             'DEBIAN_FRONTEND=noninteractive apt_get install -y -qq "${DOCKER_PKGS[@]}" "${DOCKER_SKIP[@]/#docker-compose-plugin-/docker-compose-plugin}" >/dev/null\n'
+                             'systemctl enable --now docker', INFRA / 'lib/anysda-svc.sh'], stdin=subprocess.DEVNULL)
 
 
 def dedupe(path):
@@ -388,7 +393,8 @@ def take_secrets():
     except (OSError, config.ConfigError):
         return ''
     found, area = config.secrets(cfg), cfg.raw.get('secrets', {})
-    password = found.pop('admin_password', '')
+    # Пароль, введённый в мастере установки: файл передачи 0600, стирается после стадии панели.
+    password = found.pop('admin_password', '') or read(wizard.HANDOVER / 'admin_password')
     for name, value in found.items():
         if area.get(name) or not creds.read(name):
             creds.write(name, value)
@@ -399,6 +405,8 @@ def finish_secrets(panel=True):
     """Деплой прошёл: область secrets пуста, места 1.2.0 убраны из config.yaml. Пароль админа в хранилище не идёт:
     без стадии панели (panel=False) он остаётся в файле до прогона, который его применит."""
     keep = () if panel else ('admin_password',)
+    if panel:
+        (wizard.HANDOVER / 'admin_password').unlink(missing_ok=True)
     return config.wipe_secrets(CONFIG, keep) if CONFIG.is_file() else False
 
 

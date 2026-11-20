@@ -45,6 +45,8 @@ UNIT = 'vpn2-manager-job'
 METHODS = {'exit.check': 'tag host', 'install.run': '', 'exit.add': 'tag host', 'exit.remove': 'tag',
            'job.read': 'job', 'job.retry': 'job', 'job.skip': 'job tag', 'job.forget': 'job', 'status.read': '', 'key.read': ''}
 OPEN = ('running', 'failed', 'interrupted')
+# Режим деплоя менеджера до установки (./deploy.sh --development, тестовый ACME стенда) - и его заданиям.
+PASS = ('VPN2_DEVELOPMENT', 'VPN2_RELEASE_MANIFEST', 'TLS_ACME_URL', 'TLS_ACME_ROOT')
 RECAP = re.compile(r'(?m)^(\S+)\s+: ok=\d+\s+changed=\d+\s+unreachable=(\d+)\s+failed=(\d+)')
 
 
@@ -165,7 +167,9 @@ class Manager:
         log = folder / 'log'
         subprocess.run(['systemd-run', f'--unit={UNIT}', '--collect', '--quiet', '-p', f'StandardOutput=append:{log}',
                         '-p', f'StandardError=append:{log}', f'--setenv=VPN2_JOB={folder}',
-                        f'--setenv=VPN2_RECOVER={int(recover)}', str(self.repo / 'deploy.sh'), *argv],
+                        f'--setenv=VPN2_RECOVER={int(recover)}', *(f'--setenv={name}={os.environ[name]}' for name in PASS
+                                                                    if os.environ.get(name)),
+                        str(self.repo / 'deploy.sh'), *argv],
                        check=True, capture_output=True)
 
     def journal_open(self):
@@ -321,10 +325,12 @@ class Manager:
 
     def problems(self, tag, host):
         """Отказы до любых изменений: формат, занятость, сама entry; затем вход по ssh и ОС."""
-        cfg, out = config.loads(self.config.read_text()), []
+        # До установки (мастер) config.yaml ещё нет: ни занятых тегов, ни адреса entry в нём.
+        cfg, out = config.loads(self.config.read_text()) if self.config.is_file() else None, []
+        exits, entry = (cfg.exits, cfg.entry.host) if cfg else ([], '')
         if not nodevars.TAG.fullmatch(tag) or tag in nodevars.RESERVED_TAGS or len(tag) > 63:
             out.append(f'тег «{tag}»: строчные латинские буквы, цифры и дефис, с буквы; не ru, all, exits, foreign')
-        elif tag in {node.tag for node in cfg.exits}:
+        elif tag in {node.tag for node in exits}:
             out.append(f'тег {tag} уже занят')
         try:
             address = config._exit_host(host, 'host')
@@ -332,10 +338,10 @@ class Manager:
         except config.ConfigError as error:
             return [*out, f'адрес {host}: {error.reason}']
         seen = resolve(address)
-        used = [node.tag for node in cfg.exits if node.host == address or resolve(node.host) & seen]
+        used = [node.tag for node in exits if node.host == address or resolve(node.host) & seen]
         if used:
             out.append(f'адрес {address} уже у экзита {used[0]}')
-        if address == cfg.entry.host or seen & (local_addresses() | resolve(cfg.entry.host)):
+        if address == entry or seen & (local_addresses() | (resolve(entry) if entry else set())):
             out.append(f'{address} - это сама entry')
         return out or self.login_problems(address)
 

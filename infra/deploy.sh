@@ -56,7 +56,7 @@ case "${1:-}" in
 esac
 if [[ ! -f "$REPO/config.yaml" ]]; then
   printf '\n  %b config.yaml не найден%b\n\n' "$R" "$E"
-  printf '  Установка:\n'
+  printf '  Установка в браузере: %b./deploy.sh%b без аргументов. По файлу:\n' "$Y" "$E"
   printf '  1. %b./deploy.sh -key%b - ключ оркестратора; положи его в /root/.ssh/authorized_keys на каждом экзите\n' "$Y" "$E"
   printf '  2. cp config.example.yaml config.yaml и заполни: entry, exits (root@адрес), admin.ssh_pubkey\n'
   printf '  3. %b./deploy.sh -yaml%b - установка\n\n' "$Y" "$E"

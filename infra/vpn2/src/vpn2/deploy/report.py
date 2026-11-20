@@ -10,7 +10,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from vpn2 import config, creds
+from vpn2 import config, creds, wizard
 from vpn2.backup import archive, env as backup_env, keys, restore as node_restore
 from vpn2.deploy import B, E, G, CONFIG, elapsed, install_prereqs, prep_keys, read, warn
 
@@ -247,6 +247,9 @@ def backup_key_start(manager):
         return False
     if str(cfg.get('enabled', '')).lower() not in config.TRUE_WORDS:
         return False
+    # Мастер установки уже показал закрытый ключ человеку: его открытая часть - пара этой установки.
+    if manager and not keys.recipient() and (shown := read(wizard.HANDOVER / 'backup.pub')):
+        keys.adopt(shown)
     if keys.recipient() and (manager or not keys.unseen()):
         return False
     lost = keys.since_unseen((cfg.get('local') or {}).get('dir') or backup_env.Settings.local_dir)

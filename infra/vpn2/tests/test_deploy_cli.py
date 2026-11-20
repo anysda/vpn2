@@ -85,7 +85,8 @@ def environ(tree, **extra):
     env = {**os.environ, 'HOME': str(tree / 'home'), 'VPN2_STATE_DIR': str(tree / 'state'), 'VPN2_DEPLOY_LOCK': str(tree / 'lock'),
            'VPN2_ROOT': str(tree / 'root'), 'FAKE_PLAYS': str(tree / 'plays'), 'FAKE_SSH': str(tree / 'ssh'),
            'PATH': f"{tree / 'bin'}:{os.environ['PATH']}", 'PYTHONPATH': str(tree / 'infra/vpn2/src'),
-           'DEPLOY_ROOT': str(tree / 'infra'), 'VPN2_DEVELOPMENT': 'true', **extra}
+           'DEPLOY_ROOT': str(tree / 'infra'), 'VPN2_DEVELOPMENT': 'true', 'VPN2_WIZARD_STATE': str(tree / 'wizard'),
+           'VPN2_WIZARD_RUN': str(tree / 'wizard-run'), **extra}
     for name in ('VPN2_RELEASE_MANIFEST', 'VPN2_PANEL_FOLLOWS', 'VPN2_VERIFY_OUT'):
         env.pop(name, None)
     return env
@@ -170,10 +171,41 @@ def test_help_needs_no_config_lock_or_root(tree):
 
 def test_clean_system_without_config_names_the_install_steps(tree):
     (tree / 'config.yaml').unlink()
-    for args in ([], ['-yaml']):
-        done = deploy(tree, *args)
-        assert done.returncode == 1 and 'config.yaml не найден' in done.stdout and not plays(tree)
-        assert './deploy.sh -key' in done.stdout and './deploy.sh -yaml' in done.stdout and 'setup.sh' not in done.stdout
+    done = deploy(tree, '-yaml')
+    assert done.returncode == 1 and 'config.yaml не найден' in done.stdout and not plays(tree)
+    assert './deploy.sh -key' in done.stdout and './deploy.sh -yaml' in done.stdout and 'setup.sh' not in done.stdout
+    assert 'Установка в браузере: ./deploy.sh без аргументов' in done.stdout
+
+
+def test_clean_system_goes_to_the_wizard_and_a_run_during_the_install_prints_a_new_link(tree):
+    """Без аргументов на чистой системе - мастер; идёт установка (замок занят) - только новая ссылка, прежняя мертва.
+    config.yaml без мастера и задание менеджера - прежний деплой."""
+    import fcntl
+    import hashlib
+    (tree / 'config.yaml').unlink()
+    with open(tree / 'lock', 'w') as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        done = deploy(tree)
+        assert done.returncode == 1 and '[deploy] FATAL: deploy уже выполняется' in done.stderr, done.stderr
+        (tree / 'wizard').mkdir()
+        (tree / 'wizard/draft.json').write_text('{}')
+        (tree / 'wizard/entry.json').write_text('{"host": "192.0.2.1"}')
+        links = []
+        for _ in range(2):
+            done = deploy(tree, '--development')
+            assert done.returncode == 0, done.stderr
+            links.append(re.search(r'https://192\.0\.2\.1/#([A-Za-z0-9_-]{43})', done.stdout)[1])
+            assert 'ссылка действует час, новая - ./deploy.sh' in done.stdout
+        stored = json.loads((tree / 'wizard-run/token.json').read_text())['token']
+        assert stored == hashlib.sha256(links[1].encode()).hexdigest() != hashlib.sha256(links[0].encode()).hexdigest()
+        assert links[0] not in (tree / 'wizard-run/token.json').read_text()
+        (tree / 'config.yaml').write_text(CONFIG)
+        done = deploy(tree, VPN2_JOB=str(tree / 'job'))
+        assert done.returncode == 1 and '✗ deploy уже выполняется' in done.stderr
+        for name in ('draft.json', 'entry.json'):
+            (tree / 'wizard' / name).unlink()
+        done = deploy(tree)
+        assert done.returncode == 1 and '✗ deploy уже выполняется' in done.stderr
 
 
 def test_key_is_created_once_and_printed_the_same(tree):

@@ -15,6 +15,13 @@ export VPN2_STATE_DIR=${VPN2_STATE_DIR:-/var/lib/anysda-vpn2/state} VPN2_DEPLOY_
 # Каталог состояния только для root: панель (свой uid в том же /var/lib/anysda-vpn2) known_hosts не читает.
 install -d -m 700 "$VPN2_STATE_DIR" 2>/dev/null \
   || die "нет доступа к $VPN2_STATE_DIR: deploy.sh запускается от root"
+# Чистая система без config.yaml или начатый мастер: мастер установки в браузере. Замок деплоя он берёт сам,
+# идёт установка - печатает только новую ссылку.
+wizard() { DEPLOY_ROOT="${REPO_ROOT}/infra" PYTHONPATH="${REPO_ROOT}/infra/vpn2/src" python3 -B -m vpn2.deploy.bootstrap "$@"; }
+if [[ -z "${VPN2_JOB:-}" ]] && wizard --wanted "$@"; then
+  wizard "$@"
+  exit
+fi
 exec {local_deploy_fd}>"$VPN2_DEPLOY_LOCK" \
   || die "нет доступа к $VPN2_DEPLOY_LOCK: deploy.sh запускается от root"
 flock -n "$local_deploy_fd" || die 'deploy уже выполняется на этой машине'

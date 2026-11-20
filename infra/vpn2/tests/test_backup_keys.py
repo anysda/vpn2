@@ -184,3 +184,14 @@ def test_ask_reads_terminal_without_echo_or_stdin(monkeypatch, capsys):
     for what, typed in (('key', 'old pass\n'), ('key', ''), ('password', '\n')):
         with pytest.raises(keys.NoKey):
             keys.ask(what, io.StringIO(typed))
+
+
+@pytest.mark.usefixtures('entry')
+def test_install_job_takes_the_pair_the_wizard_showed(tmp_path, monkeypatch):
+    """Мастер показал ключ и человек его сохранил: задание установки берёт эту пару, своей не делает."""
+    from vpn2 import wizard
+    monkeypatch.setattr(wizard, 'HANDOVER', tmp_path / 'handover')
+    (tmp_path / 'handover').mkdir()
+    (tmp_path / 'handover/backup.pub').write_text('age1wizardshown\n')
+    assert report.backup_key_start(manager=True) is False
+    assert keys.recipient() == 'age1wizardshown' and not keys.unseen()

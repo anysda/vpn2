@@ -247,6 +247,28 @@ class LegacyPasswordTests(Case):
         self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
 
 
+class SetExitsTests(Case):
+    """Состав экзитов меняется менеджером установки: прочие строки, комментарии и права те же."""
+    TEXT = ('entry:\n  host: 192.0.2.1\n# список\nexits:\n  - tag: se\n    host: root@192.0.2.2  # швеция\n'
+            '  - tag: nl\n    host: 192.0.2.3\n    # hy2_up_mbps: 200\n    # hy2_down_mbps: 100\n\n'
+            '# админ\nadmin:\n  user: a\n')
+
+    def test_add_and_remove_keep_the_rest(self):
+        path = self.root / 'config.yaml'
+        path.write_text(self.TEXT)
+        path.chmod(0o640)
+        vpn2_config.set_exits(path, [('se', '192.0.2.2'), ('nl', '192.0.2.3'), ('at', '192.0.2.4')])
+        self.assertEqual(path.read_text(), self.TEXT.replace('100\n\n', '100\n  - tag: at\n    host: root@192.0.2.4\n\n'))
+        vpn2_config.set_exits(path, [('se', '192.0.2.2'), ('at', '192.0.2.4')])
+        self.assertEqual(path.read_text(), self.TEXT.split('  - tag: nl')[0] + '  - tag: at\n    host: root@192.0.2.4\n\n'
+                                           '# админ\nadmin:\n  user: a\n')
+        vpn2_config.set_exits(path, [('at', '192.0.2.4')])
+        cfg = vpn2_config.load(path)
+        self.assertEqual((cfg.exits, cfg.raw['admin']), ((vpn2_config.Node('at', '192.0.2.4'),), {'user': 'a'}))
+        self.assertIn('# список\nexits:\n  - tag: at', path.read_text())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+
+
 class PanelTests(Case):
     """Значения узла доходят до окружения панели в compose.yaml."""
     VPN = ('WG_LISTEN_PORT', 'OVPN_PORT', 'OVPN_PROTO', 'WG_MTU', 'WG_SPLIT_LOCAL')

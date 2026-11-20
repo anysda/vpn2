@@ -313,6 +313,49 @@ def drop_passwords(path):
                     lines[following] = head + lines[following][len(head):]
     if not drop:
         return False
+    replace(path, '\n'.join(line for number, line in enumerate(lines) if number not in drop))
+    return True
+
+
+def set_exits(path, exits):
+    """Состав экзитов config.yaml - exits, список (тег, адрес): оставшиеся экзиты со своими строками и
+    комментариями как есть, лишние убираются вместе с комментариями внутри своего блока, новые - в конец
+    списка `- tag:` + `host: root@адрес`. Остальной файл, права и владелец те же."""
+    path = Path(path)
+    text = path.read_text()
+    lines = text.split('\n')
+    root = yaml.compose(_plain_forms(text), Loader=yaml.SafeLoader)
+    node = next((value for key, value in root.value if key.value == 'exits'), None)
+    if not isinstance(node, yaml.SequenceNode) or not exits:
+        raise ConfigError('exits', 'нужен список экзитов, как в config.example.yaml')
+    items, keep, drop = node.value, {tag for tag, _host in exits}, set()
+    spans = []
+    for index, item in enumerate(items):
+        start = item.start_mark.line
+        if index + 1 < len(items):
+            end = items[index + 1].start_mark.line
+        else:
+            end = item.value[-1][1].end_mark.line + (item.value[-1][1].end_mark.column > 0)
+            # Комментарии глубже тире под последним ключом - его же блок.
+            while end < len(lines) and lines[end].strip().startswith('#') and \
+                    len(lines[end]) - len(lines[end].lstrip()) > item.start_mark.column - 2:
+                end += 1
+        spans.append(end)
+        tag = next((value.value for key, value in item.value if key.value == 'tag'), '')
+        if tag not in keep:
+            drop.update(range(start, end))
+    column = items[0].start_mark.column if items else 4
+    known = {next((value.value for key, value in item.value if key.value == 'tag'), '') for item in items}
+    added = [line for tag, host in exits if tag not in known
+             for line in (f'{" " * (column - 2)}- tag: {tag}', f'{" " * column}host: root@{host}')]
+    at = spans[-1] if spans else node.start_mark.line + 1
+    lines[at:at] = added
+    drop = {number + (len(added) if number >= at else 0) for number in drop}
+    replace(path, '\n'.join(line for number, line in enumerate(lines) if number not in drop))
+
+
+def replace(path, text):
+    """Файл подменяется через rename с правами и владельцем прежнего."""
     stat = path.stat()
     tmp = path.with_name(f'.{path.name}.tmp')
     tmp.unlink(missing_ok=True)
@@ -320,6 +363,5 @@ def drop_passwords(path):
     with os.fdopen(fd, 'w') as out:
         os.fchmod(out.fileno(), stat.st_mode & 0o7777)
         os.fchown(out.fileno(), stat.st_uid, stat.st_gid)
-        out.write('\n'.join(line for number, line in enumerate(lines) if number not in drop))
+        out.write(text)
     os.replace(tmp, path)
-    return True

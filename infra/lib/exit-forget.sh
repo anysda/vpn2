@@ -23,16 +23,36 @@ if [[ -n $packages ]]; then
   DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq $packages >/dev/null 2>&1 || left "пакеты: $packages"
 fi
 
-files=(/etc/systemd/system/anysda-* /etc/systemd/system/vpn2-* /etc/systemd/system/sing-box.service
-  /etc/systemd/system/node_exporter.service /etc/systemd/system/esm-cache.service
+for table in $(nft list tables 2>/dev/null | awk '$3 ~ /^(vpn2|anysda)_/ {print $2 " " $3}' | tr ' ' ':'); do
+  nft delete table "${table%%:*}" "${table#*:}" || left "таблица nft ${table#*:}"
+done
+# Свой /swapfile установка ставит вместе с 60-anysda-swap.conf; чужой swap не трогаем.
+if [[ -f /etc/sysctl.d/60-anysda-swap.conf && -f /swapfile ]]; then
+  swapoff /swapfile 2>/dev/null
+  if ! { sed -i '\|^/swapfile[[:space:]]|d' /etc/fstab && rm -f /swapfile; }; then left /swapfile; fi
+fi
+# Прежний nftables.conf - на место; правила ufw уже в ядре, перезапуск nftables их бы сбросил.
+if [[ -f /etc/nftables.conf.before-vpn2 ]]; then
+  mv /etc/nftables.conf.before-vpn2 /etc/nftables.conf || left /etc/nftables.conf
+fi
+
+files=(/etc/systemd/system/anysda-* /etc/systemd/system/vpn2-* /etc/systemd/system/sing-box.service*
+  /etc/systemd/system/node_exporter.service* /etc/systemd/system/esm-cache.service
+  /etc/systemd/system/system.slice.d/zz-vpn2-resources.conf
   /etc/systemd/system/nftables.service.d/10-anysda-preserve.conf /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
-  /etc/systemd/networkd.conf.d/60-anysda-foreign.conf /etc/sysctl.d/99-anysda.conf /etc/fail2ban/jail.d/anysda.local
+  /etc/systemd/networkd.conf.d/60-anysda-foreign.conf /etc/sysctl.d/99-anysda.conf /etc/sysctl.d/60-anysda-swap.conf
+  /etc/fail2ban/jail.d/anysda.local /etc/apt/apt.conf.d/90anysda-lock-timeout
   /etc/nftables-hy2hop.conf /etc/polkit-1/rules.d/50-vpn2-emergency-hy2.rules /etc/docker /etc/apt/sources.list.d/docker*
-  /etc/apt/keyrings/docker* /etc/sing-box /etc/caddy /etc/anysda /etc/vpn2 /var/anysda /var/lib/vpn2-* /var/lib/docker
-  /var/lib/containerd /usr/local/lib/vpn2 /usr/local/bin/anysda-* /usr/local/bin/wgcf /usr/local/bin/node_exporter
-  /usr/local/sbin/anysda-* /opt/vpn2 /tmp/anysda /run/vpn2-fw-guard)
+  /etc/apt/keyrings/docker* /etc/sing-box /etc/caddy /etc/anysda /etc/vpn2 /var/anysda /var/lib/anysda* /var/lib/vpn2-*
+  /var/lib/sing-box /var/lib/caddy /var/lib/docker /var/lib/containerd /usr/local/lib/vpn2 /usr/local/bin/anysda-*
+  /usr/local/bin/wgcf /usr/local/bin/node_exporter /usr/local/bin/sing-box /usr/local/sbin/anysda-* /opt/vpn2
+  /opt/vpn2-emergency /opt/containerd /tmp/anysda /run/vpn2-fw-guard)
 for path in "${files[@]}"; do
   [[ -e $path ]] && { rm -rf "$path" || left "$path"; }
+done
+for user in node_exporter vpn2-emergency vpn2-hy2 caddy; do
+  getent passwd "$user" >/dev/null && userdel -r "$user" >/dev/null 2>&1
+  if getent passwd "$user" >/dev/null; then left "пользователь $user"; fi
 done
 systemctl daemon-reload
 sysctl --system >/dev/null 2>&1

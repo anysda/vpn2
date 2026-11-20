@@ -486,3 +486,24 @@ def test_guard_arm_retries_only_failed_logins(monkeypatch, codes, failed, tries)
     deploy.fresh = lambda node, _command, **_options: calls.append(node) or next(answers.get(node, iter([0])))
     assert deploy.guard_arm('10-foreign', 'ru,us') == failed
     assert {node: calls.count(node) for node in tries} == tries
+
+
+@pytest.mark.parametrize('manager', [False, True])
+def test_generated_admin_password_is_shown_only_at_a_terminal(monkeypatch, capsys, manager):
+    """Пароль новой панели - один раз на терминал; вывод задания менеджера ложится в журнал на диске - там его нет."""
+    from types import SimpleNamespace
+
+    from vpn2.deploy import __main__ as main
+    admin = iter([False, True])
+    monkeypatch.setattr(main.os, 'environ', dict(os.environ))
+    monkeypatch.setattr(main.signal, 'signal', lambda *_args: None)
+    monkeypatch.setattr(main.subprocess, 'run', lambda *_args, **_options: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(main, 'migrate_state', lambda: None)
+    monkeypatch.setattr(main, 'take_secrets', lambda: '')
+    monkeypatch.setattr(main, 'panel_admin', lambda: next(admin))
+    monkeypatch.setattr(main.Progress, 'from_env', staticmethod(lambda: SimpleNamespace(finish=lambda *_a: None) if manager else None))
+    monkeypatch.setattr(main, 'Deploy', lambda *_args: SimpleNamespace(close=lambda _code: None, result=None))
+    monkeypatch.setattr(main, 'dispatch', lambda _deploy, _argv: 0)
+    assert main.main([]) == 0
+    password = main.os.environ['ADMIN_PASSWORD']
+    assert (password in capsys.readouterr().out) is not manager

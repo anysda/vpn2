@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
 // Explicit deploy step before starting the application under test.
@@ -26,8 +26,9 @@ const secret = '/run/secrets/sso_client_secret'
 mkdirSync('/run/secrets-inbox', { recursive: true })
 const inbox = setInterval(() => {
   for (const name of readdirSync('/run/secrets-inbox').filter(name => !name.startsWith('.'))) {
-    if (readFileSync(`/run/secrets-inbox/${name}`, 'utf8').trim()) renameSync(`/run/secrets-inbox/${name}`, `/run/secrets/${name}`)
-    else rmSync(`/run/secrets-inbox/${name}`)
+    const value = readFileSync(`/run/secrets-inbox/${name}`, 'utf8').trim()
+    rmSync(`/run/secrets-inbox/${name}`)
+    if (value) writeFileSync(`/run/secrets/${name}`, value)
   }
 }, 100)
 

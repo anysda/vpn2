@@ -68,7 +68,7 @@ test('HTTP ждёт миграции и администратора при ме
     '../utils/auth': { hashPassword: () => { started(); return password }, verifyPassword: async () => false, revokeDisallowedSsoSessions: async () => 0, loadAnysdaConfig: () => ({ admin: { user: 'admin', password: 'test' } }) },
     '../utils/client-prefs': { syncClientPrefsFile: async () => {} },
     '../utils/control': { ControlUnavailable: class extends Error {} },
-    '../utils/api': { markPanelReady: () => {} },
+    '../utils/api': { markPanelReady: () => {}, readSecret: () => 'test' },
     '../utils/access-operations': { compactDatabase: async () => false },
   }, {
     defineNitroPlugin: (callback: unknown) => callback,

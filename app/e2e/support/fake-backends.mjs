@@ -1,7 +1,7 @@
 // Подставные VictoriaMetrics (:8428) и clash API sing-box (:9090) для локального
 // прогона e2e. Запускается внутри контейнера панели, поэтому слушает только
 // 127.0.0.1. Ноды и выходы — из тех же NUXT_MGMT_IPS / NUXT_EXIT_TAGS, что у панели.
-import { readdirSync, readFileSync, renameSync, unlinkSync } from 'node:fs'
+import { readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -473,9 +473,9 @@ function acceptedBot(req, res) {
 setInterval(() => {
   for (const name of readdirSync('/run/secrets-inbox').filter(name => !name.startsWith('.'))) {
     const value = readFileSync(`/run/secrets-inbox/${name}`, 'utf8').trim()
-    if (value) renameSync(`/run/secrets-inbox/${name}`, `/run/secrets/${name}`)
+    unlinkSync(`/run/secrets-inbox/${name}`)
+    if (value) writeFileSync(`/run/secrets/${name}`, value)
     else {
-      unlinkSync(`/run/secrets-inbox/${name}`)
       try { unlinkSync(`/run/secrets/${name}`) }
       catch { /* секрета и не было */ }
     }

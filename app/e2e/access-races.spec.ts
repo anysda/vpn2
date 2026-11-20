@@ -102,7 +102,7 @@ test('VPN2-458: смена пароля в панели переживает п�
     '../utils/auth': { hashPassword: (plain: string) => hash(plain), verifyPassword, revokeDisallowedSsoSessions: async () => 0, loadAnysdaConfig: () => config },
     '../utils/client-prefs': { syncClientPrefsFile: async () => {} },
     '../utils/control': { ControlUnavailable: class extends Error {} },
-    '../utils/api': { markPanelReady: () => {} },
+    '../utils/api': { markPanelReady: () => {}, readSecret: (name: string) => name === 'admin_password' ? config.admin.password : '' },
     '../utils/access-operations': { compactDatabase: async () => false },
   }, {
     defineNitroPlugin: (callback: unknown) => callback,
@@ -159,9 +159,12 @@ test('VPN2-461: сохранение списка SSO отзывает сесс�
       allowedSubs: 'sub-admin:admin,sub-bob:bob', label: 'Authentik', autoRedirect: false, passwordLogin: true,
       redirectUrl: 'https://panel.example.test/auth/authentik',
     }
+    let secret = stored.clientSecret
     app.patch('app/server/utils/api.ts', {
       readJsonFile: () => ({ ...stored }),
       writeJsonFile: (_path: string, next: typeof stored) => { stored = { ...next } },
+      readSecret: (name: string) => name === 'sso_client_secret' ? secret : '',
+      saveSecret: async (name: string, value: string) => { if (name === 'sso_client_secret') secret = value },
     })
     app.overrides.delete('app/server/utils/auth.ts')
     const auth = app.load('app/server/utils/auth.ts')

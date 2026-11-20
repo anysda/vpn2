@@ -266,7 +266,8 @@ ethernets:
     nameservers:
       addresses: [1.1.1.1, 8.8.8.8]
 EOF
-  # Как у хостера: root по паролю (00-bootstrap разносит ключ оркестратора).
+  # Как у хостера: у root есть пароль и drop-in sshd с PasswordAuthentication yes;
+  # деплой ходит только по ключу и вход по паролю обязан закрыть.
   # Таймеры apt выключены, чтобы автообновление не держало apt весь прогон.
   # Короткие ожидания стенда - в окружение ssh и в drop-in сторожа.
   # ВМ одноразовые: dpkg без fsync на каждый файл, без man/doc/info и без
@@ -610,8 +611,7 @@ stage_stats() {
 #                          рендерится, неотслеживаемые infra/secrets и
 #                          infra/state старого выпуска остаются (в потоке их нет).
 push_tree() {
-  local mode=${1:-} tag=${2:-} password
-  password=$(cat "$STAND_DIR/root-password")
+  local mode=${1:-} tag=${2:-} template=$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml
   case "$mode" in
     '') log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) → entry:/opt/anysda-vpn2"
         ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
@@ -632,13 +632,47 @@ push_tree() {
         return 0 ;;
     *) die "push_tree: неизвестный режим $mode" ;;
   esac
-  local template=$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml rendered
-  rendered=$(sed -e "s|@ENTRY_HOST@|$ENTRY|g" -e "s|@EXIT_HOST@|$EXIT|g" -e "s|@EXIT_TAG@|$EXIT_TAG|g" \
-    -e "s|@PASSWORD@|$password|g" -e "s|@PANEL_IMAGE@|$PANEL_REF|g" "$template")
+  # Выпуск ставится своим шаблоном: config.yaml 1.2.0 - с паролем root.
+  local rendered
+  rendered=$( { if [[ $mode == --ref ]]; then git -C "$REPO_ROOT" show "$tag:infra/tests/fixtures/config/etalon.yaml"; else cat "$template"; fi; } \
+    | sed -e "s|@ENTRY_HOST@|$ENTRY|g" -e "s|@EXIT_HOST@|$EXIT|g" -e "s|@EXIT_TAG@|$EXIT_TAG|g" \
+      -e "s|@PASSWORD@|$(cat "$STAND_DIR/root-password")|g" -e "s|@ADMIN_KEY@|$(cat "$STAND_DIR/id_ed25519.pub")|g" \
+      -e "s|@PANEL_IMAGE@|$PANEL_REF|g")
   if grep -q '@[A-Z_]*@' <<<"$rendered"; then
     die "в config.yaml стенда остались неподставленные метки (шаблон $template)"
   fi
   ssh_node "$ENTRY" "umask 077; cat > /opt/anysda-vpn2/config.yaml" <<<"$rendered"
+}
+
+# Как человек по README: ./deploy.sh -key на entry, строка - в authorized_keys экзитов.
+lay_key() {
+  local key node name ip
+  key=$(ssh_node "$ENTRY" '/opt/anysda-vpn2/deploy.sh -key') || die 'deploy.sh -key не отдал ключ'
+  [[ $key == ssh-ed25519\ * ]] || die "deploy.sh -key: не ключ: $key"
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    [[ $name == entry ]] || ssh_node "$ip" "grep -qxF '$key' /root/.ssh/authorized_keys || echo '$key' >> /root/.ssh/authorized_keys" \
+      || die "ключ оркестратора не лёг на $name"
+  done
+  log 'ключ оркестратора на экзитах'
+}
+
+# Вход по паролю закрыт везде: entry проверяет экзиты, экзит - entry. sshd без пароля
+# в списке методов отвечает «Permission denied (publickey)».
+password_refused() {
+  local node name ip from said rc=0
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    from=$ENTRY; [[ $name != entry ]] || from=$EXIT
+    said=$(ssh_node "$from" "ssh -o BatchMode=yes -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@$ip true 2>&1; echo rc=\$?") || true
+    if [[ $said == *'Permission denied (publickey).'* && $said == *rc=255* ]]; then
+      log "вход по паролю на $name закрыт: ${said//$'\n'/ }"
+    else
+      log "✗ вход по паролю на $name не закрыт: $said"; rc=1
+    fi
+  done
+  return "$rc"
 }
 
 # Docker на entry ставит 00-bootstrap, а образ панели нужен только к
@@ -718,10 +752,12 @@ cmd_deploy() {
   log "деплой начат на $(entry_uptime) с от загрузки entry"
   push_tree
   snapshot_base
+  lay_key
   load_panel "$image" &
   local loader=$! started=$SECONDS rc=0
-  entry_run deploy './deploy.sh --development' || rc=$?
+  entry_run deploy './deploy.sh --development -yaml' || rc=$?
   wait "$loader" || (( rc )) || rc=1
+  (( rc )) || password_refused || rc=1
   log "деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   warm_report
   host_stats 'после деплоя'
@@ -820,7 +856,8 @@ release_key() {
   printf '%s-%s-%s\n' "$tag" "$IMAGE_KEY" "$( {
     declare -p NODES NET
     declare -f seed warm_script push_tree snapshot_base snapshot_tool snapshot_run cmd_deploy_release acme_up reboot_nodes
-    cat "$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml" "$REPO_ROOT/infra/tests/snapshot.py"
+    git -C "$REPO_ROOT" show "$tag:infra/tests/fixtures/config/etalon.yaml"
+    cat "$REPO_ROOT/infra/tests/snapshot.py"
   } | sha256sum | cut -c1-16)"
 }
 
@@ -840,6 +877,7 @@ cmd_deploy_udp() {
   apt_proxy_up --if-down
   log "деплой начат на $(entry_uptime) с от загрузки entry"
   push_tree
+  lay_key
   ssh_node "$ENTRY" "install -d -m 0755 /etc/anysda && printf 'TCP_RETURN_S=%s\n' $TCP_RETURN_S > /etc/anysda/failover-watchdog.env"
   local stage started=$SECONDS
   for stage in "${UDP_STAGES[@]}"; do
@@ -1127,6 +1165,9 @@ cmd_deploy_upgrade() {
   entry_run deploy './deploy.sh --development' || rc=$?
   log "обновление с $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
+  password_refused || die 'обновление: вход по паролю не закрыт'
+  # config.yaml выпуска нёс пароли root: обновление их стёрло.
+  ssh_node "$ENTRY" "! grep -n 'password:' /opt/anysda-vpn2/config.yaml" || die 'обновление: пароли root остались в config.yaml'
   [[ $(ssh_node "$ENTRY" "grep -v '^#' $STATE/mgmt-ips.txt") == "$mgmt" ]] \
     || die 'обновление: адреса mesh после переноса состояния не те, что у выпуска'
   ssh_node "$ENTRY" "test -s $STATE/known_hosts" || die "обновление: нет $STATE/known_hosts"

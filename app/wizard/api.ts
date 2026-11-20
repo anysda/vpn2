@@ -78,6 +78,8 @@ export async function start() {
 }
 
 /** Экзит годен: проверка прошла и он не пропущен. Установка - при годном и без строк в подвешенном виде. */
+/** Сервер хранит голый адрес (вход на экзит всегда root): человеку - root@адрес. */
+export const login = (host: string) => host.includes('@') ? host : `root@${host}`
 export const exitGood = (e: DraftExit) => !e.skipped && e.problems?.length === 0
 export const exitsReady = (exits: DraftExit[]) => exits.some(exitGood) && exits.every(e => e.skipped || exitGood(e))
 

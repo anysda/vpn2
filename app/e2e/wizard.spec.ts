@@ -52,6 +52,11 @@ test('мастер установки: экраны, отказы, ход уст
     await expect(exitForm().getByRole('alert')).toContainText('нет ключа оркестратора')
     // Проверенная строка уже в черновике: пока не выбран путь, дальше нельзя.
     await expect(page.getByTestId('exit-row')).toContainText('не годен')
+    // Повтор проверки из формы заменяет её строку в черновике, а не добавляет вторую с тем же тегом.
+    await exitForm().getByRole('button', { name: 'Проверить', exact: true }).click()
+    await expect(exitForm().getByRole('alert')).toContainText('нет ключа оркестратора')
+    await expect(page.getByTestId('exit-row')).toHaveCount(1)
+    await expect(page.getByTestId('exit-row')).toContainText('root@203.0.113.11')
     await shot('1-check-failed')
     await page.getByRole('button', { name: 'Продолжить без него' }).click()
     await expect(page.getByTestId('exit-row')).toHaveCount(1)

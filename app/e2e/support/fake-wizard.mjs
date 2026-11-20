@@ -60,9 +60,12 @@ const routes = {
       const twice = tags.find((t, i) => tags.indexOf(t) !== i)
       if (twice) return refuse(res, 400, `Тег «${twice}» уже есть в списке экзитов`)
       // problems ставит только сервер: прежний итог проверки, пока тег и адрес те же.
-      patch.exits = patch.exits.map(({ tag, host, skipped }) => ({
-        tag, host, skipped: !!skipped, problems: state.draft.exits.find(e => e.tag === tag && e.host === host)?.problems ?? null,
-      }))
+      // Как vpn2.wizard: адрес без root@ (вход всегда root); problems ставит только сервер -
+      // прежний итог проверки, пока тег и адрес те же.
+      patch.exits = patch.exits.map(({ tag, host: typed, skipped }) => {
+        const host = typed.trim().replace(/^root@/, '')
+        return { tag, host, skipped: !!skipped, problems: state.draft.exits.find(e => e.tag === tag && e.host === host)?.problems ?? null }
+      })
     }
     Object.assign(state.draft, patch)
     send(res, 200, { draft: state.draft })
@@ -71,7 +74,7 @@ const routes = {
     const { tag } = await body(req)
     const exit = state.draft.exits.find(e => e.tag === tag)
     if (!exit) return refuse(res, 400, `Экзита «${tag}» нет в черновике`)
-    exit.problems = checks[exit.host] ?? []
+    exit.problems = checks[`root@${exit.host}`] ?? []
     send(res, 200, { problems: exit.problems })
   },
   'POST /api/backup-key': (req, res) => {

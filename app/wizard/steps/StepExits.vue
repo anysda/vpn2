@@ -4,7 +4,7 @@
 // сперва кладёт в черновик её строку. Не годен - проверить снова, заменить адрес или без него.
 import { computed, ref } from 'vue'
 import ExitAdd from '../../ui/ExitAdd.vue'
-import { exitGood, exitsReady, putDraft, refusal, transport, type DraftExit, type State } from '../api'
+import { exitGood, exitsReady, login, putDraft, refusal, transport, type DraftExit, type State } from '../api'
 
 const props = defineProps<{ state: State }>()
 
@@ -34,8 +34,10 @@ const formTransport = {
   // Отказ сервера (формат, тег уже есть) форма показывает текстом, как и сбой проверки.
   check: async (tag: string, host: string) => {
     await put([...exits.value.filter(e => !isPending(e)), row(tag, host)])
-    pending.value = { tag, host }
-    return checked(tag)
+    // Сервер приводит тег и адрес к своему виду: своя строка - последняя в его ответе.
+    const mine = exits.value[exits.value.length - 1]!
+    pending.value = { tag: mine.tag, host: mine.host }
+    return checked(mine.tag)
   },
 }
 
@@ -78,7 +80,7 @@ const replace = (exit: DraftExit) => act(async () => {
 
 function edit(exit: DraftExit) {
   editing.value = exit.tag
-  newHost.value = exit.host
+  newHost.value = login(exit.host)
 }
 
 const label = (e: DraftExit) => exitGood(e) ? 'годен' : e.skipped ? 'без него' : e.problems ? 'не годен' : 'не проверен'
@@ -108,7 +110,7 @@ defineExpose({ ready, collect: () => ({ patch: { admin_ssh_key: adminKey.value.t
         <div class="fld">
           <span class="mono">{{ exit.tag.toUpperCase() }}</span>
           <input v-if="editing === exit.tag" v-model="newHost" class="in mono" aria-label="Новый адрес" spellcheck="false">
-          <code v-else class="mono">{{ exit.host }}</code>
+          <code v-else class="mono">{{ login(exit.host) }}</code>
           <span v-if="busy === exit.tag" class="tag">проверяю…</span>
           <span v-else class="tag" :class="{ ok: exitGood(exit), badt: !exitGood(exit) }">{{ label(exit) }}</span>
           <template v-if="editing === exit.tag">

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Экран 6: всё введённое одним списком, у каждого раздела «Изменить». Секреты - только «задан».
 import { computed } from 'vue'
-import type { State } from '../api'
+import { login, type State } from '../api'
 
 const props = defineProps<{ state: State }>()
 const emit = defineEmits<{ go: [screen: number] }>()
@@ -10,7 +10,7 @@ const rows = computed(() => {
   const { draft: d, secrets: s } = props.state
   const key = d.admin_ssh_key.trim().split(/\s+/)
   return [
-    { screen: 1, title: 'Экзиты', lines: d.exits.map(e => `${e.tag.toUpperCase()} · ${e.host}${e.skipped ? ' · без него' : ''}`) },
+    { screen: 1, title: 'Экзиты', lines: d.exits.map(e => `${e.tag.toUpperCase()} · ${login(e.host)}${e.skipped ? ' · без него' : ''}`) },
     { screen: 1, title: 'Ваш ключ ssh', lines: [`${key[0]} …${(key[1] ?? '').slice(-12)}${key[2] ? ` ${key[2]}` : ''}`] },
     { screen: 2, title: 'Панель', lines: [d.panel.domain ? `https://${d.panel.domain}` : 'по IP сервера', `логин ${d.panel.admin_user}, пароль ${s.admin_password ? 'задан' : 'не задан'}`] },
     { screen: 3, title: 'Telegram-бот', lines: [d.telegram.enabled ? `включён, chat ID ${d.telegram.chat_id}, токен ${s.telegram_bot_token ? 'задан' : 'не задан'}` : 'пропущен'] },

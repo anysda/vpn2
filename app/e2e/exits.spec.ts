@@ -70,7 +70,7 @@ test.describe.serial('экзиты в настройках', () => {
     await expect(card(page).getByRole('button', { name: 'Установить' })).toBeEnabled()
   })
 
-  test('добавление: ход по стадиям, второй и перезагруженный экран, обрыв связи, экзит везде', async ({ page, browser }) => {
+  test('добавление: ход по стадиям, второй и перезагруженный экран, обрыв связи, экзит везде', async ({ page, browser, guard }) => {
     await openSettings(page)
     await addForm(page, '192.0.2.9', 'de')
     await expect(card(page).getByText('сервер годен')).toBeVisible()
@@ -94,6 +94,7 @@ test.describe.serial('экзиты в настройках', () => {
     await shot(page, 'busy-job')
     await other.close()
     // Менеджер пропал на время (рестарт роутера): заметка вместо стены ошибок, опрос дальше.
+    guard.allow(503, /\/api\/exits\/jobs\/\d+$/, 'GET')
     await page.route('**/api/exits/jobs/*', route => route.fulfill({ status: 503, json: { message: 'Нет связи с менеджером установки' } }))
     await expect(card(page).getByText('Нет связи с менеджером установки, повторяю…')).toBeVisible()
     await expect(card(page).getByRole('alert')).toHaveCount(0)

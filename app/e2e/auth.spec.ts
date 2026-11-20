@@ -734,7 +734,7 @@ test.describe('mobile-settings', { tag: '@mobile' }, () => {
           await openSettings(page)
 
           const cards = page.locator('.stg .sgrid > .card')
-          await expect(cards).toHaveCount(3)
+          await expect(cards).toHaveCount(4)
           const boxes = await cards.evaluateAll(els => els.map((el) => {
             const r = el.getBoundingClientRect()
             return { left: Math.round(r.left), width: Math.round(r.width) }

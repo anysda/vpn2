@@ -13,3 +13,4 @@
 - {section: firewall, name: 'nft ip mangle PREROUTING', field: 'rules[]', reason: 'после перезагрузки узла выпуска службы вставляют правила в порядке своего запуска; набор правил сверяется'}
 - {section: firewall, name: 'nft ip mangle POSTROUTING', field: 'rules[]', reason: 'после перезагрузки узла выпуска службы вставляют правила в порядке своего запуска; набор правил сверяется'}
 - {section: units, name: fwupd-refresh.service, field: '*', reason: 'таймер Ubuntu после перезагрузки узла выпуска запускает обновление метаданных fwupd в случайный момент'}
+- {section: files, name: /opt/anysda-vpn2/config.yaml, field: shape, reason: 'config.yaml выпуска со своим шаблоном: экзит без root@, нет admin.ssh_pubkey, пароли root стёрты; что паролей нет, стенд проверяет отдельно'}

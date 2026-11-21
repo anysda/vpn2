@@ -74,6 +74,30 @@ jobs:
           # Модули в параллельных процессах; сумма тестов частей сверяется с найденной
           python3 infra/tests/run_parallel.py --dir telegram/tests
 
+  # Шаблон LXC или debootstrap без python3 и python3-yaml: первый ./deploy.sh ставит yaml сам,
+  # без сети отказывает строкой. Системный контейнер (systemd, sshd), вторая копия - без сети.
+  bare-image:
+    name: первый запуск на образе без python3-yaml
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - name: ubuntu 26.04 без python3, с сетью и без
+        timeout-minutes: 6
+        run: |
+          printf '%s\n' 'FROM mirror.gcr.io/library/ubuntu:26.04' \
+            'RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv openssh-server iproute2 && apt-get clean && rm -rf /var/lib/apt/lists/*' \
+            | docker build -q -t vpn2-bare -
+          for net in bridge none; do
+            docker run -d --name "bare-$net" --network "$net" --privileged --cgroupns=host \
+              -v /sys/fs/cgroup:/sys/fs/cgroup:rw -v "$PWD:/src:ro" vpn2-bare /sbin/init
+          done
+          for net in bridge none; do timeout 60 docker exec "bare-$net" systemctl is-system-running --wait || true; done
+          docker exec bare-bridge bash /src/infra/tests/bare-image.sh
+          docker exec bare-none bash /src/infra/tests/bare-image.sh offline
+
   backup-restore:
     name: 'бэкап: восстановление'
     needs: reuse

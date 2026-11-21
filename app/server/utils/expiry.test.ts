@@ -1,5 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { minExpiryMs } from './expiry'
+import { createClient } from '@libsql/client'
+import { drizzle } from 'drizzle-orm/libsql'
+import { migrate } from 'drizzle-orm/libsql/migrator'
+import { fileURLToPath } from 'node:url'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as schema from '../database/schema'
+import { pruneEvents } from './bot'
+import { minExpiryMs, reportControlExpiry } from './expiry'
+
+// Журнал хоста: всё, что служба когда-либо сняла по сроку (хранится без срока).
+const host = vi.hoisted(() => ({ removed: [] as { protocol: string, id: number, expires_at: string, at: string }[], db: null as unknown }))
+vi.mock('../database/client', () => ({ useDb: () => host.db }))
+vi.mock('./control', () => ({ control: async () => ({ removed: host.removed }) }))
+vi.stubGlobal('useLogger', () => ({ info: () => {}, warn: () => {}, error: () => {} }))
+vi.stubGlobal('useRuntimeConfig', () => ({ ovpnEnabled: true }))
+
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
@@ -70,5 +84,65 @@ describe('minExpiryMs', () => {
       expect(diff).toBeGreaterThan(0)
       expect(diff).toBeLessThanOrEqual(86_400_000)
     }
+  })
+})
+
+const NOW = Date.parse('2026-11-21T12:00:00.000Z')
+const DAY = 24 * 3600 * 1000
+const entry = (id: number, ms: number) => ({ protocol: 'openvpn', id, expires_at: new Date(ms - 1000).toISOString(), at: new Date(ms).toISOString() })
+
+describe('reportControlExpiry', () => {
+  let db: ReturnType<typeof drizzle<typeof schema>>
+  beforeAll(async () => {
+    db = drizzle(createClient({ url: ':memory:' }), { schema })
+    await migrate(db, { migrationsFolder: fileURLToPath(new URL('../database/migrations', import.meta.url)) })
+    host.db = db
+  })
+  beforeEach(async () => {
+    vi.useRealTimers()
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] })
+    await db.delete(schema.events)
+  })
+
+  const logged = async () => (await db.select().from(schema.events)).map(e => e.key)
+
+  it('запись 40-дневной давности: два минутных цикла и часовая чистка - в журнале её нет, вставок нет', async () => {
+    host.removed = [entry(1, NOW - 40 * DAY)]
+    for (let minute = 0; minute < 2; minute++) {
+      await reportControlExpiry()
+      vi.setSystemTime(NOW + (minute + 1) * 60_000)
+    }
+    expect(await logged()).toEqual([])
+    await pruneEvents()
+    await reportControlExpiry()
+    expect(await logged()).toEqual([])
+  })
+
+  it('свежее снятие записывается ровно один раз, в том числе после перезапуска панели', async () => {
+    host.removed = [entry(2, NOW - 60_000)]
+    await reportControlExpiry()
+    await reportControlExpiry()
+    vi.resetModules()
+    await (await import('./expiry')).reportControlExpiry()
+    expect(await logged()).toEqual([`control-expiry:openvpn:2:${host.removed[0]!.expires_at}`])
+  })
+
+  it.each([-1, 0, 1])('граница хранения %i мс: вставляется ровно то, что чистка оставит', async (shift) => {
+    const retention = 30 * DAY
+    host.removed = [entry(3, NOW - retention + shift)]
+    await reportControlExpiry()
+    const inserted = (await logged()).length
+    await pruneEvents()
+    expect((await logged()).length).toBe(inserted)
+    await reportControlExpiry()
+    expect((await logged()).length).toBe(inserted)
+  })
+
+  it('часы хоста впереди панели: снятие «из будущего» записывается один раз', async () => {
+    host.removed = [entry(4, NOW + 5 * 60_000)]
+    await reportControlExpiry()
+    await pruneEvents()
+    await reportControlExpiry()
+    expect((await logged()).length).toBe(1)
   })
 })

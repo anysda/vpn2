@@ -13,6 +13,8 @@ export function minExpiryMs(): number {
 interface ControlExpiry { protocol: 'wg' | 'openvpn' | 'ikev2', id: string | number, expires_at: string, at: string }
 
 const PROTOCOL_LABEL = { wg: 'WireGuard', openvpn: 'OpenVPN', ikev2: 'IKEv2' }
+// Срок хранения журнала, как в pruneEvents: снятие старше него чистка удалила бы, а вставка вернула бы по кругу.
+const EVENT_RETENTION_MS = 30 * 24 * 3600 * 1000
 
 /**
  * Локальный сервис снимает доступ по сроку и без панели. Его журнал попадает
@@ -23,7 +25,9 @@ export async function reportControlExpiry(): Promise<void> {
   if (!cfg.wgEnabled && !cfg.ovpnEnabled && !cfg.ikev2Enabled) return
   const { removed } = await control<{ removed: ControlExpiry[] }>('expiry.run', {})
   const db = useDb()
-  for (const item of removed) {
+  // Сравнение то же, что у чистки: время записи хоста против часов панели.
+  const oldest = Date.now() - EVENT_RETENTION_MS
+  for (const item of removed.filter(item => Date.parse(item.at) >= oldest)) {
     const key = `control-expiry:${item.protocol}:${item.id}:${item.expires_at}`
     const [known] = await db.select({ id: events.id }).from(events).where(eq(events.key, key)).limit(1)
     if (known) continue

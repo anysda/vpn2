@@ -461,3 +461,17 @@ def test_broken_config_is_a_refusal_and_the_service_stays_up(fake, monkeypatch, 
         assert manager.call('status.read', {}, path)['result']['nodes'][1]['tag'] == 'se'
     finally:
         path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('end', [1, None], ids=['failed', 'interrupted'])
+def test_terminal_deploy_closes_the_failed_install_but_not_an_add(fake, end):
+    """./deploy.sh recover или -yaml из терминала после упавшей установки мастера: следующее задание панели не ждёт «забыть»."""
+    call(fake, 'install.run')
+    fake.end(end)
+    assert 'не закрыто' in call(fake, 'exit.add', tag='nl', host='192.0.2.9')['refused']
+    manager.Manager(fake.jobs.parent, fake.config, fake.lock, fake.repo).deployed()
+    assert call(fake, 'job.read', job=1)['state'] == 'forgotten'
+    assert call(fake, 'exit.add', tag='nl', host='192.0.2.9')['state'] == 'running'
+    fake.end(1)
+    fake.deployed()
+    assert call(fake, 'job.read', job=2)['state'] == 'failed', 'упавшее добавление закрывает только «забыть»'

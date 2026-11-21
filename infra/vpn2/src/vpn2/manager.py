@@ -324,6 +324,14 @@ class Manager:
         self.folder(cleanup['id']).mkdir(parents=True, mode=0o700)
         return self.run(cleanup, recover=True)
 
+    def deployed(self):
+        """Полный деплой из терминала прошёл (под его замком, без службы): упавшую или прерванную установку он довёл -
+        она закрыта, как «забыть». Добавление остаётся: его «забыть» чистит сервер экзита."""
+        job = self.load(0)
+        if job and job['kind'] == 'install' and job['state'] in ('failed', 'interrupted'):
+            job['state'] = 'forgotten'
+            self.save(job)
+
     def problems(self, tag, host):
         """Отказы до любых изменений: формат, занятость, сама entry; затем вход по ssh и ОС."""
         # До установки (мастер) config.yaml ещё нет: ни занятых тегов, ни адреса entry в нём.

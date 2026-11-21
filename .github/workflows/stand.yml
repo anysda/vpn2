@@ -83,6 +83,7 @@ jobs:
         include:
           - {os: '26.04', part: tls}
           # Чистая установка мастером в браузере: API от ссылки до итога, с ACME и без него.
+          # С ACME на dev - как у человека: git clone, ./deploy.sh без флагов, манифест и образы из ghcr.
           - {os: '26.04', part: wizard}
           - {os: '26.04', part: wizard-noacme}
     env:
@@ -136,7 +137,7 @@ jobs:
           { set +e; sudo infra/tests/ci-stand.sh up-wait > "$RUNNER_TEMP/up.log" 2>&1; echo $? > "$RUNNER_TEMP/up.rc"
             part=${{ matrix.part }}
             [ "$(cat "$RUNNER_TEMP/up.rc")" = 0 ] && { [ "$part" != tls ] && [ "$part" != wizard-noacme ] || sudo infra/tests/ci-stand.sh acme-down; } \
-              && sudo infra/tests/ci-stand.sh "$([ "${part#wizard}" = "$part" ] && echo deploy || echo wizard)" vpn2-stand/panel:${{ github.sha }}
+              && sudo infra/tests/ci-stand.sh "$([ "${part#wizard}" = "$part" ] && echo deploy || echo wizard)" vpn2-stand/panel:${{ github.sha }} ${{ matrix.part == 'wizard' && github.ref == 'refs/heads/dev' && '--release' || '' }}
             echo $? > "$RUNNER_TEMP/deploy.rc"; } > "$RUNNER_TEMP/deploy.log" 2>&1 &
 
       - uses: docker/setup-buildx-action@v4

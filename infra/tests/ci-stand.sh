@@ -829,16 +829,32 @@ cmd_deploy() {
 # Чистая установка мастером, без браузера: ./deploy.sh без config.yaml печатает ссылку, wizard_drive.py ведёт
 # API от токена до итога; связь во время стадий 30 и 29-control рвётся не дольше 10 с; после итога мастер уходит,
 # повторный ./deploy.sh мастера не ставит. ACME остановлен (acme-down) - отпечаток из терминала равен отданному.
+# --release (dev): как человек - git clone commit и ./deploy.sh без флагов, манифест и образы выпуска (их публикует
+# images) скачивает сам деплой; ключ на экзит - после ссылки.
 cmd_wizard() {
-  local image=${1:?образ панели (docker-образ на этой машине)} started=$SECONDS rc=0 log link fingerprint check
-  local tree=/opt/anysda-vpn2
+  local image=${1:?образ панели (docker-образ на этой машине)} release=${2:-} started=$SECONDS rc=0 log link fingerprint check
+  local tree=/opt/anysda-vpn2 commit
   apt_proxy_up --if-down
-  push_tree
-  ssh_node "$ENTRY" "rm -f $tree/config.yaml $ADMIN_PASSWORD_FILE"
-  lay_key
-  # Образа страницы мастера у ветки нет (его собирает images): заглушка, API ведёт стенд.
-  ssh_node "$ENTRY" 'mkdir -p /opt/vpn2-wizard/static && echo "<!doctype html>wizard" > /opt/vpn2-wizard/static/index.html'
-  entry_run wizard 'PANEL_IMAGE_PULL=false ./deploy.sh --development' || die 'мастер не встал'
+  if [[ $release == --release ]]; then
+    commit=$(git -C "$REPO_ROOT" rev-parse HEAD)
+    until PYTHONPATH="$REPO_ROOT/infra/vpn2/src" python3 -m vpn2.release --manifest "$STAND_DIR/release-manifest.json" \
+        fetch "$REPO_ROOT" 2>/dev/null; do
+      (( SECONDS - started < 1200 )) || die "манифест выпуска commit ${commit:0:12} не опубликован за 20 мин"
+      sleep 20
+    done
+    log "манифест выпуска опубликован через $(( SECONDS - started )) с"
+    ssh_node "$ENTRY" "rm -rf $tree && git clone -q https://github.com/anysda/vpn2 $tree && git -C $tree checkout -q $commit" \
+      || die "git clone commit ${commit:0:12} на entry не прошёл"
+    entry_run wizard ./deploy.sh || die 'мастер не встал'
+    lay_key
+  else
+    push_tree
+    ssh_node "$ENTRY" "rm -f $tree/config.yaml $ADMIN_PASSWORD_FILE"
+    lay_key
+    # Образа страницы мастера у ветки нет (его собирает images): заглушка, API ведёт стенд.
+    ssh_node "$ENTRY" 'mkdir -p /opt/vpn2-wizard/static && echo "<!doctype html>wizard" > /opt/vpn2-wizard/static/index.html'
+    entry_run wizard 'PANEL_IMAGE_PULL=false ./deploy.sh --development' || die 'мастер не встал'
+  fi
   log "ссылка за $(( SECONDS - started )) с от ./deploy.sh"
   log=$(ssh_node "$ENTRY" "sed 's/\x1b\[[0-9;]*m//g' /root/wizard.log")
   link=$(grep -o 'https://[0-9.]*/#[A-Za-z0-9_-]*' <<<"$log" | tail -1)
@@ -855,7 +871,8 @@ cmd_wizard() {
     check=fingerprint=$fingerprint
   fi
   # Образ панели ветки - под тегом разработки по умолчанию: задание мастера берёт его без pull.
-  load_panel "$image" && ssh_node "$ENTRY" "docker tag $PANEL_REF ghcr.io/anysda/vpn2/panel:dev" || die 'образ панели не на entry'
+  [[ $release == --release ]] || { load_panel "$image" && ssh_node "$ENTRY" "docker tag $PANEL_REF ghcr.io/anysda/vpn2/panel:dev"; } \
+    || die 'образ панели не на entry'
   python3 "$REPO_ROOT/infra/tests/wizard_drive.py" "$link" "$(cat "$STAND_DIR/id_ed25519.pub")" "$EXIT_TAG" "root@$EXIT" \
     "$(cat "$STAND_DIR/admin-password")" "$check" || rc=$?
   ssh_node "$ENTRY" 'tail -n 60 /var/lib/vpn2-manager/jobs/1/log' > "$STAND_DIR/wizard-job.log" 2>&1 || true

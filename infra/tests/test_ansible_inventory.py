@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 INFRA = ROOT / 'infra'
 TEMPLATE = INFRA / 'tests/fixtures/config/etalon.yaml'
 FIXTURE = INFRA / 'tests/fixtures/ansible/inventory-etalon.json'
-LABELS = {'@ENTRY_HOST@': '198.18.10.10', '@EXIT_HOST@': '198.18.10.20', '@EXIT_TAG@': 'nl',
+LABELS = {'@ENTRY_HOST@': '198.18.10.10', '@EXIT_HOST@': '198.18.10.20', '@EXIT_TAG@': 'nl-ams',
           '@ADMIN_KEY@': 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStand vpn2-ci-stand', '@PANEL_IMAGE@': 'panel:test', '@ADMIN_PASSWORD@': 'stand-admin'}
 
 
@@ -58,7 +58,7 @@ class AnsibleInventoryTests(unittest.TestCase):
         second = '  - tag: de\n    host: root@198.18.10.30\n'
         base = render()
         no_exits = base.split('exits:\n')[0] + 'admin:' + base.split('admin:', 1)[1]
-        cases = ((no_exits, []), (render(second), ['nl', 'de']))
+        cases = ((no_exits, []), (render(second), ['nl-ams', 'de']))
         for text, tags in cases:
             with self.subTest(tags=tags), tempfile.TemporaryDirectory() as directory:
                 result = run(directory, text, '--list')
@@ -67,9 +67,9 @@ class AnsibleInventoryTests(unittest.TestCase):
 
     def test_prepare_keeps_release_octets_in_clean_install_text(self):
         # Файл v1.1.5 со своей шапкой: октеты те же, текст как у чистой установки.
-        release = '# тег → последний октет MGMT_IP (10.99.0.N), пишет config2env.py.\nnl 5\n'
+        release = '# тег → последний октет MGMT_IP (10.99.0.N), пишет config2env.py.\nnl-ams 5\n'
         second = '  - tag: de\n    host: root@198.18.10.30\n'
-        for text, octets in ((render(), ['nl 5']), (render(second), ['de 2', 'nl 5'])):
+        for text, octets in ((render(), ['nl-ams 5']), (render(second), ['de 2', 'nl-ams 5'])):
             with self.subTest(octets=octets), tempfile.TemporaryDirectory() as directory, \
                     tempfile.TemporaryDirectory() as clean:
                 path = Path(directory) / 'state/mgmt-ips.txt'

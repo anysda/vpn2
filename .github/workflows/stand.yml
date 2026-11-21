@@ -254,6 +254,12 @@ jobs:
           path: snapshot-ref/
           if-no-files-found: error
 
+      # Выключение экзита с дефисом в теге - до повторного деплоя, он кончается 99-verify.
+      - name: выключение и включение экзита
+        if: matrix.part == 'again'
+        timeout-minutes: 5
+        run: sudo infra/tests/ci-stand.sh exit-toggle
+
       # Сценарий 2 карточки: слепок до и после повторного ./deploy.sh одинаков.
       - name: повторный деплой
         if: matrix.part == 'again'

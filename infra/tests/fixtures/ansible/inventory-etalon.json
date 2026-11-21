@@ -1,7 +1,7 @@
 {
   "_meta": {
     "hostvars": {
-      "nl": {
+      "nl-ams": {
         "ansible_host": "198.18.10.20",
         "ansible_ssh_common_args": "-o UserKnownHostsFile=@STATE@/known_hosts -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey -o ConnectTimeout=10",
         "ansible_ssh_private_key_file": "/run/vpn2-secrets/root/orchestrator_key",
@@ -9,42 +9,42 @@
         "vpn2_env": {
           "ADMIN_SSH_PUBKEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStand vpn2-ci-stand",
           "AGH_PORT": "3000",
-          "DOMAIN_NL": "198.18.10.20",
+          "DOMAIN_NL_AMS": "198.18.10.20",
           "ENTRY_HOST": "198.18.10.10",
-          "EXIT_TAGS": "nl",
-          "HOST_TAG": "nl",
+          "EXIT_TAGS": "nl-ams",
+          "HOST_TAG": "nl-ams",
           "HY2_DIRECT_PORT": "443",
           "HY2_DOWN_MBPS": "",
           "HY2_MGMT_PORT": "8444",
           "HY2_UP_MBPS": "",
           "HY2_WARP_PORT": "8443",
           "MGMT_IP": "10.99.0.2",
-          "MGMT_IP_NL": "10.99.0.2",
+          "MGMT_IP_NL_AMS": "10.99.0.2",
           "MGMT_IP_RU": "10.99.0.1",
-          "NL_HY2_DIRECT_PORT": "443",
-          "NL_HY2_DOWN_MBPS": "",
-          "NL_HY2_UP_MBPS": "",
+          "NL_AMS_HY2_DIRECT_PORT": "443",
+          "NL_AMS_HY2_DOWN_MBPS": "",
+          "NL_AMS_HY2_UP_MBPS": "",
           "PUB_IP": "198.18.10.20",
           "SSH_HOST": "198.18.10.20",
           "SSH_USER": "root"
         },
         "vpn2_exits": [
           {
-            "env_tag": "NL",
+            "env_tag": "NL_AMS",
             "host": "198.18.10.20",
             "hy2_direct_port": 443,
             "hy2_down_mbps": null,
             "hy2_insecure": false,
             "hy2_up_mbps": null,
             "mgmt_ip": "10.99.0.2",
-            "tag": "nl"
+            "tag": "nl-ams"
           }
         ],
         "vpn2_node": {
           "host": "198.18.10.20",
           "mgmt_ip": "10.99.0.2",
           "role": "exit",
-          "tag": "nl"
+          "tag": "nl-ams"
         }
       },
       "ru": {
@@ -61,20 +61,20 @@
           "BACKUP_LOCAL_DIR": "/var/backups/anysda-vpn2",
           "BACKUP_RETENTION": "10",
           "BACKUP_SCHEDULE": "off",
-          "DOMAIN_NL": "198.18.10.20",
+          "DOMAIN_NL_AMS": "198.18.10.20",
           "ENTRY_HOST": "198.18.10.10",
           "ENTRY_RESOURCE_OVERRIDES": "{}",
-          "EXIT_TAGS": "nl",
+          "EXIT_TAGS": "nl-ams",
           "HOST_TAG": "ru",
           "HY2_DIRECT_PORT": "443",
           "HY2_MGMT_PORT": "8444",
           "HY2_WARP_PORT": "8443",
           "MGMT_IP": "10.99.0.1",
-          "MGMT_IP_NL": "10.99.0.2",
+          "MGMT_IP_NL_AMS": "10.99.0.2",
           "MGMT_IP_RU": "10.99.0.1",
-          "NL_HY2_DIRECT_PORT": "443",
-          "NL_HY2_DOWN_MBPS": "",
-          "NL_HY2_UP_MBPS": "",
+          "NL_AMS_HY2_DIRECT_PORT": "443",
+          "NL_AMS_HY2_DOWN_MBPS": "",
+          "NL_AMS_HY2_UP_MBPS": "",
           "PANEL_DOMAIN": "",
           "PUB_IP_OUT": "198.18.10.10",
           "SSH_HOST": "198.18.10.10",
@@ -88,14 +88,14 @@
         },
         "vpn2_exits": [
           {
-            "env_tag": "NL",
+            "env_tag": "NL_AMS",
             "host": "198.18.10.20",
             "hy2_direct_port": 443,
             "hy2_down_mbps": null,
             "hy2_insecure": false,
             "hy2_up_mbps": null,
             "mgmt_ip": "10.99.0.2",
-            "tag": "nl"
+            "tag": "nl-ams"
           }
         ],
         "vpn2_node": {
@@ -120,7 +120,7 @@
   },
   "exits": {
     "hosts": [
-      "nl"
+      "nl-ams"
     ]
   }
 }

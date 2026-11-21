@@ -22,6 +22,7 @@
 #   sudo infra/tests/ci-stand.sh deploy-again <каталог> повторный ./deploy.sh и слепок snapshot-again
 #   sudo infra/tests/ci-stand.sh snapshot-corrupt       положительный контроль слепка
 #   sudo infra/tests/ci-stand.sh bot-fake-token         боту поддельный токен: пауза, не цикл перезапусков
+#   sudo infra/tests/ci-stand.sh exit-toggle            экзит выключен и включён: сторож узнаёт его тег
 #   sudo infra/tests/ci-stand.sh backup-fixture <каталог> эталонный архив бэкапа и etalon.expect.json
 #   sudo infra/tests/ci-stand.sh restore-check [--foreign-pass] restore эталонного архива и сверка; с флагом - чужой пароль, шаг обязан упасть
 #   sudo infra/tests/ci-stand.sh recover-fresh          потеря entry: архив, новая ВМ entry, restore без ключа на экзите
@@ -71,7 +72,7 @@ RELEASE_DIR=${STAND_RELEASE_CACHE:-/var/tmp/vpn2-release-cache}
 NET=198.18.10
 BRIDGE=vpn2ci
 PANEL_REF=vpn2-ci/panel:local
-EXIT_TAG='nl'
+EXIT_TAG='nl-ams'
 # имя адрес vCPU память(МиБ) MAC
 # entry ведёт почти все стадии - ему все ядра раннера, экзит большей частью ждёт.
 NODES=("entry $NET.10 4 4096 52:54:00:12:0a:0a" "exit $NET.20 2 2048 52:54:00:12:0a:14")
@@ -1062,7 +1063,7 @@ reboot_nodes() {
 release_key() {
   local tag=${1:?тег выпуска}
   printf '%s-%s-%s\n' "$tag" "$IMAGE_KEY" "$( {
-    declare -p NODES NET
+    declare -p NODES NET EXIT_TAG
     declare -f seed warm_script push_tree snapshot_base snapshot_tool snapshot_run cmd_deploy_release acme_up reboot_nodes \
       remote_up registry_up stand_sources manifest_publish
     git -C "$REPO_ROOT" show "$tag:infra/tests/fixtures/config/etalon.yaml"
@@ -1523,6 +1524,46 @@ cmd_bot_fake_token() {
   log "бот с поддельным токеном: InvalidToken через $waited с, RestartCount $rc_after, контейнер работает, панель отвечает"
 }
 
+watchdog_says() {  # <с какой секунды> <строка>: ждёт строку в журнале сторожа до 30 с
+  local t0=$SECONDS
+  until ssh_node "$ENTRY" "journalctl -u anysda-failover-watchdog --since @$1 -o cat --no-pager" | grep -qF -- "$2"; do
+    (( SECONDS - t0 < 30 )) || return 1
+    sleep 2
+  done
+}
+
+exit_state() {  # экзит стенда в /api/ops/nodes панели: disabled=… active=…
+  panel_api GET /api/ops/nodes | python3 -c 'import json, sys
+node = next(n for n in json.load(sys.stdin) if n["tag"] == sys.argv[1])
+print("disabled=%s active=%s" % (str(node["disabled"]).lower(), str(node["active"]).lower()))' "$EXIT_TAG"
+}
+
+# Экзит с дефисом в теге выключается и включается (VPN2-993): сторож узнаёт узел
+# в hy2-<тег>-<вид>. Экзит на стенде один - панель его не выключает (409), поэтому
+# выключение пишется в файл, который панель пишет через control и читает сторож;
+# включает обратно панель. Единственный выключенный экзит сторож не исключает,
+# а оставляет трафик на нём - это и ждём.
+cmd_exit_toggle() {
+  local rc=0 since again out state
+  since=$(ssh_node "$ENTRY" 'date +%s')
+  out=$(panel_api PATCH "/api/ops/exits/$EXIT_TAG" '{"disabled": true}' 2>&1) && out="200 $out"
+  check "панель не выключает последний экзит $EXIT_TAG: ${out//$'\n'/ }" test "${out/*error: 409*/409}" = 409
+  ssh_node "$ENTRY" "printf '{\"disabled\": [\"%s\"]}\\n' '$EXIT_TAG' > /etc/anysda/exits-disabled.json"
+  check "сторож: «выключены вручную: $EXIT_TAG»" watchdog_says "$since" "выключены вручную: $EXIT_TAG"
+  check "сторож: трафик через выключенный ($EXIT_TAG)" watchdog_says "$since" "через выключенные вручную ($EXIT_TAG)"
+  state=$(exit_state)
+  check "панель: $EXIT_TAG выключен и остаётся в работе: $state" test "$state" = 'disabled=true active=true'
+  again=$(ssh_node "$ENTRY" 'date +%s')
+  out=$(panel_api PATCH "/api/ops/exits/$EXIT_TAG" '{"disabled": false}' 2>&1)
+  check "панель включает $EXIT_TAG: $out" test "$out" = "{\"tag\":\"$EXIT_TAG\",\"disabled\":false}"
+  check 'сторож: «выключены вручную: нет»' watchdog_says "$again" 'выключены вручную: нет'
+  state=$(exit_state)
+  check "панель: $EXIT_TAG включён и в работе: $state" test "$state" = 'disabled=false active=true'
+  out=$(ssh_node "$ENTRY" "journalctl -u anysda-failover-watchdog --since @$since -o cat --no-pager | grep -F 'таких узлов нет'")
+  check "в журнале сторожа нет «таких узлов нет»: ${out:-пусто}" test -z "$out"
+  return "$rc"
+}
+
 # Эталонный архив бэкапа (VPN2-751): на развёрнутом стенде создаётся известный
 # набор данных, снимается anysda-backup.sh; архив и файл ожиданий кладутся в
 # <каталог>. Токен ненастоящий; архив зашифрован открытой фразой стенда и несёт
@@ -1879,6 +1920,7 @@ case "${1:-}" in
   snapshot) cmd_snapshot "${@:2}" ;;
   snapshot-corrupt) cmd_snapshot_corrupt ;;
   bot-fake-token) cmd_bot_fake_token ;;
+  exit-toggle) cmd_exit_toggle ;;
   backup-fixture) cmd_backup_fixture "${@:2}" ;;
   restore-check) cmd_restore_check "${@:2}" ;;
   recover-fresh) cmd_recover_fresh ;;

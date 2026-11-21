@@ -102,16 +102,17 @@ def dispatch(deploy, argv, new_server=None):
         code = deploy.run_stage(action, argv[1])
         if action == '30-frontend' and argv[1] in ('ru', 'all'):
             report.sso_notice(deploy)
-    if code:
+    # Код 2 стадий - установка годна, не всё измерено (99-verify): config.yaml чистится, как при 0.
+    if code and (code != 2 or action in ('restore', 'rollback')):
         return code
     deploy.release_complete()
-    # Пароли root из config.yaml 1.2.0 больше не нужны: вход по ключу на все узлы прошёл, деплой - тоже.
+    # Пароли root из config.yaml 1.2.0 деплой не читает (вход только по ключу) и после годного прогона стирает.
     if action in ('', 'recover') and drop_passwords(CONFIG):
         ok('пароли root entry и экзитов убраны из config.yaml: вход на серверы только по ключу')
     # Секреты уже в хранилище (take_secrets до стадий): успешный прогон стирает их из config.yaml.
     if finish_secrets(panel=action in ('', 'recover') or (action == '30-frontend' and argv[1] in ('ru', 'all'))):
         ok('секреты перенесены в зашифрованное хранилище entry и стёрты из config.yaml')
-    return 0
+    return code
 
 
 def panel_admin(db='/var/lib/anysda-vpn2/db.sqlite'):

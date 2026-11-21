@@ -24,7 +24,7 @@ with open(os.environ['FAKE_PLAYS'], 'a') as out:
 extra = dict(argv[i + 1].split('=', 1) for i, a in enumerate(argv) if a == '-e' and '=' in argv[i + 1])
 hosts = argv[argv.index('--limit') + 1].split(',') if '--limit' in argv else []
 for host in hosts if '99-verify --limit' in args else ():
-    open(f"{os.environ['VPN2_VERIFY_OUT']}/{host}", 'w').write(f'0\n[{host}] ✓ всё измерено\n')
+    open(f"{os.environ['VPN2_VERIFY_OUT']}/{host}", 'w').write(f"{os.environ.get('FAKE_VERIFY', '0') if host == 'ru' else 0}\n[{host}] ✓ всё измерено\n")
 for host in hosts if '--tags secrets' in args else ():
     upper = host.upper()
     open(f"{extra['out']}/{host}.env", 'w').write(''.join(f'{upper}_{k}=x\n' for k in ('DIRECT', 'WARP', 'OBFS', 'MGMT', 'CLASH')))
@@ -378,6 +378,23 @@ def test_root_passwords_of_1_2_0_leave_config_after_a_good_deploy_only(tree, inp
     stamp = (tree / 'config.yaml').stat()
     assert inproc().returncode == 0 and (tree / 'config.yaml').read_text() == wiped
     assert (tree / 'config.yaml').stat().st_mtime_ns == stamp.st_mtime_ns
+
+
+@pytest.mark.parametrize('job', [False, True])
+def test_partly_verified_deploy_wipes_secrets_and_root_passwords(tree, inproc, job):
+    """VPN2-989: код 2 - установка годна, не всё измерено: секреты уже в хранилище, config.yaml чист, как при 0;
+    в задании менеджера так же, как из терминала."""
+    from vpn2 import creds
+    legacy = CONFIG.replace('  host: 1.2.3.4\n', '  host: 1.2.3.4\n  password: root pw\n').replace(
+        '    host: root@9.10.11.12\n', '    host: root@9.10.11.12\n    password: "p2"\n')
+    (tree / 'config.yaml').write_text(legacy)
+    (tree / 'job').mkdir()
+    extra = {'VPN2_JOB': str(tree / 'job')} if job else {}
+    done = inproc(FAKE_VERIFY='2', **extra)
+    assert done.returncode == 2, done.stderr
+    wiped = CONFIG.replace('  s3_secret_key: test pass\n', '  s3_secret_key:\n')
+    assert (tree / 'config.yaml').read_text() == wiped and creds.read('s3_secret_key') == 'test pass'
+    assert inproc(FAKE_VERIFY='0', **extra).returncode == 0 and (tree / 'config.yaml').read_text() == wiped
 
 
 def test_missing_admin_key_refuses_to_start(tree, inproc):

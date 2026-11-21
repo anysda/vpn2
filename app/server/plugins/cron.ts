@@ -20,7 +20,7 @@ export default defineNitroPlugin((nitroApp) => {
     // Файлы роутера из базы: правка, не дошедшая из-за деплоя или сбоя службы, доезжает здесь.
     if (await deployIdle()) {
       await syncClientPrefsFile().catch(err => log.error({ err }, 'cron: client prefs sync failed'))
-      await syncRoutesFile().catch(err => log.error({ err }, 'cron: routes sync failed'))
+      await healRoutesFile().catch(err => log.error({ err }, 'cron: routes sync failed'))
     }
     await collectTraffic().catch(err => log.error({ err }, 'cron: traffic collection failed'))
   }

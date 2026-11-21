@@ -6,7 +6,7 @@ import { beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../database/schema'
 
 // Хост: vpn2-control поднят или нет, деплой идёт или нет, файлы роутера.
-const host = vi.hoisted(() => ({ up: true, deploy: 'idle', files: {} as Record<string, unknown>, writes: 0, db: null as unknown }))
+const host = vi.hoisted(() => ({ up: true, deploy: 'idle', files: {} as Record<string, unknown>, writes: 0, routeWrites: 0, db: null as unknown }))
 vi.mock('../database/client', () => ({ useDb: () => host.db }))
 vi.mock('./auth', () => ({ requireAuth: async () => ({ id: 1, username: 'admin' }) }))
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<object>(), readBodyAs: async (e: { body: unknown }) => e.body }))
@@ -22,6 +22,7 @@ vi.mock('./control', () => ({
     if (!host.up) throw new Error('control down')
     host.files[params.resource] = params.config
     host.writes++
+    if (params.resource === 'routes') host.routeWrites++
   },
 }))
 vi.mock('./access-operations', () => ({ enqueueExpiredAccess: async () => {}, runAccessOperations: async () => {} }))
@@ -41,8 +42,9 @@ beforeAll(async () => {
   host.db = db
 })
 beforeEach(async () => {
-  Object.assign(host, { up: true, deploy: 'idle', files: {}, writes: 0 })
+  Object.assign(host, { up: true, deploy: 'idle', files: {}, writes: 0, routeWrites: 0 })
   await db.delete(schema.routes)
+  await db.delete(schema.collectorState)
 })
 
 type Route = 'POST /routes' | 'PATCH /routes/:id' | 'DELETE /routes/:id'
@@ -121,4 +123,26 @@ it('несколько правок во время деплоя: после н�
   host.deploy = 'idle'
   await cronTick()
   expect(fileValues()).toEqual(['h.example'])
+})
+
+it('чистый хост без правил: минутный тик маршруты роутеру не шлёт', async () => {
+  await cronTick()
+  await cronTick()
+  expect(host.routeWrites).toBe(0)
+})
+
+it('правка применена: следующие тики её не переписывают', async () => {
+  await add('i.example')
+  await cronTick()
+  await cronTick()
+  expect(host.routeWrites).toBe(1)
+})
+
+it('все правила удалены, пока служба лежала: тик пишет пустой список', async () => {
+  const row = await add('j.example')
+  host.up = false
+  await expect(call('DELETE /routes/:id', undefined, row.id)).rejects.toMatchObject(notApplied)
+  host.up = true
+  await cronTick()
+  expect(fileValues()).toEqual([])
 })

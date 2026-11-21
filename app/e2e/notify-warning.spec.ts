@@ -182,7 +182,7 @@ test('очередь бота заполнена: изменения запис�
       db.exec("PRAGMA busy_timeout=5000; DELETE FROM bot_outbox WHERE id LIKE 'e2e-full-%'");
       for (const row of JSON.parse(process.argv[1])) {
         const keys = Object.keys(row);
-        db.prepare(`INSERT OR IGNORE INTO bot_outbox (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).run(...Object.values(row));
+        db.prepare('INSERT OR IGNORE INTO bot_outbox (' + keys.join(', ') + ') VALUES (' + keys.map(() => '?').join(', ') + ')').run(...Object.values(row));
       }
     `, held)
     for (const id of ids) await page.request.delete(`/api/clients/${id}`)

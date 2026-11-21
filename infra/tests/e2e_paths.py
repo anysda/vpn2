@@ -8,32 +8,37 @@ from pathlib import Path
 import subprocess
 
 
-# Inputs read by run-local/panel-stand and the live speedtest regression.
+# Inputs of app/e2e: copied into the stand, run or imported by it (test_e2e_paths derives them).
+PREFIXES = (
+    'app/',
+    'infra/vpn2/src/vpn2/',
+    'infra/ansible/roles/control/templates/',
+    'telegram/tests/',
+    'telegram/vpn2bot/',
+)
 DEPENDENCIES = {
     '.github/workflows/checks.yml',
     'infra/tests/e2e_paths.py',
-    'infra/vpn2/src/vpn2/resources.py',
-    'infra/vpn2/src/vpn2/pki.py',
-    'infra/vpn2/src/vpn2/containers/compose.py',
-    'infra/vpn2/src/vpn2/containers/panel.py',
+    'infra/ansible/inventory.py',
+    'infra/ansible/constraints.txt',
+    'infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py',
+    # The router role run by infra/tests/router_support.py for the stand's route snapshot.
+    'infra/ansible/roles/router/defaults/main.yml',
+    'infra/ansible/roles/router/templates/config-base.json.j2',
+    'infra/tests/router_support.py',
+    'infra/tests/vpn_roles.py',
+    'infra/tests/infra_support.py',
     'infra/tests/speedtest.py',
     'infra/tests/test_speedtest.py',
     'infra/tests/test_panel_proxy.py',
-    'infra/ansible/inventory.py',
-    'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py',
-    'infra/ansible/roles/router/templates/config-base.json.j2',
-    'infra/tests/router_support.py',
-    # app/e2e/qr-size.sh: QR аварийки hy2 и худший конфиг для бота.
-    'infra/vpn2/src/vpn2/emergency/hy2.py',
-    'infra/vpn2/src/vpn2/emergency/web.py',
     'infra/tests/emergency_qr_fixture.py',
-    'telegram/tests/qr-worst-wg.conf',
-    'telegram/tests/test_qr_size.py',
+    'infra/tests/emergency_web_fixture.py',
+    'telegram/requirements.txt',
 }
 
 
 def needs_e2e(paths):
-    return any(path.startswith('app/') or path in DEPENDENCIES for path in paths)
+    return any(path.startswith(PREFIXES) or path in DEPENDENCIES for path in paths)
 
 
 def changed_paths(base, head, merge_base=False):

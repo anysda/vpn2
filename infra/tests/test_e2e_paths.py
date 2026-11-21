@@ -3,16 +3,55 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 SCRIPT = ROOT / 'infra/tests/e2e_paths.py'
+sys.path.insert(0, str(SCRIPT.parent))
+import e2e_paths  # noqa: E402
+
+# sys.path of the stand scripts and of the code they run: a module name resolves against these.
+IMPORT_ROOTS = ('infra/tests', 'infra/vpn2/src', 'telegram')
+REFERENCE = re.compile(r'(?<![\w.-])((?:infra|telegram)/[\w.-]+(?:/[\w.-]+)*)')
+IMPORT = re.compile(r'^\s*(?:from|import)\s+(\w+)|import_module\(\'(\w+)\'\)', re.M)
+
+
+def e2e_inputs():
+    """Files that app/e2e names (copies, runs, reads) or imports; imports are followed through the tests."""
+    tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, capture_output=True, check=True,
+                             text=True).stdout.rstrip('\0').split('\0')
+    under = lambda top: {f for f in tracked if f == top or f.startswith(top.rstrip('/') + '/')}
+    scan, found = sorted(under('app/e2e')), set()
+    while scan:
+        path = scan.pop()
+        text = (ROOT / path).read_text(errors='replace')
+        new = set()
+        for ref in REFERENCE.findall(text) if path.startswith('app/') else ():
+            if ref not in IMPORT_ROOTS:
+                new |= under(ref)
+        for name in filter(None, (a or b for a, b in IMPORT.findall(text))):
+            for root in IMPORT_ROOTS:
+                new |= under(f'{root}/{name}.py') | under(f'{root}/{name}')
+        new -= found
+        found |= new
+        scan += [f for f in new if f.endswith('.py') and f.startswith(('infra/tests/', 'telegram/tests/'))]
+    return found
 
 
 class E2ePathsTests(unittest.TestCase):
+    def test_every_input_of_the_stand_selects_e2e(self):
+        inputs = e2e_inputs()
+        for path in ['infra/vpn2/src/vpn2/control/backend.py', 'infra/vpn2/src/vpn2/manager.py',
+                     'infra/vpn2/src/vpn2/config.py', 'infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py',
+                     'infra/tests/router_support.py', 'telegram/tests/test_qr_size.py']:
+            self.assertIn(path, inputs)
+        self.assertEqual(sorted(p for p in inputs if not e2e_paths.needs_e2e([p])), [])
+
     def test_paths_and_events(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)

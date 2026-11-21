@@ -503,7 +503,8 @@ class Deploy:
                             '-e', f'bootstrap={action in ("", "recover", "00-bootstrap", "exit-add")}'):
                 if found := sorted(self.tmp.glob('*.journal')):
                     self.opened = False
-                    die(found[0].read_text().strip())
+                    die(found[0].read_text().strip() + '; ' + ('«Повторить» доведёт деплой с того же места' if self.progress
+                        else 'проверьте службы и запустите ./deploy.sh recover (или ./deploy.sh rollback)'))
                 raise SystemExit(1)
         self.mutating = True
 

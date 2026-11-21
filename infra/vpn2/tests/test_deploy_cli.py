@@ -31,7 +31,7 @@ for host in hosts if '--tags secrets' in args else ():
     for kind in ('pem', 'pub', 'reality'):
         open(f"{extra['out']}/{host}.{kind}", 'w').close()
 if os.environ.get('FAKE_OPEN') and '--tags release' in args and 'journal=True' in args:
-    open(f"{extra['out']}/ru.journal", 'w').write('unfinished deploy on ru: operation journal is open\n')
+    open(f"{extra['out']}/ru.journal", 'w').write('незакрытый деплой на ru: журнал операции открыт\n')
     sys.exit(2)
 for match, code, pause in json.loads(os.environ.get('FAKE_RULES', '[]')):
     if match in args:
@@ -416,7 +416,8 @@ def test_recover_skips_the_journal_check(tree, inproc):
 
 def test_unfinished_deploy_is_refused_without_changes(tree, inproc):
     done = inproc(FAKE_OPEN='1')
-    assert done.returncode == 1 and 'unfinished deploy on ru: operation journal is open' in done.stderr
+    assert done.returncode == 1 and ('незакрытый деплой на ru: журнал операции открыт; проверьте службы и запустите '
+                                     './deploy.sh recover (или ./deploy.sh rollback)') in done.stderr
     assert [call['args'].split('--tags ')[1].split()[0] for call in plays(tree)] == ['release']
 
 

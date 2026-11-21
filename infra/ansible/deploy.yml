@@ -29,8 +29,7 @@
     - name: Незакрытый деплой
       ansible.builtin.copy:
         content: >-
-          unfinished deploy on {{ inventory_hostname }}: operation journal /var/lib/vpn2-deploy/operation.json
-          is open; inspect services, then run ./deploy.sh recover (or ./deploy.sh rollback)
+          незакрытый деплой на {{ inventory_hostname }}: журнал операции /var/lib/vpn2-deploy/operation.json открыт
         dest: "{{ out }}/{{ inventory_hostname }}.journal"
         mode: "0600"
       delegate_to: localhost

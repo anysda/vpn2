@@ -273,6 +273,7 @@ test('docker restart во время применения; гонка панел
     command('exec', '-d', container!, 'node', '/tmp/fake-backends.mjs')
     command('exec', '-d', container!, 'bash', '/tmp/vpn-services.sh')
     command('exec', '-d', container!, 'python3', '/tmp/control-service.py')
+    command('exec', '-d', container!, 'python3', '/tmp/fake-manager.py')
     await expect.poll(async () => (await page.request.get('/api/version').catch(() => null))?.status(), { timeout: 30_000 }).toBe(200)
     const recovered = await waitAccess(page.request, operation)
     expect(recovered.id).toBe(operation.id)

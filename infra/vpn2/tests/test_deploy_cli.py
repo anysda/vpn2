@@ -579,9 +579,9 @@ def test_image_without_python3_yaml_gets_it_before_the_first_python_call(tree, a
             fcntl.flock(held, fcntl.LOCK_EX)
         done = deploy(tree, *args, **env)
     assert 'install -y -qq --no-install-recommends python3-yaml' in (tree / 'apt').read_text()
-    assert 'ставлю python3-yaml' in done.stdout and 'Traceback' not in done.stderr and 'config.yaml не найден' not in done.stdout
+    assert 'ставлю python3-yaml' in done.stderr and 'Traceback' not in done.stderr and 'config.yaml не найден' not in done.stdout
     if args == ['-key']:
-        assert done.returncode == 0 and done.stdout.splitlines()[-1].startswith('ssh-ed25519 ')
+        assert done.returncode == 0 and done.stdout.startswith('ssh-ed25519 ') and done.stdout.count('\n') == 1
     elif not args:
         assert done.returncode == 0 and 'https://192.0.2.1/#' in done.stdout, done.stderr
     else:
@@ -592,7 +592,7 @@ def test_python3_yaml_already_there_means_no_apt(tree):
     env = without_yaml(tree)
     (tree / 'yaml-installed').touch()
     done = deploy(tree, '-key', **env)
-    assert done.returncode == 0 and not (tree / 'apt').exists() and 'python3-yaml' not in done.stdout
+    assert done.returncode == 0 and not (tree / 'apt').exists() and 'python3-yaml' not in done.stdout + done.stderr
 
 
 def test_python3_yaml_not_installed_stops_with_the_reason(tree):

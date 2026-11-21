@@ -17,10 +17,11 @@ install -d -m 700 "$VPN2_STATE_DIR" 2>/dev/null \
   || die "нет доступа к $VPN2_STATE_DIR: deploy.sh запускается от root"
 # Деплой до venv идёт системным python3 с yaml, а образ без cloud-init (шаблон LXC, debootstrap) их не несёт.
 if ! python3 -c 'import yaml' 2>/dev/null; then
-  printf 'ставлю python3-yaml: без него деплой не запускается\n'
+  # В stdout - только вывод режима: ./deploy.sh -key печатает там один ключ.
+  printf 'ставлю python3-yaml: без него деплой не запускается\n' >&2
   DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 bash -c 'set -euo pipefail; HOST_TAG=deploy; source "$0"
     apt_update_if_stale; apt_get install -y -qq --no-install-recommends python3-yaml >/dev/null' \
-    "$REPO_ROOT/infra/lib/anysda-svc.sh" && python3 -c 'import yaml' 2>/dev/null \
+    "$REPO_ROOT/infra/lib/anysda-svc.sh" >&2 && python3 -c 'import yaml' 2>/dev/null \
     || die 'python3-yaml не установился, причина выше: нужен apt с доступом к зеркалу Ubuntu; повтори ./deploy.sh'
 fi
 # Чистая система без config.yaml или начатый мастер: мастер установки в браузере. Замок деплоя он берёт сам,

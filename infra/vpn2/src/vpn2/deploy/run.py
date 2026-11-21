@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from vpn2 import config, fsutil, ports, release, stages
+from vpn2 import config, fsutil, ports, release, stages, tls, wizard
 from vpn2.config import STATE_DIR
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, installed, log, ok, orchestrator_key, prep_keys,
                          key_id, own_keys, pub, read, report, ssh_options, step, warn)
@@ -419,6 +419,10 @@ class Deploy:
                 if stage.name == '99-verify':
                     # Остатки раскладки v1.1.5 убирает тот же плей за зелёной проверкой узла.
                     self.old_layout = True
+                    # Установку мастера доводит терминал: проверка видит панель, а не маршрут мастера. Мастер уходит
+                    # целиком после успеха; после отказа ./deploy.sh вернёт маршрут вместе с новой ссылкой.
+                    if not self.progress and wizard.STATE.is_dir():
+                        tls.serve_routes('wizard', '')
                     verify = self.run_stage(stage.name, group)
                 else:
                     self.run_stage(stage.name, group, env=FULL_ENV.get(stage.name))

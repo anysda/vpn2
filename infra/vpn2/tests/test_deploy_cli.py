@@ -397,13 +397,16 @@ def test_partly_verified_deploy_wipes_secrets_and_root_passwords(tree, inproc, j
     assert inproc(FAKE_VERIFY='0', **extra).returncode == 0 and (tree / 'config.yaml').read_text() == wiped
 
 
-@pytest.mark.parametrize('args, extra, closed', [
-    (('recover',), {}, True), ((), {}, True),
-    (('recover',), {'FAKE_RULES': json.dumps([['--tags 30-frontend ', 2, 0]])}, False),
-    ((), {'VPN2_JOB': 'job'}, False)])
-def test_terminal_deploy_after_a_failed_wizard_install_closes_the_wizard(tree, inproc, monkeypatch, args, extra, closed):
+@pytest.mark.parametrize('args, extra, closed, routed', [
+    (('recover',), {}, True, False), ((), {}, True, False),
+    (('recover',), {'FAKE_RULES': json.dumps([['--tags 30-frontend ', 2, 0]])}, False, True),
+    (('recover',), {'FAKE_VERIFY': '1'}, False, False),
+    ((), {'VPN2_JOB': 'job'}, False, True)])
+def test_terminal_deploy_after_a_failed_wizard_install_closes_the_wizard(tree, inproc, monkeypatch, args, extra, closed, routed):
     """VPN2-991: установка мастером упала, ./deploy.sh recover (или -yaml) из терминала прошёл - маршрут, состояние
-    и юнит мастера сняты, следующий ./deploy.sh - обычное обновление. Упавший деплой и задание менеджера мастер не закрывают."""
+    и юнит мастера сняты, следующий ./deploy.sh - обычное обновление. Маршрут уходит до итогового 99-verify: проверка
+    смотрит панель; её отказ оставляет состояние мастера (./deploy.sh вернёт маршрут). Упавшая стадия и задание
+    менеджера мастер не трогают."""
     import functools
 
     from vpn2 import tls, wizard
@@ -419,10 +422,11 @@ def test_terminal_deploy_after_a_failed_wizard_install_closes_the_wizard(tree, i
     monkeypatch.setattr(wizard, 'RUN', tree / 'wizard-run')
     monkeypatch.setattr(wizard, 'CADDY', caddy)
     monkeypatch.setattr(tls, 'serve_routes', functools.partial(tls.serve_routes, caddy_dir=caddy))
-    done = inproc(*args, **{**extra, **({'VPN2_JOB': str(tree / 'job')} if 'VPN2_JOB' in extra else {})})
-    assert done.returncode == (1 if 'FAKE_RULES' in extra else 0), done.stderr
-    assert state.exists() is not closed and (caddy / tls.ROUTES / 'wizard.conf').exists() is not closed
-    assert (caddy / tls.SITES).exists() is not closed
+    extra = {'FAKE_VERIFY': '0', **extra, **({'VPN2_JOB': str(tree / 'job')} if 'VPN2_JOB' in extra else {})}
+    done = inproc(*args, **extra)
+    assert done.returncode == (0 if closed or 'VPN2_JOB' in extra else 1), done.stderr
+    assert state.exists() is not closed
+    assert (caddy / tls.ROUTES / 'wizard.conf').exists() is routed and (caddy / tls.SITES).exists() is routed
     if closed:
         units = (tree / 'units').read_text()
         assert 'systemctl disable vpn2-wizard' in units and 'systemctl stop --no-block vpn2-wizard' in units

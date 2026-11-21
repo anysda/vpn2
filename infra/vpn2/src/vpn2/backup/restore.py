@@ -778,7 +778,8 @@ def start_services(rb):
         _panel_runtime(rb)
     if rb.ok(['id', 'vpn2-control'], **QUIET):
         rb.must(['systemctl', 'start', *CONTROL_UNITS])
-    rb.code(['docker', 'start', *CONTAINERS], stderr=subprocess.DEVNULL)
+    # Панель поднимает стадия 30 следом, с секретами архива: ранний старт - лишний перезапуск перед проверкой.
+    rb.code(['docker', 'start', CONTAINERS[1]], stderr=subprocess.DEVNULL)
 
 
 def mark_good(rb):
@@ -923,6 +924,8 @@ def restore(argv, *, root='/', env_file=env.DEFAULT_ENV_FILE, stdin=None):
         creds.adopt(root)
         stages_env = stage_env(source_root, work)
         fail = resync(source_root, stages_env, work)
+        if fail:
+            subprocess.run(['docker', 'start', CONTAINERS[0]], check=False, **QUIET)
         smoke(source_root, stages_env, presnap)
     if fail:
         raise RestoreError(8, '\nanysda-restore: FAILED — данные восстановлены, но пароли не пересинхронизированы:\n'

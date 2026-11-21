@@ -123,10 +123,10 @@ def test_restore_returns_archived_state(node):
                  '99-verify PASSED', 'останавливаю сервисы…', 'запускаю сервисы…'):
         assert line in out, line
     calls = (tmp / 'calls.log').read_text()
-    order = [calls.index(mark) for mark in ('docker stop anysda-vpn2', 'docker start anysda-vpn2',
+    order = [calls.index(mark) for mark in ('docker stop anysda-vpn2', 'docker start anysda-tgbot',
                                             'stage 22-adguard', 'stage 30-frontend', 'stage 35-telegram',
                                             'stage 99-verify')]
-    assert order == sorted(order)
+    assert order == sorted(order) and 'docker start anysda-vpn2' not in calls
     assert (tmp / '30-frontend.env').read_text() == 'AGH_PORT=3000 HOST=ru ADMIN_PASSWORD=unset VPN2_DEVELOPMENT=false\n'
     assert (root / 'tmp/anysda/anysda-config.yaml.tpl').read_text() == 'tpl\n'
     assert not leftovers(root)
@@ -175,7 +175,8 @@ def test_failed_stage_is_code_8_and_stops_chain(node):
     code, out, err = go(node)
     assert code == 8
     assert 'SUCCESS' not in out and '99-verify PASSED' in out
-    assert 'stage 35-telegram' not in (tmp / 'calls.log').read_text()
+    calls = (tmp / 'calls.log').read_text()
+    assert 'stage 35-telegram' not in calls and 'docker start anysda-vpn2' in calls
     assert ('anysda-restore: ERROR: пароли не пересинхронизированы — 30-frontend завершился с ошибкой, '
             'хвост вывода:\n    вывод 30-frontend\n') in err
     assert err.rstrip('\n').endswith('Почини причину и прогони ./deploy.sh <стадия> ru; pre-restore снимок: '

@@ -309,8 +309,12 @@ def install_prereqs(*extra):
 
 
 def docker_install():
-    """Docker свежего entry фоном: процесс установки или None - он уже есть."""
-    if shutil.which('docker') or installed():
+    """Docker свежего entry фоном: процесс установки или None - он уже есть.
+    Прерванный dpkg прошлого запуска доводится здесь, до apt, что идёт параллельно."""
+    if code := svc('apt_prepare', tag='ru'):
+        raise SystemExit(code)
+    # Оборванный apt мог оставить клиент docker без демона.
+    if shutil.which('dockerd') or installed():
         return None
     return subprocess.Popen(['bash', '-c', 'set -euo pipefail; HOST_TAG=ru; source "$0"; docker_apt_source; apt_update_if_stale\n'
                              'DEBIAN_FRONTEND=noninteractive apt_get install -y -qq "${DOCKER_PKGS[@]}" "${DOCKER_SKIP[@]/#docker-compose-plugin-/docker-compose-plugin}" >/dev/null\n'

@@ -66,6 +66,61 @@ def test_units_run_from_the_tree_and_leave_the_venv_manager_alone(tmp_path, monk
     assert (tmp_path / 'vpn2-manager.service').read_text() == 'venv unit\n'
 
 
+@pytest.fixture
+def human(caddy, tmp_path, monkeypatch):
+    """setup() как у человека: ./deploy.sh без флагов, манифеста на узле нет; поток сертификата - синхронно."""
+    from vpn2 import release
+    from vpn2.containers import compose
+    _, calls = caddy
+    manifest = tmp_path / 'anysda/release-manifest.json'
+    monkeypatch.setattr(compose, 'MANIFEST', str(manifest))
+    monkeypatch.setattr(wizard, 'STATE', tmp_path / 'state')
+    environ = {}
+    monkeypatch.setattr(tls, 'install_caddy', lambda: calls.append(('caddy', environ.get('VPN2_RELEASE_MANIFEST'),
+                                                                     manifest.is_file())))
+    fetched = []
+
+    def fetch(argv):
+        fetched.append(argv)
+        if 'fail' in calls:
+            return 1
+        manifest.parent.mkdir(exist_ok=True)
+        manifest.write_text('{}')
+        return 0
+
+    class Thread:
+        def __init__(self, target, **_):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+        def join(self):
+            pass
+    monkeypatch.setattr(release, 'main', fetch)
+    monkeypatch.setattr(bootstrap.threading, 'Thread', Thread)
+    for name, fake in {'entry_ip': lambda: IP, 'firewall': lambda: None, 'docker_install': lambda: calls.append('docker'),
+                       'svc': lambda _: 0, 'page': lambda _: calls.append('page'), 'units': lambda _: None,
+                       'orchestrator_key': lambda **_: None}.items():
+        monkeypatch.setattr(bootstrap, name, fake)
+    return environ, manifest, calls, fetched
+
+
+def test_first_run_has_the_manifest_before_caddy(human):
+    environ, manifest, calls, fetched = human
+    assert bootstrap.setup(environ) == (IP, 'AB:CD')
+    assert ('caddy', str(manifest), True) in calls, 'Caddy ставится до манифеста выпуска'
+    assert fetched == [['--manifest', str(manifest), 'fetch', str(bootstrap.REPO)]]
+
+
+def test_manifest_not_fetched_stops_before_docker_and_caddy(human):
+    environ, _, calls, fetched = human
+    calls.append('fail')
+    with pytest.raises(SystemExit):
+        bootstrap.setup(environ)
+    assert fetched and calls == ['fail']
+
+
 @pytest.mark.parametrize('fingerprint', ['', 'AB:CD'])
 def test_link_names_the_hour_and_the_fingerprint_when_self_signed(fingerprint, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(wizard, 'RUN', tmp_path)

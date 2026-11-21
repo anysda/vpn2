@@ -71,14 +71,19 @@ def certificate(ip):
     return fingerprint
 
 
-def page(environ):
-    """Страница мастера из образа выпуска (как статика аварийки): docker create, cp, контейнер убирается."""
+def manifest(environ):
+    """Манифест выпуска commit дерева - до всего, что ставится по нему (Caddy, страница мастера)."""
     from vpn2 import release
     from vpn2.containers import compose
     if environ.get('VPN2_DEVELOPMENT') != 'true' and not environ.get('VPN2_RELEASE_MANIFEST'):
         environ['VPN2_RELEASE_MANIFEST'] = str(compose.MANIFEST)
         if release.main(['--manifest', str(compose.MANIFEST), 'fetch', str(REPO)]):
             raise SystemExit(1)
+
+
+def page(environ):
+    """Страница мастера из образа выпуска (как статика аварийки): docker create, cp, контейнер убирается."""
+    from vpn2.containers import compose
     try:
         image = compose.release_image(environ, 'wizard', compose.Docker())
     except compose.EngineError:
@@ -127,6 +132,7 @@ def setup(environ):
     t0 = time.monotonic()
     ip = entry_ip()
     step(f'мастер установки: entry {ip}')
+    manifest(environ)
     docker = docker_install()
     result = {}
 

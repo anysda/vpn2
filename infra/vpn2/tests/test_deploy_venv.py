@@ -145,3 +145,14 @@ def test_missing_command_is_installed_by_package_name(monkeypatch, capsys):
     monkeypatch.setattr(deploy.Path, 'is_file', lambda path: str(path) == '/etc/debian_version' or Path.exists(path))
     deploy.install_prereqs()
     assert asked == ['openssh-client', 'curl'] and 'ставлю недостающее: ssh curl' in capsys.readouterr().out
+
+
+def test_docker_after_a_cut_run_finishes_dpkg_first_and_wants_the_daemon(monkeypatch):
+    """Оборванный первый запуск: dpkg доводится до apt Docker, клиент docker без демона - не повод не ставить."""
+    calls = []
+    monkeypatch.setattr(deploy, 'svc', lambda script, **_options: calls.append(script) or 0)
+    monkeypatch.setattr(deploy, 'installed', lambda: False)
+    monkeypatch.setattr(deploy.shutil, 'which', lambda name: '/usr/bin/docker' if name == 'docker' else None)
+    monkeypatch.setattr(deploy.subprocess, 'Popen', lambda _argv, **_options: calls.append('docker'))
+    deploy.docker_install()
+    assert calls == ['apt_prepare', 'docker']

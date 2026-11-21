@@ -430,15 +430,23 @@ def test_failed_stage_stops_the_deploy_and_keeps_the_journal(tree, inproc):
     done = inproc(FAKE_RULES=json.dumps([['--tags 20-ru-router ', 2, 0]]))
     assert done.returncode == 1
     assert 'стадия 20-ru-router: одна или несколько нод завершились с ошибкой' in done.stderr
-    assert 'deploy interrupted: operation journal retained' in done.stderr
+    assert 'деплой прерван: журнал выпуска сохранён; проверьте службы' in done.stderr
     assert not [call for call in plays(tree) if '--tags 21-' in call['args'] or '--tags abort' in call['args']]
+
+
+def test_failed_stage_in_a_manager_job_points_to_the_button_not_the_terminal(tree, inproc):
+    (tree / 'job').mkdir()
+    done = inproc(FAKE_RULES=json.dumps([['--tags 20-ru-router ', 2, 0]]), VPN2_JOB=str(tree / 'job'))
+    assert done.returncode == 1
+    assert 'деплой прерван: журнал выпуска сохранён; «Повторить» доведёт деплой с того же места' in done.stderr
+    assert './deploy.sh recover' not in done.stderr and 'deploy interrupted' not in done.stderr
 
 
 def test_failed_stage_of_the_group_waits_for_the_others_and_keeps_the_journal(tree, inproc):
     done = inproc(FAKE_RULES=json.dumps([['--tags 22-adguard ', 2, 0], ['--tags 26-backup ', 0, 1]]))
     assert done.returncode == 1
     assert 'стадия 22-adguard: одна или несколько нод завершились с ошибкой' in done.stderr
-    assert '[deploy] [26-backup → ru] done' in done.stderr and 'deploy interrupted: operation journal retained' in done.stderr
+    assert '[deploy] [26-backup → ru] done' in done.stderr and 'деплой прерван: журнал выпуска сохранён; проверьте службы' in done.stderr
     assert not [call for call in plays(tree) if '--tags 27-' in call['args'] or '--tags abort' in call['args']]
     # Сторож упавшей стадии снят как у любой стадии, что кончилась сама.
     assert [call for call in plays(tree, 'ssh') if 'disarm 22-adguard' in call['command']]
@@ -447,7 +455,7 @@ def test_failed_stage_of_the_group_waits_for_the_others_and_keeps_the_journal(tr
 def test_failed_stage_stops_its_chain_and_the_next_chain_finishes(tree, inproc):
     done = inproc(FAKE_RULES=json.dumps([['--tags 29-control ', 2, 0], ['--tags 27-ikev2 ', 0, 1]]))
     assert done.returncode == 1 and 'стадия 29-control: одна или несколько нод' in done.stderr
-    assert '[deploy] [27-ikev2 → ru] done' in done.stderr and 'deploy interrupted: operation journal retained' in done.stderr
+    assert '[deploy] [27-ikev2 → ru] done' in done.stderr and 'деплой прерван: журнал выпуска сохранён; проверьте службы' in done.stderr
     assert not [call for call in plays(tree) if re.search(r'--tags (35|30)-', call['args'])]
 
 
@@ -479,7 +487,7 @@ def test_killed_in_firewall_stage(tree, sig, code):
     proc.send_signal(sig)
     _out, err = proc.communicate(timeout=30)
     assert proc.returncode == code, err
-    assert 'deploy interrupted: operation journal retained' in err
+    assert 'деплой прерван: журнал выпуска сохранён; проверьте службы' in err
     staged = next(call for call in plays(tree) if '--tags 05-mgmt-mesh ' in call['args'])
     assert not alive(staged['pid'])
     beats = [call['host'] for call in plays(tree, 'ssh') if call['command'].startswith('touch')]

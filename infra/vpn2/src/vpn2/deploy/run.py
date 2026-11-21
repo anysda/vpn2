@@ -529,8 +529,9 @@ class Deploy:
         if self.plays:
             self.plays.stop()
         if code and self.mutating:
-            print('deploy interrupted: operation journal retained; inspect services, then run ./deploy.sh recover '
-                  '(or ./deploy.sh rollback)', file=sys.stderr)
+            # В задании менеджера у человека кнопки, а не терминал.
+            print('деплой прерван: журнал выпуска сохранён; ' + ('«Повторить» доведёт деплой с того же места' if self.progress
+                  else 'проверьте службы и запустите ./deploy.sh recover (или ./deploy.sh rollback)'), file=sys.stderr)
         elif code and self.opened:
             self.service('--tags', 'abort', **QUIET)
         # Пакет и манифест на экзитах живут до конца запуска.

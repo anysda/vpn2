@@ -115,7 +115,7 @@ jobs:
       # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
       # видит их на месте и свой apt-get не зовёт.
       - name: qemu и прокси apt
-        timeout-minutes: 5
+        timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
           packages: qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
@@ -368,7 +368,7 @@ jobs:
       # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
       # видит их на месте и свой apt-get не зовёт.
       - name: qemu и прокси apt
-        timeout-minutes: 5
+        timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
           packages: qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
@@ -525,7 +525,7 @@ jobs:
       # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
       # видит их на месте и свой apt-get не зовёт.
       - name: qemu и прокси apt
-        timeout-minutes: 5
+        timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
           packages: qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng

@@ -35,7 +35,7 @@ jobs:
     needs: reuse
     if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 13
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
@@ -63,7 +63,7 @@ jobs:
           test -s "$d/ru.env"
       # zbarimg раскодирует PNG QR бота (test_qr_size.py).
       - name: zbarimg
-        timeout-minutes: 5
+        timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
           packages: zbar-tools
@@ -321,7 +321,7 @@ jobs:
           echo "$!" > "$RUNNER_TEMP/browser-pull.pid"
       - name: qrencode и zbarimg для размера QR
         if: steps.paths.outputs.run == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
           packages: qrencode zbar-tools
@@ -386,7 +386,7 @@ jobs:
     needs: reuse
     if: ${{ !cancelled() && needs.reuse.outputs.rest != 'skip' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 13
     strategy:
       fail-fast: false
       matrix:
@@ -397,7 +397,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: openvpn, wireguard-tools, pki и qrencode для тестов пакета
-        timeout-minutes: 5
+        timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
           packages: openvpn wireguard-tools strongswan-pki libstrongswan-standard-plugins qrencode
@@ -470,7 +470,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: зависимости инфраструктуры
-        timeout-minutes: 5
+        timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
           packages: strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools

@@ -80,7 +80,7 @@ elif name == 'curl':
             sys.exit(35)
     if url.endswith('/login'):
         # Страница входа панели (Nuxt) или страница мастера установки, что маршрут мастера отдаёт на любой путь.
-        print('<script src="/assets/index.js"></script>' if fault == 'wizard-root' else '<script src="/_nuxt/entry.js"></script>')
+        print('<script src="/assets/index.js"></script>' if fault.startswith('wizard-') else '<script src="/_nuxt/entry.js"></script>')
     if url.endswith('/targets'):
         counter = Path(os.environ['SCRAPE_COUNTER'])
         count = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -300,7 +300,11 @@ def run_verify(fault='', role='ru', youtube='off', extra_env=None):
         tls_config.write_text('{"host": "192.0.2.1"}')
         tls_state.write_text(json.dumps({'self_signed': SELF_SIGNED, 'failed': True,
                                          'error': 'ACME: rateLimited (HTTP 429)'} if fault == 'self-signed' else {}))
-        paths = {'TLS_CONFIG': tls_config, 'TLS_STATE': tls_state, 'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency, 'VENV': venv,
+        jobs = root / 'manager-jobs'
+        (jobs / '3').mkdir(parents=True)
+        (jobs / '3/job.json').write_text(json.dumps({'id': 3, 'kind': 'install',
+                                                     'state': 'running' if fault == 'wizard-installing' else 'failed'}))
+        paths = {'MANAGER_JOBS': jobs, 'TLS_CONFIG': tls_config, 'TLS_STATE': tls_state, 'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency, 'VENV': venv,
                  'EMERGENCY_HY2': hy2_options, 'STAMPS': stamp.parent, 'EMERGENCY_STATE': snapshots}
         script = root / 'verify.py'
         script.write_text(
@@ -378,6 +382,14 @@ def test_individual_entry_failure(fault, label):
 def test_panel_switch_during_the_check_is_not_a_failure():
     """Пара сайта сменилась посреди 99-verify: окно проверки HTTPS переживает оборванные запросы."""
     result = run_verify('panel-switch')
+    assert result.returncode == 0, result.stdout
+    assert '✓ frontend: панель отвечает через Caddy по HTTPS' in result.stdout
+
+
+def test_wizard_in_front_during_its_own_install_is_not_a_failure():
+    """Установка мастером: его маршрут перед панелью до итога - так задумано, 99-verify задания не падает.
+    Мастер перед панелью без идущей установки - отказ (wizard-root)."""
+    result = run_verify('wizard-installing')
     assert result.returncode == 0, result.stdout
     assert '✓ frontend: панель отвечает через Caddy по HTTPS' in result.stdout
 

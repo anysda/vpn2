@@ -31,6 +31,7 @@ VENV = Path('/opt/vpn2/venv')
 EMERGENCY_STATE = Path('/var/lib/vpn2-emergency')
 EMERGENCY_HY2 = Path('/etc/vpn2/emergency-hy2.json')
 TLS_CONFIG = Path('/etc/vpn2/tls/config.json')
+MANAGER_JOBS = Path('/var/lib/vpn2-manager/jobs')
 TLS_CERT = '/etc/vpn2/tls/ip/fullchain.pem'
 TLS_STATE = Path('/etc/vpn2/tls/state.json')
 NETWORKD_DROPIN = Path('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf')
@@ -403,6 +404,16 @@ def ip_certificate(config, cert):
     return rc == 0
 
 
+def wizard_installing():
+    """Последнее задание менеджера установки - идущая установка (мастер в браузере ведёт её до итога)."""
+    numbers = [int(path.name) for path in MANAGER_JOBS.glob('*') if path.name.isdigit()]
+    try:
+        job = fsutil.read_json(MANAGER_JOBS / str(max(numbers)) / 'job.json', {}) if numbers else {}
+    except ValueError:
+        job = {}
+    return isinstance(job, dict) and job.get('kind') == 'install' and job.get('state') == 'running'
+
+
 def panel(wait):
     """Панель, как её видит браузер: HTTPS через Caddy, самоподписанная пара тоже годится (-k).
     Окно `wait` секунд: смена пары, перезагрузка Caddy или его перезапуск посреди проверки - не отказ."""
@@ -415,7 +426,8 @@ def panel(wait):
     while True:
         rc, out = command(*curl, '-o', '/dev/null', f'https://{host}/api/version')
         # /api/version маршрут мастера установки пропускает: страницу, что видит браузер, показывает вход панели.
-        if rc == 0:
+        # Пока идёт установка мастером, его маршрут перед панелью - так задумано: мастер уйдёт сам после итога.
+        if rc == 0 and not wizard_installing():
             rc, page = command(*curl, f'https://{host}/login')
             if rc == 0 and '/_nuxt/' not in page:
                 rc, page = 1, f'панель: https://{host}/ отдаёт не панель (страница мастера установки?)'

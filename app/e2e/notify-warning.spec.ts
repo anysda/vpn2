@@ -28,6 +28,16 @@ function warningToast(page: Page, title: string, text: string | RegExp) {
   return toast(page, title).filter({ hasText: text })
 }
 
+/**
+ * Проверенные тосты закрыть кликом в DOM, мимо указателя: стопка справа внизу
+ * растёт вверх с каждым новым тостом и наезжает на кнопки карточки посреди клика.
+ */
+async function closeToasts(page: Page) {
+  const all = page.getByRole('region', { includeHidden: true }).locator('ol > li')
+  await all.getByRole('button', { name: /Close|Закрыть/ }).evaluateAll(buttons => buttons.forEach(b => (b as HTMLElement).click()))
+  await expect(all).toHaveCount(0)
+}
+
 test('ответ с warning: отвязка Telegram, новый девайс, имя и лимит показывают предупреждение', async ({ page }) => {
   await openHome(page, '/clients')
   const { id, name } = await client(page)
@@ -43,19 +53,23 @@ test('ответ с warning: отвязка Telegram, новый девайс, �
     // Обычный успех без warning - как раньше, без текста предупреждения.
     await addDevice(page, 'plain')
     await expect(toast(page, 'Девайс «plain» добавлен')).not.toContainText('Повторов не будет')
+    await closeToasts(page)
 
     await page.route(`**/api/clients/${id}/devices`, route => route.request().method() === 'POST' ? withWarning(route) : route.fallback())
     await addDevice(page, 'phone')
     await expect(warningToast(page, 'Девайс «phone» добавлен', WARNING)).toBeVisible()
+    await closeToasts(page)
 
     await page.route(new RegExp(`/api/clients/${id}$`), route => route.request().method() === 'PATCH' ? withWarning(route) : route.fallback())
     await clientName(panel).click()
     await clientName(panel).fill(`${name}-r`)
     await clientName(panel).press('Enter')
     await expect(warningToast(page, 'Имя сохранено', WARNING)).toBeVisible()
+    await closeToasts(page)
     // Кнопки +/- лимита молчат при успехе, но предупреждение не теряют.
     await panel.getByRole('button', { name: 'Безлимитно' }).click()
     await expect(warningToast(page, 'Лимит девайсов сохранён', WARNING)).toBeVisible()
+    await closeToasts(page)
 
     await page.route(`**/api/clients/${id}/unlink`, withWarning)
     await panel.getByRole('button', { name: 'Отозвать доступ к боту' }).click()

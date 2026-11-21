@@ -1436,7 +1436,34 @@ cmd_backup_fixture() {
   (( ret == 0 )) || die "anysda-backup.sh завершился с кодом $ret: $(tail -n 20 <<<"$json")"
   dir=/var/backups/anysda-vpn2
   newest=$(ssh_node "$ENTRY" "ls -1t $dir/*.tar.gz.age | head -n 1") || die "в $dir нет архива"
-  ssh_node "$ENTRY" "cat '$newest'" > "$out/etalon.tar.gz.age" || die "архив $newest не скачан"
+  # Ключи ssh стенда-источника эталону не нужны: restore на другом стенде заменил бы ими ключи entry.
+  [[ -s $STAND_DIR/backup-key ]] || die 'эталон: ключа бэкапов от деплоя стенда нет'
+  ssh_node "$ENTRY" "umask 077; cat > /run/vpn2-fixture.key" < "$STAND_DIR/backup-key" || die 'эталон: ключ бэкапов не лёг на entry'
+  ssh_node "$ENTRY" "PYTHONPATH=/opt/anysda-vpn2/infra/vpn2/src python3 - '$newest' /root/etalon.tar.gz.age; rc=\$?; rm -f /run/vpn2-fixture.key; exit \$rc" <<'PY' \
+    || die 'эталон: ключи ssh из архива не вырезаны'
+import json, sys, tarfile, tempfile
+from pathlib import Path
+from vpn2 import creds
+from vpn2.backup import archive
+with tempfile.TemporaryDirectory() as work:
+    plain = Path(work, 'a.tar.gz')
+    archive.decrypt(sys.argv[1], plain, Path('/run/vpn2-fixture.key').read_text().strip(), 'key')
+    archive.unpack(plain, f'{work}/tree')
+    [secrets] = Path(work, 'tree').glob('*/secrets.json')
+    data = json.loads(secrets.read_text())
+    secrets.write_text(json.dumps({k: v for k, v in data.items() if k not in creds.MACHINE}))
+    manifest = secrets.parent / archive.MANIFEST
+    manifest.write_text(json.dumps({**json.loads(manifest.read_text()), 'components': archive.components(secrets.parent)}, indent=2))
+    archive.pack(secrets.parent.parent, secrets.parent.name, plain)
+    if archive.pty_run(['age', '-p', '-o', sys.argv[2], str(plain)], 'stand-etalon', (b'Enter passphrase', b'Confirm passphrase')):
+        sys.exit('age -p не зашифровал эталон')
+    archive.decrypt(sys.argv[2], plain, 'stand-etalon', 'password')
+    with tarfile.open(plain) as tar:
+        member = next(m for m in tar.getmembers() if m.name.endswith('/secrets.json'))
+        assert not set(json.load(tar.extractfile(member))) & set(creds.MACHINE), 'ключи ssh остались в эталоне'
+    print('[stand] эталон: из secrets.json вырезаны', ', '.join(sorted(set(data) & set(creds.MACHINE))) or 'ничего', '- пароль stand-etalon')
+PY
+  ssh_node "$ENTRY" "cat /root/etalon.tar.gz.age" > "$out/etalon.tar.gz.age" || die "архив $newest не скачан"
   [[ -s $out/etalon.tar.gz.age ]] || die "скачанный архив $newest пуст"
 
   local peers names sums

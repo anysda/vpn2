@@ -411,9 +411,15 @@ def panel(wait):
     except BROKEN:
         return 1, f'панель: нет настройки TLS {TLS_CONFIG}'
     deadline = time.monotonic() + float(wait)
+    curl = ('curl', '-fsS', '-k', '--max-time', '5', '--connect-to', '::127.0.0.1:443')
     while True:
-        rc, out = command('curl', '-fsS', '-k', '--max-time', '5', '-o', '/dev/null',
-                          '--connect-to', '::127.0.0.1:443', f'https://{host}/api/version')
+        rc, out = command(*curl, '-o', '/dev/null', f'https://{host}/api/version')
+        # /api/version маршрут мастера установки пропускает: страницу, что видит браузер, показывает вход панели.
+        if rc == 0:
+            rc, page = command(*curl, f'https://{host}/login')
+            if rc == 0 and '/_nuxt/' not in page:
+                rc, page = 1, f'панель: https://{host}/ отдаёт не панель (страница мастера установки?)'
+            out = page if rc else out
         if rc == 0 or time.monotonic() >= deadline:
             return rc, out
         time.sleep(1)

@@ -12,7 +12,7 @@ import sqlite3
 import subprocess
 import sys
 
-from vpn2 import creds
+from vpn2 import creds, wizard
 from vpn2.config import STATE_DIR, drop_passwords
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, E, admin_key_check, die, finish_secrets, install_prereqs,
                          installed, migrate_state, ok, orchestrator_key, pub, read, report, step, svc, take_secrets)
@@ -112,6 +112,9 @@ def dispatch(deploy, argv, new_server=None):
     # Секреты уже в хранилище (take_secrets до стадий): успешный прогон стирает их из config.yaml.
     if finish_secrets(panel=action in ('', 'recover') or (action == '30-frontend' and argv[1] in ('ru', 'all'))):
         ok('секреты перенесены в зашифрованное хранилище entry и стёрты из config.yaml')
+    # Установку мастера довёл терминал: маршрут, состояние и юнит мастера уходят, как после done его задания.
+    if action in ('', 'recover') and not deploy.progress and wizard.STATE.is_dir():
+        wizard.Wizard().finish()
     return code
 
 

@@ -78,6 +78,9 @@ elif name == 'curl':
         tries.write_text(str(count))
         if count < 3:
             sys.exit(35)
+    if url.endswith('/login'):
+        # Страница входа панели (Nuxt) или страница мастера установки, что маршрут мастера отдаёт на любой путь.
+        print('<script src="/assets/index.js"></script>' if fault == 'wizard-root' else '<script src="/_nuxt/entry.js"></script>')
     if url.endswith('/targets'):
         counter = Path(os.environ['SCRAPE_COUNTER'])
         count = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -356,6 +359,7 @@ ENTRY_FAULTS = {
                                          'naive-scrape', 'http://127.0.0.1:8428/api/v1/targets',
                                          'curl-partial')},
     'http://127.0.0.1:80/': 'frontend: Caddy', 'https://192.0.2.1/api/version': 'frontend: панель',
+    'https://192.0.2.1/login': 'frontend: панель', 'wizard-root': 'frontend: панель',
     'http://127.0.0.1:8428/-/healthy': 'vmsingle',
     'ssh-error': 'ssh exit', 'ss-error': 'tproxy udp', 'ip-error': 'tproxy:', 'sysctl-error': 'ip_forward',
     'ufw-error': 'ufw', 'sysctl-partial': 'ip_forward', 'ufw-partial': 'ufw', 'ss-partial': 'tproxy udp',

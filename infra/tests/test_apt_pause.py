@@ -86,7 +86,7 @@ apt_auto_pause
 ''', directory)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual('kill -TERM 4242' in result.stdout, signalled, result.stdout)
-                self.assertEqual('после текущего пакета' in result.stdout, signalled, result.stdout)
+                self.assertEqual('текущего пакета' in result.stdout, signalled, result.stdout)
 
     def test_second_pause_does_not_mask_again(self):
         """Каждый mask - перечитывание systemd: повторная пауза уже замаскированного его не делает."""

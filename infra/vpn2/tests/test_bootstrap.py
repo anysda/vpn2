@@ -100,7 +100,7 @@ def human(caddy, tmp_path, monkeypatch):
     monkeypatch.setattr(release, 'main', fetch)
     monkeypatch.setattr(bootstrap.threading, 'Thread', Thread)
     for name, fake in {'entry_ip': lambda: IP, 'firewall': lambda: None, 'docker_install': lambda: calls.append('docker'),
-                       'svc': lambda _: 0, 'page': lambda _: calls.append('page'), 'units': lambda _: None,
+                       'svc': lambda *_, **__: 0, 'page': lambda _: calls.append('page'), 'units': lambda _: None,
                        'orchestrator_key': lambda **_: None}.items():
         monkeypatch.setattr(bootstrap, name, fake)
     return environ, manifest, calls, fetched
@@ -129,3 +129,27 @@ def test_link_names_the_hour_and_the_fingerprint_when_self_signed(fingerprint, t
     assert f'https://{IP}/#' in out and 'Дальше в браузере; ссылка действует час, новая - ./deploy.sh' in out
     assert ('сертификат самоподписанный, отпечаток SHA-256 AB:CD' in out) == bool(fingerprint)
     assert ('браузер предупредит - сверьте отпечаток' in out) == bool(fingerprint)
+
+
+@pytest.mark.parametrize('outcome', [None, SystemExit(1), KeyboardInterrupt()])
+def test_auto_update_paused_first_and_released_on_every_exit(outcome, tmp_path, monkeypatch):
+    """Автообновление свежего образа не держит apt мастера; пауза снимается и при отказе, и по Ctrl-C."""
+    from vpn2 import manager
+    scripts = []
+    monkeypatch.setattr(manager, 'LOCK', tmp_path / 'lock')
+    monkeypatch.setattr(bootstrap, 'svc', lambda script, **_: scripts.append(script) or 0)
+    monkeypatch.setattr(bootstrap, 'entry_ip', lambda: IP)
+    monkeypatch.setattr(bootstrap, 'link', lambda *_: None)
+    if outcome is None:
+        monkeypatch.setattr(bootstrap, 'setup', lambda _: scripts.append('setup') or (IP, ''))
+        assert bootstrap.main([]) == 0
+        assert scripts == ['setup', 'apt_auto_resume']
+        return
+
+    def manifest(_):
+        scripts.append('manifest')
+        raise outcome
+    monkeypatch.setattr(bootstrap, 'manifest', manifest)
+    with pytest.raises(type(outcome)):
+        bootstrap.main([])
+    assert scripts == ['apt_auto_pause', 'manifest', 'apt_auto_resume']

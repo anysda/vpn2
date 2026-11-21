@@ -132,6 +132,9 @@ def setup(environ):
     t0 = time.monotonic()
     ip = entry_ip()
     step(f'мастер установки: entry {ip}')
+    # Автообновление свежего образа держит apt минутами: пауза та же, что у деплоя, снимает её main.
+    if svc('apt_auto_pause', tag='ru'):
+        die('автообновления entry не встали на паузу, причина выше')
     manifest(environ)
     docker = docker_install()
     result = {}
@@ -182,7 +185,11 @@ def main(argv):
     from vpn2 import manager
     try:
         with fsutil.lock(manager.LOCK, blocking=False):
-            ip, fingerprint = setup(environ)
+            try:
+                ip, fingerprint = setup(environ)
+            finally:
+                # Успех, отказ, Ctrl-C; оборванный без finally процесс - таймер возврата через час.
+                svc('apt_auto_resume')
     except fsutil.LockBusy:
         # Идёт установка: мастер уже стоит, нужна только новая ссылка.
         if not (wizard.STATE / 'entry.json').is_file():

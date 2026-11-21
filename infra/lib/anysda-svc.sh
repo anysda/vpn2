@@ -151,11 +151,21 @@ _mask_runtime() {
   (( ${#todo[@]} == 0 )) || systemctl mask --runtime "${todo[@]}" >/dev/null 2>&1 || true
 }
 
+# Автообновления ОС: таймеры, их службы и служба, что доводит обновление при выключении.
+APT_AUTO_TIMERS=(apt-daily.timer apt-daily-upgrade.timer)
+APT_AUTO_RESUME="systemctl unmask --runtime ${APT_AUTO_TIMERS[*]} apt-daily.service apt-daily-upgrade.service unattended-upgrades.service
+for u in ${APT_AUTO_TIMERS[*]} unattended-upgrades.service; do if systemctl is-enabled --quiet \$u; then systemctl start \$u; fi; done"
+
+# apt_auto_resume: пауза снята сейчас, таймер возврата больше не нужен.
+apt_auto_resume() {
+  systemctl stop anysda-apt-resume.timer >/dev/null 2>&1 || true
+  sh -c "$APT_AUTO_RESUME" >/dev/null 2>&1 || true
+}
+
 # apt_auto_pause: автообновления на паузу маской --runtime; через час её снимает таймер.
 apt_auto_pause() {
-  local timers=(apt-daily.timer apt-daily-upgrade.timer)
+  local timers=("${APT_AUTO_TIMERS[@]}")
   local jobs=(apt-daily.service apt-daily-upgrade.service)
-  local units=("${timers[@]}" "${jobs[@]}" unattended-upgrades.service)
   local t0=$SECONDS said=-20 j busy
   # Таймеры: стоп до маски, иначе активный уходит в failed.
   systemctl stop "${timers[@]}" >/dev/null 2>&1 || true
@@ -172,7 +182,7 @@ apt_auto_pause() {
   local uu
   uu=$(cat "$APT_UU_PID" 2>/dev/null) || true
   if [[ "$uu" =~ ^[0-9]+$ ]] && grep -qs apt-daily-upgrade.service "/proc/$uu/cgroup" && kill -TERM "$uu" 2>/dev/null; then
-    svc_say "автообновление останавливается после текущего пакета" >&"$APT_LOG_FD"
+    svc_say "идёт автообновление Ubuntu: дожидаюсь текущего пакета и останавливаю, это нормально" >&"$APT_LOG_FD"
   fi
   while busy=$(for j in "${jobs[@]}"; do ! _unit_running "$j" || printf '%s ' "$j"; done) && [[ -n "$busy" ]]; do
     if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
@@ -194,9 +204,7 @@ apt_auto_pause() {
   _mask_runtime unattended-upgrades.service
   systemctl stop unattended-upgrades.service >/dev/null 2>&1 || true
   systemctl stop anysda-apt-resume.timer >/dev/null 2>&1 || true
-  systemd-run --quiet --unit=anysda-apt-resume --on-active=1h \
-    /bin/sh -c "systemctl unmask --runtime ${units[*]}
-      for u in ${timers[*]} unattended-upgrades.service; do if systemctl is-enabled --quiet \$u; then systemctl start \$u; fi; done" \
+  systemd-run --quiet --unit=anysda-apt-resume --on-active=1h /bin/sh -c "$APT_AUTO_RESUME" \
     || svc_say "таймер возврата автообновлений не поставлен, вернутся после перезагрузки"
 }
 

@@ -102,20 +102,60 @@ def test_backup_streams_and_signal_mid_copy_is_a_failure(tree, tmp_path, sig, co
     assert proc.returncode == code and 'архив сохранён' not in out + err
 
 
-def test_partial_secret_collection_is_private(tmp_path, monkeypatch):
-    monkeypatch.setattr(run, 'INFRA', tmp_path)
-    os.umask(0o022)
-    deploy = run.Deploy.__new__(run.Deploy)
-    deploy.tmp, deploy.exit_tags, deploy.expand = tmp_path, lambda: ['se'], lambda _group: ['se']
+KINDS = ('DIRECT', 'WARP', 'OBFS', 'MGMT', 'CLASH')
+REALITY = f'PUB={"A" * 43}\nSID=ab\nSNI=example.com\nPORT=443\n'
 
-    def service(*_args, **_options):
-        (tmp_path / 'secrets/foreign-secrets.env').write_text('SE_DIRECT=ABCDEFGHIJKLMNOP\n')
-        return 1
+
+def pulling(tmp_path, monkeypatch, tags, active, sent):
+    """Деплой с экзитами tags, из них в pre-flight прошли active; sent - {тег: {вид файла: текст}} от плея secrets,
+    'fail' - плей упал, исключение - прерван."""
+    monkeypatch.setattr(run, 'INFRA', tmp_path)
+    deploy = run.Deploy.__new__(run.Deploy)
+    deploy.tmp, deploy.exit_tags, deploy.expand = tmp_path, lambda: tags, lambda _group: active
+
+    def service(*args, **_options):
+        if isinstance(sent, BaseException):
+            raise sent
+        got = next(arg.removeprefix('out=') for arg in args if arg.startswith('out='))
+        for host, files in ({} if sent == 'fail' else sent).items():
+            for kind in ('env', 'pem', 'pub', 'reality'):
+                (tmp_path / got / f'{host}.{kind}').write_text(files.get(kind, ''))
+        return int(sent == 'fail')
 
     deploy.service = service
+    return deploy
+
+
+def fresh(host, **files):
+    return {'env': ''.join(f'{host.upper()}_{kind}=new-{kind}\n' for kind in KINDS), **files}
+
+
+@pytest.mark.parametrize('sent', ['fail', {'nl': fresh('nl', reality=REALITY), 'se': fresh('se', pem='not a pem')},
+                                  {'nl': fresh('nl', reality=REALITY), 'se': fresh('se', pub='not a key')},
+                                  run.Interrupted(143)])
+def test_failed_secret_pull_keeps_the_previous_file(tmp_path, monkeypatch, sent):
+    """VPN2-990: сбой или сигнал посреди получения - прежний файл байт в байт, права те же, сертификатов наполовину нет;
+    следующий деплой с лежащим экзитом проходит на сохранённых секретах."""
+    folder = tmp_path / 'secrets'
+    folder.mkdir()
+    before = ''.join(f'DE_{kind}=old-{kind}\n' for kind in KINDS) + 'NL_DIRECT=old\n'
+    (folder / 'foreign-secrets.env').write_text(before)
+    (folder / 'foreign-secrets.env').chmod(0o600)
     with pytest.raises(SystemExit):
-        deploy.pull_secrets()
-    assert (tmp_path / 'secrets/foreign-secrets.env').stat().st_mode & 0o777 == 0o600
+        pulling(tmp_path, monkeypatch, ['de', 'nl', 'se'], ['nl', 'se'], sent).pull_secrets()
+    assert (folder / 'foreign-secrets.env').read_text() == before
+    assert (folder / 'foreign-secrets.env').stat().st_mode & 0o777 == 0o600
+    assert not (folder / 'exit-certs/nl.reality').exists()
+    pulling(tmp_path, monkeypatch, ['de', 'nl'], ['nl'], {'nl': fresh('nl', reality=REALITY)}).pull_secrets()
+    assert (folder / 'foreign-secrets.env').read_text() == before.replace('NL_DIRECT=old\n', fresh('nl')['env'])
+    assert (folder / 'exit-certs/nl.reality').read_text() == REALITY
+
+
+def test_removed_exit_leaves_the_secrets_file(tmp_path, monkeypatch):
+    (tmp_path / 'secrets').mkdir()
+    (tmp_path / 'secrets/foreign-secrets.env').write_text(''.join(f'GONE_{kind}=x\n' for kind in KINDS))
+    pulling(tmp_path, monkeypatch, ['nl'], ['nl'], {'nl': fresh('nl')}).pull_secrets()
+    assert (tmp_path / 'secrets/foreign-secrets.env').read_text() == fresh('nl')['env']
 
 
 def test_unpublished_commit_is_refused_before_remote_changes(tree):  # noqa: F811

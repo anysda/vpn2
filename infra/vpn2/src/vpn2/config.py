@@ -292,7 +292,7 @@ def set_exit_port(path, tag, port):
         else:
             last, value = item.value[-1]
             lines.insert(value.start_mark.line + 1, ' ' * last.start_mark.column + f'hy2_direct_port: {port}')
-        path.write_text('\n'.join(lines) + '\n')
+        replace(path, '\n'.join(lines) + '\n')
         path.chmod(0o600)
         return
     raise ConfigError('exits', f'тег "{tag}" не найден в config.yaml')

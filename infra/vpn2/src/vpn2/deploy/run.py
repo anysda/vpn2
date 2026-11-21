@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from vpn2 import fsutil, ports, release, stages
+from vpn2 import config, fsutil, ports, release, stages
 from vpn2.config import STATE_DIR
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, R, Y, E, die, elapsed, installed, log, ok, orchestrator_key, prep_keys,
                          key_id, own_keys, pub, read, report, ssh_options, step, warn)
@@ -558,10 +558,8 @@ class Deploy:
         for sub in (folder, folder / 'exit-certs', folder / 'exit-hostkeys'):
             sub.mkdir(parents=True, exist_ok=True)
             sub.chmod(0o700)
-        # Файл секретов закрыт с первого байта: сбой посередине оставляет его 0600.
-        os.close(os.open(secrets, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
-        secrets.chmod(0o600)
-        active, got = self.expand('foreign'), Path(tempfile.mkdtemp(dir=self.tmp))
+        # Файлы меняются только после проверки всех экзитов: сбой или сигнал оставляет прежние для следующего деплоя.
+        active, got, put = self.expand('foreign'), Path(tempfile.mkdtemp(dir=self.tmp)), []
         if active:
             with open(got / 'log', 'w') as out:
                 failed = self.service('--tags', 'secrets', '--limit', ','.join(active), '-e', f'out={got}', stdout=out, stderr=out)
@@ -585,21 +583,23 @@ class Deploy:
             if pem.read_text().strip():
                 if subprocess.run(['openssl', 'x509', '-noout', '-in', pem], capture_output=True).returncode:
                     die(f'{host} отдал не PEM-сертификат Hysteria2')
-                install(pem, folder / f'exit-certs/{host}.pem', 0o600)
+                put.append((pem, folder / f'exit-certs/{host}.pem', 0o600))
             else:
                 warn(f'на {host} нет сертификата Hysteria2 — закрепится ранее сохранённый на entry, '
                      'иначе 20-ru-router откажет (передеплой 10-foreign)')
             if pub.read_text().strip():
                 if subprocess.run(['ssh-keygen', '-lf', pub], capture_output=True).returncode:
                     die(f'{host} отдал не ssh-ключ в /etc/ssh/ssh_host_ed25519_key.pub')
-                install(pub, folder / f'exit-hostkeys/{host}.pub', 0o644)
+                put.append((pub, folder / f'exit-hostkeys/{host}.pub', 0o644))
             lines = reality.read_text().splitlines()
             if len(lines) == 4 and all(re.fullmatch(r'PUB=[A-Za-z0-9_-]{43}|SID=[0-9a-f]{0,16}|SNI=[A-Za-z0-9.-]{1,253}|PORT=[0-9]{1,5}', line)
                                        for line in lines):
-                install(reality, folder / f'exit-certs/{host}.reality', 0o600)
+                put.append((reality, folder / f'exit-certs/{host}.reality', 0o600))
             else:
                 warn(f'на {host} нет ключа Reality - запасной TCP-канал до него не включится (передеплой 10-foreign)')
-        secrets.write_text(text)
+        for src, dst, mode in put:
+            fsutil.atomic(dst, src.read_bytes(), mode)
+        fsutil.atomic(secrets, text, 0o600)
         ok('секреты записаны в secrets/foreign-secrets.env')
 
     def knock(self, node, deadline):
@@ -701,7 +701,7 @@ def forget_exit(deploy, tag, host):
         path.unlink(missing_ok=True)
     for path in (STATE_DIR / 'mgmt-ips.txt', STATE_DIR / 'excluded-exits.txt'):
         if path.is_file():
-            path.write_text(''.join(line for line in path.read_text().splitlines(True) if line.split()[:1] != [tag]))
+            config.replace(path, ''.join(line for line in path.read_text().splitlines(True) if line.split()[:1] != [tag]))
     for path, drop in ((Path('/etc/anysda/exits-disabled.json'), lambda data: {'disabled': [
             item for item in data.get('disabled', []) if item != tag]}),
                        (Path('/etc/anysda/client-prefs.json'), lambda data: {
@@ -720,8 +720,3 @@ def refused(reason):
 
 def key_text():
     return read(pub()) or '(ключа ещё нет)'
-
-
-def install(src, dst, mode):
-    shutil.copyfile(src, dst)
-    dst.chmod(mode)

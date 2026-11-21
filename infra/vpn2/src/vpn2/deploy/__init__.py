@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from vpn2 import config, creds, wizard
+from vpn2 import config, creds, fsutil, wizard
 from vpn2.config import STATE_DIR
 
 INFRA = Path(os.environ.get('DEPLOY_ROOT') or Path(__file__).resolve().parents[3])
@@ -373,9 +373,9 @@ def derive_pub(key, public):
         return
     authorized = public.parent / 'authorized_keys'
     if old and authorized.is_file():
-        authorized.write_text(''.join(line for line in authorized.read_text().splitlines(keepends=True)
-                                      if key_id(line) != old))
-    public.write_text(text)
+        config.replace(authorized, ''.join(line for line in authorized.read_text().splitlines(keepends=True)
+                                           if key_id(line) != old))
+    fsutil.atomic(public, text, 0o644)
 
 
 def ssh_options(state=STATE_DIR):

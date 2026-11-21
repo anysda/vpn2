@@ -177,14 +177,19 @@ apt_auto_pause() {
       systemctl stop "$j" >/dev/null 2>&1 || true
     fi
   done
-  # unattended-upgrade по TERM доводит текущий пакет и выходит, как при выключении машины.
-  # Pid - только процесс этой службы: файл мог остаться от прошлого запуска.
-  local uu
-  uu=$(cat "$APT_UU_PID" 2>/dev/null) || true
-  if [[ "$uu" =~ ^[0-9]+$ ]] && grep -qs apt-daily-upgrade.service "/proc/$uu/cgroup" && kill -TERM "$uu" 2>/dev/null; then
-    svc_say "идёт автообновление Ubuntu: дожидаюсь текущего пакета и останавливаю, это нормально" >&"$APT_LOG_FD"
-  fi
-  while busy=$(for j in "${jobs[@]}"; do ! _unit_running "$j" || printf '%s ' "$j"; done) && [[ -n "$busy" ]]; do
+  local uu stopped=
+  while :; do
+    # unattended-upgrade по TERM доводит текущий пакет и выходит, как при выключении машины. Pid - только
+    # процесс этой службы (файл мог остаться от прошлого запуска), и тот, что запустило задание из очереди
+    # (apt-daily-upgrade ждёт конца apt-daily), пока ждём.
+    uu=$(cat "$APT_UU_PID" 2>/dev/null) || true
+    if [[ "$uu" =~ ^[0-9]+$ && "$uu" != "$stopped" ]] && grep -qs apt-daily-upgrade.service "/proc/$uu/cgroup" \
+        && kill -TERM "$uu" 2>/dev/null; then
+      stopped=$uu
+      svc_say "идёт автообновление Ubuntu: дожидаюсь текущего пакета и останавливаю, это нормально" >&"$APT_LOG_FD"
+    fi
+    busy=$(for j in "${jobs[@]}"; do ! _unit_running "$j" || printf '%s ' "$j"; done)
+    [[ -n "$busy" ]] || break
     if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
       svc_say "автообновление так и не закончилось за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"
       break

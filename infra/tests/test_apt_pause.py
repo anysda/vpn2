@@ -88,6 +88,31 @@ apt_auto_pause
                 self.assertEqual('kill -TERM 4242' in result.stdout, signalled, result.stdout)
                 self.assertEqual('текущего пакета' in result.stdout, signalled, result.stdout)
 
+    def test_upgrade_started_from_the_queue_while_waiting_is_stopped_too(self):
+        """apt-daily-upgrade стоял в очереди за apt-daily: его unattended-upgrade тоже получает TERM."""
+        library = source('infra/lib/anysda-svc.sh')
+        with tempfile.TemporaryDirectory() as directory:
+            result = bash(library + '\nAPT_UU_PID=uu.pid\n' + '''
+systemctl() {
+  if [[ $1 == show && $3 == ActiveState ]]; then
+    if [[ $4 == apt-daily.service && ! -f daily-done ]]; then echo activating
+    elif [[ $4 == apt-daily-upgrade.service && -f daily-done && ! -f stopped ]]; then echo activating
+    else echo inactive; fi
+  fi
+  return 0
+}
+grep() { if [[ ${!#} == /proc/* ]]; then [[ ${!#} == /proc/4242/cgroup ]]; else command grep "$@"; fi; }
+kill() { echo "kill $*"; touch stopped; }
+# Первое ожидание: apt-daily кончился, из очереди стартовал unattended-upgrade.
+sleep() { if [[ ! -f daily-done ]]; then touch daily-done; echo 4242 > uu.pid; else echo "waited out"; touch stopped; fi; }
+apt_wait_idle() { :; }
+systemd-run() { :; }
+apt_auto_pause
+''', directory)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('kill -TERM 4242', result.stdout)
+            self.assertNotIn('waited out', result.stdout)
+
     def test_second_pause_does_not_mask_again(self):
         """Каждый mask - перечитывание systemd: повторная пауза уже замаскированного его не делает."""
         library = source('infra/lib/anysda-svc.sh')

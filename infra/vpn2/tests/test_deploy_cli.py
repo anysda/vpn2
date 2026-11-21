@@ -548,3 +548,68 @@ def test_generated_admin_password_is_shown_only_at_a_terminal(monkeypatch, capsy
     assert main.main([]) == 0
     password = main.os.environ['ADMIN_PASSWORD']
     assert (password in capsys.readouterr().out) is not manager
+
+
+def without_yaml(tree, fail=''):
+    """Образ без python3-yaml: python3 не видит yaml, пока заглушка apt-get его не «поставит»."""
+    (tree / 'noyaml').mkdir()
+    (tree / 'noyaml/yaml.py').write_text('raise ImportError("No module named yaml")\n')
+    (tree / 'bin/python3').write_text('#!/bin/sh\n[ -e "$FAKE_YAML" ] || export PYTHONPATH="$FAKE_NOYAML${PYTHONPATH:+:$PYTHONPATH}"\n'
+                                      f'exec {sys.executable} "$@"\n')
+    (tree / 'bin/apt-get').write_text('#!/bin/sh\necho "$*" >> "$FAKE_APT"\ncase "$*" in *install*python3-yaml*)\n'
+                                      '  [ -z "$FAKE_APT_FAIL" ] || { echo "E: Unable to locate package python3-yaml" >&2; exit 100; }\n'
+                                      '  : > "$FAKE_YAML" ;; esac\n')
+    for name in ('python3', 'apt-get'):
+        (tree / 'bin' / name).chmod(0o755)
+    return {'FAKE_YAML': str(tree / 'yaml-installed'), 'FAKE_NOYAML': str(tree / 'noyaml'), 'FAKE_APT': str(tree / 'apt'),
+            'FAKE_APT_FAIL': fail}
+
+
+@pytest.mark.parametrize('args', [[], ['-key'], ['-yaml'], ['recover'], ['--development', '30-frontend', 'ru']])
+def test_image_without_python3_yaml_gets_it_before_the_first_python_call(tree, args):
+    """Любой режим ./deploy.sh на образе без python3-yaml ставит его сам; -key печатает ключ, без аргументов - ссылку."""
+    env = without_yaml(tree)
+    if not args:
+        (tree / 'config.yaml').unlink()
+        (tree / 'wizard').mkdir()
+        (tree / 'wizard/draft.json').write_text('{}')
+        (tree / 'wizard/entry.json').write_text('{"host": "192.0.2.1"}')
+    with open(tree / 'lock', 'w') as held:
+        if args != ['-key']:
+            fcntl.flock(held, fcntl.LOCK_EX)
+        done = deploy(tree, *args, **env)
+    assert 'install -y -qq --no-install-recommends python3-yaml' in (tree / 'apt').read_text()
+    assert 'ставлю python3-yaml' in done.stdout and 'Traceback' not in done.stderr and 'config.yaml не найден' not in done.stdout
+    if args == ['-key']:
+        assert done.returncode == 0 and done.stdout.splitlines()[-1].startswith('ssh-ed25519 ')
+    elif not args:
+        assert done.returncode == 0 and 'https://192.0.2.1/#' in done.stdout, done.stderr
+    else:
+        assert done.returncode == 1 and 'deploy уже выполняется' in done.stderr
+
+
+def test_python3_yaml_already_there_means_no_apt(tree):
+    env = without_yaml(tree)
+    (tree / 'yaml-installed').touch()
+    done = deploy(tree, '-key', **env)
+    assert done.returncode == 0 and not (tree / 'apt').exists() and 'python3-yaml' not in done.stdout
+
+
+def test_python3_yaml_not_installed_stops_with_the_reason(tree):
+    done = deploy(tree, '-key', **without_yaml(tree, fail='1'))
+    assert done.returncode == 1 and 'Unable to locate package python3-yaml' in done.stderr
+    assert '✗ python3-yaml не установился, причина выше: нужен apt с доступом к зеркалу Ubuntu; повтори ./deploy.sh' in done.stderr
+    assert 'Traceback' not in done.stderr and 'ssh-ed25519' not in done.stdout
+
+
+def test_failed_wizard_check_is_not_read_as_no_wizard(tree):
+    """Сбой проверки «нужен ли мастер» - отказ, а не установка по config.yaml и не совет запустить ./deploy.sh."""
+    (tree / 'config.yaml').unlink()
+    (tree / 'wizard').mkdir()
+    (tree / 'wizard/draft.json').write_text('{}')
+    (tree / 'wizard/state.json').write_text('{"job": 1}')
+    (tree / 'manager/jobs/1').mkdir(parents=True)
+    (tree / 'manager/jobs/1/job.json').write_text('{')
+    done = deploy(tree, VPN2_MANAGER_STATE=str(tree / 'manager'))
+    assert done.returncode == 1 and '✗ не удалось понять, нужен ли мастер установки, причина выше' in done.stderr
+    assert 'config.yaml не найден' not in done.stdout and not plays(tree)

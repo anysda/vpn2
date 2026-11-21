@@ -209,5 +209,6 @@ def flags(argv):
 
 if __name__ == '__main__':
     if sys.argv[1:2] == ['--wanted']:
-        sys.exit(0 if wizard.wanted(flags(sys.argv[2:])) else 1)
+        # Мастер не нужен - 10: сбой проверки (код 1) ./deploy.sh не примет за «не нужен».
+        sys.exit(0 if wizard.wanted(flags(sys.argv[2:])) else 10)
     sys.exit(main(sys.argv[1:]))

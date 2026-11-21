@@ -90,7 +90,7 @@ class Stand:
             self.t += fo.INTERVAL
 
     def kill(self, node, on=True):
-        tags = {t for t in self.p if t.split('-')[-2:-1] == [node] and not t.startswith('pin-')}
+        tags = {t for t in self.p if fo.node_of(t) == node and not t.startswith('pin-')}
         self.down = self.down | tags if on else self.down - tags
 
     def cut_udp(self, node, on=True):
@@ -115,7 +115,7 @@ class Base(unittest.TestCase):
         s = Stand(**kw)
         self.addCleanup(s.tmp.cleanup)
         s.tick(10)
-        self.assertEqual(s.now(), 'hy2-aa-direct')
+        self.assertEqual(s.now(), f"hy2-{kw.get('nodes', ('aa',))[0]}-direct")
         return s
 
 
@@ -301,6 +301,37 @@ class TcpReserveTests(Base):
             s.tick(20)
         self.assertEqual(len(s.events), 1)
         self.assertEqual(s.now(), 'hy2-aa-direct')
+
+
+class HyphenTagTests(Base):
+    def test_node_of_keeps_hyphens_and_kind_names(self):
+        for tag, node in [('hy2-de-fra-direct', 'de-fra'), ('transport-hy2-us-east-1-warp', 'us-east-1'),
+                          ('transport-tcp-de-fra-mgmt', 'de-fra'), ('wire-hy2-de-fra-direct', 'de-fra'),
+                          ('hy2-direct-direct', 'direct'), ('hy2-x-warp-mgmt', 'x-warp'), ('hy2-nl-direct', 'nl'),
+                          ('foreign-best', 'foreign-best'), ('direct-ru', 'direct-ru')]:
+            self.assertEqual(fo.node_of(tag), node, tag)
+
+    def test_disabling_one_of_two_hyphenated_exits(self):
+        s = self.stand(nodes=('de-fra', 'de-ber'))
+        s.tick(fo.REBALANCE_INTERVAL + fo.IDLE_DWELL)
+        self.assertEqual({s.now(f'lane-{i:02d}') for i in range(1, 5)}, {'hy2-de-fra-direct', 'hy2-de-ber-direct'})
+        s.conns = [{'id': 'user', 'chains': ['hy2-de-fra-direct', 'lane-01']},
+                   {'id': 'other', 'chains': ['hy2-de-ber-direct', 'lane-02']}]
+        s.disable('de-fra')
+        s.tick(20)
+        self.assertEqual(s.now(), 'hy2-de-ber-direct')
+        self.assertEqual(set(s.closed), {'user'})
+        self.assertFalse(s.said('таких узлов нет'))
+        self.assertTrue(all(s.now(g).startswith('hy2-de-ber-') for g in s.p if g.startswith('lane-')))
+        self.assertEqual(s.now('pin-hy2-de-fra-direct'), 'foreign-best')
+
+    def test_penalty_of_one_hyphenated_exit_spares_the_other(self):
+        s = self.stand(nodes=('de-fra', 'de-ber'))
+        s.kill('de-fra')
+        s.tick(20)
+        self.assertEqual(s.now(), 'hy2-de-ber-direct')
+        self.assertTrue(s.said('узел de-fra в штрафной'))
+        self.assertTrue(s.dog.free('hy2-de-ber-direct'))
 
 
 class LanesPinsTgTests(Base):

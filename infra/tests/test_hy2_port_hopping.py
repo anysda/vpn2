@@ -75,7 +75,7 @@ def load_env(directory, host):
 def hy2_outbounds(cfg):
     found = {}
     for outbound in cfg['outbounds']:
-        match = re.fullmatch(r'(?:transport-)?hy2-(\w+)-(direct|warp|mgmt)', outbound['tag'])
+        match = re.fullmatch(r'(?:transport-)?hy2-(.+)-(direct|warp|mgmt)', outbound['tag'])
         if outbound['type'] == 'hysteria2' and match:
             found[match.groups()] = outbound
     return found

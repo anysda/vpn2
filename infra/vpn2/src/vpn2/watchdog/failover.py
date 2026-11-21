@@ -11,6 +11,7 @@
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -80,10 +81,15 @@ def log(text):
     print(text, flush=True)
 
 
+# hy2-<узел>-<вид>, нога канала transport-<провод>-<узел>-<вид>, провод wire-<провод>-<узел>-<вид>;
+# в теге узла бывает дефис, вид всегда последний.
+EXIT_TAG = re.compile(r'(?:transport-|wire-)?(?:hy2|tcp)-(.+)-(?:direct|warp|mgmt)')
+
+
 def node_of(tag):
-    """Узел из тега hy2-<узел>-<вид> или ноги канала transport-<провод>-<узел>-<вид>."""
-    parts = tag.removeprefix('transport-').split('-')
-    return parts[1] if len(parts) >= 3 else tag
+    """Узел из тега выхода, ноги или провода; прочие теги - как есть."""
+    match = EXIT_TAG.fullmatch(tag)
+    return match[1] if match else tag
 
 
 def _selector(proxy):

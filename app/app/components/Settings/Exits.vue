@@ -49,14 +49,14 @@ function onJob(next: ExitJob) {
   if (next.state !== 'running') refresh()
 }
 
-// Закрытый экран добавления уносит свой законченный итог; идущее задание остаётся на странице.
+// Закрытый экран добавления уносит свой законченный итог; идущее, упавшее и прерванное остаются с «Повторить/Забыть».
 let added: ExitJob | null = null
 function onAdd(next: ExitJob) {
   added = next
   onJob(next)
 }
 function close() {
-  if (added && added.state !== 'running') hidden.value.add(added.id)
+  if (added && !OPEN_STATES.includes(added.state)) hidden.value.add(added.id)
   added = null
   adding.value = false
   refresh()

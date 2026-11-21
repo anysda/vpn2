@@ -23,6 +23,12 @@ async function openSettings(page: Page) {
   await expect(card(page).getByRole('heading', { name: 'Экзиты' })).toBeVisible()
 }
 
+/** «Закрыть» в шапке карточки: экран добавления уходит, кнопки задания - со страницы. */
+async function closeAdd(page: Page) {
+  await card(page).locator('.ha').getByRole('button', { name: 'Закрыть' }).click()
+  await expect(card(page).getByText('Прошлое задание не закрыто: повторите его или забудьте')).toBeVisible()
+}
+
 async function exitTags(page: Page) {
   const nodes: Array<{ tag: string }> = await (await page.request.get('/api/ops/nodes')).json()
   return nodes.map(n => n.tag)
@@ -151,6 +157,9 @@ test.describe.serial('экзиты в настройках', () => {
     await expect(job.getByRole('button')).toHaveText(['Повторить', 'Забыть'])
     await expect(job.locator('details')).not.toHaveAttribute('open')
     await shot(page, 'failed')
+    // VPN2-995: «Закрыть» уносит экран добавления, незакрытое задание остаётся с «Повторить/Забыть».
+    await closeAdd(page)
+    await expect(card(page).locator('.xjob').getByRole('button')).toHaveText(['Повторить', 'Забыть'])
     await page.reload()
     await expect(card(page).getByText('Прошлое задание не закрыто: повторите его или забудьте')).toBeVisible()
     await card(page).locator('.xjob').getByRole('button', { name: 'Забыть' }).click()
@@ -163,9 +172,11 @@ test.describe.serial('экзиты в настройках', () => {
     await expect(job).toContainText('Задание оборвалось', { timeout: 60_000 })
     await expect(job.getByRole('button')).toHaveText(['Повторить', 'Забыть'])
     await shot(page, 'interrupted')
+    await closeAdd(page)
+    await expect(job.getByRole('button')).toHaveText(['Повторить', 'Забыть'])
     await job.getByRole('button', { name: 'Повторить' }).click()
     await expect(job).toContainText('Экзит CUT1 добавлен и работает.', { timeout: 60_000 })
-    await card(page).getByRole('button', { name: 'Готово' }).click()
+    await card(page).getByRole('button', { name: 'Скрыть' }).click()
     // Убрать добавленный: заданием через API, до конца.
     const removing = await (await page.request.delete('/api/exits/cut1')).json()
     await expect.poll(async () => (await (await page.request.get(`/api/exits/jobs/${removing.id}`)).json()).state, { timeout: 60_000 }).toBe('done')

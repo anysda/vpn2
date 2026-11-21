@@ -27,7 +27,6 @@ import io
 import ipaddress
 import json
 import os
-import pwd
 import re
 import secrets
 import shutil
@@ -69,11 +68,38 @@ OK, FAIL, UNKNOWN = range(3)
 MARKS = ('✓', '✗', '?')
 
 
-def run(*args, data=None, check=True, timeout=30):
-    result = subprocess.run(args, input=data, text=True, capture_output=True, timeout=timeout)
+def run(*args, data=None, check=True, timeout=30, user=None):
+    result = subprocess.run(args, input=data, text=True, capture_output=True, timeout=timeout, user=user)
     if check and result.returncode:
-        raise RuntimeError(f'{args[0]} {args[1] if len(args) > 1 else ""}: код {result.returncode}')
+        why = result.stderr.strip().splitlines()[-1:] or ['']
+        raise RuntimeError(f'{args[0]} {args[1] if len(args) > 1 else ""}: код {result.returncode} {why[0][:200]}'.rstrip())
     return result
+
+
+MANAGED = Path('/etc/vpn2-control/api-managed')
+MGMT = '/etc/openvpn/server/mgmt.sock'
+# quit до конца ответа openvpn обрывает и сам ответ: следующая команда - после END, SUCCESS: или ERROR:.
+TALK = '''import socket, sys
+with socket.socket(socket.AF_UNIX) as sock:
+    sock.settimeout(5)
+    sock.connect(sys.argv[1])
+    reply = sock.makefile('rb')
+    for command in sys.argv[2:]:
+        sock.sendall(command.encode() + b'\\n')
+        for line in reply:
+            sys.stdout.buffer.write(line)
+            if line.startswith((b'END', b'SUCCESS:', b'ERROR:')):
+                break
+    sock.sendall(b'quit\\n')
+'''
+
+
+def management(*commands):
+    """Ответ management OpenVPN. С панелью сокет пускает только vpn2-control (management-client-user),
+    и под ним подключается дочерний процесс: seteuid сменил бы euid всего процесса, и команды
+    протоколов из других потоков в этот миг шли бы без прав root."""
+    return run(sys.executable, '-I', '-c', TALK, MGMT, *commands,
+               user='vpn2-control' if MANAGED.exists() else None, timeout=15).stdout
 
 
 class Net:
@@ -420,18 +446,7 @@ class OpenVPN(Protocol):
         (CCD / name).write_text('disable\n')
         # openvpn читает ccd после сброса прав до nobody, а umask проверки 077.
         (CCD / name).chmod(0o644)
-        with socket.socket(socket.AF_UNIX) as sock:
-            sock.settimeout(5)
-            uid = os.geteuid()
-            try:
-                if Path('/etc/vpn2-control/api-managed').exists():
-                    os.seteuid(pwd.getpwnam('vpn2-control').pw_uid)
-                sock.connect('/etc/openvpn/server/mgmt.sock')
-            finally:
-                os.seteuid(uid)
-            sock.sendall(f'kill {name}\nquit\n'.encode())
-            with contextlib.suppress(OSError):
-                sock.recv(4096)
+        management(f'kill {name}')
 
 
 class IKEv2(Protocol):

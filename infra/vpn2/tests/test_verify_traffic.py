@@ -173,6 +173,68 @@ class IKEv2RevokeTests(unittest.TestCase):
         self.assertEqual(sorted(sas), ['12'], calls)
 
 
+class OpenVPNManagementTests(unittest.TestCase):
+    """Отзыв OpenVPN говорит с management под vpn2-control, пока WireGuard в другом потоке пишет wg0."""
+
+    def test_parallel_wg_set_keeps_root_while_openvpn_revokes(self):
+        euid, seen, talks = [0], [], []
+
+        def wg_set():
+            vt.run('wg', 'set', 'wg0', 'peer', 'PUB', 'remove')
+
+        def interleave():
+            # Обмен с management ещё идёт (сокет занят службой управления), поток WireGuard уже в wg set.
+            other = threading.Thread(target=wg_set)
+            other.start()
+            other.join()
+
+        def fake_run(args, **kwargs):
+            if args[0] == 'wg':
+                seen.append((euid[0], kwargs.get('user')))
+            else:
+                talks.append(kwargs.get('user'))
+                interleave()
+            return subprocess.CompletedProcess(args, 0, '', '')
+
+        class Management:
+            def __init__(self, *_args):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def settimeout(self, _seconds):
+                pass
+
+            def connect(self, _path):
+                interleave()
+
+            def sendall(self, _data):
+                pass
+
+            def recv(self, _size):
+                return b''
+
+        managed = Path('/etc/vpn2-control/api-managed')
+        exists = Path.exists
+        ovpn = vt.OpenVPN.__new__(vt.OpenVPN)
+        ovpn.names = {'a': 'vpn2-verify-0a1b2c3d-a'}
+        with tempfile.TemporaryDirectory() as ccd, \
+                mock.patch.object(vt, 'CCD', Path(ccd)), \
+                mock.patch.object(vt.os, 'seteuid', lambda uid: euid.__setitem__(0, uid)), \
+                mock.patch.object(vt.os, 'geteuid', lambda: euid[0]), \
+                mock.patch.object(Path, 'exists', lambda path: path == managed or exists(path)), \
+                mock.patch.object(vt.socket, 'socket', Management), \
+                mock.patch.object(vt.subprocess, 'run', fake_run):
+            ovpn.revoke('a')
+        self.assertEqual(seen, [(0, None)])
+        self.assertEqual(talks, ['vpn2-control'])
+        self.assertEqual(euid, [0])
+
+
 class CleanupLinkDownTests(unittest.TestCase):
     def cleanup_calls(self):
         calls = []

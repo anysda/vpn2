@@ -780,7 +780,7 @@ class ControlTests(unittest.TestCase):
         self.assertLess(guard, switch)
         self.assertIn('OVPN_CONF])', panel[panel.index('tx.guard_files('):panel.index("'--prepare'")])
         self.assertIn("['systemctl', 'try-restart', 'openvpn-server@server']", panel)
-        self.assertIn('pwd.getpwnam(\'vpn2-control\').pw_uid',
+        self.assertIn("user='vpn2-control' if MANAGED.exists()",
                       (ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py').read_text())
 
     def test_no_system_execution_or_writable_config_mounts_in_panel(self):

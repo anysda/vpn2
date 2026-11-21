@@ -28,6 +28,27 @@ class SampleTests(unittest.TestCase):
                 if failing:
                     self.assertIn(f'{failing} failure propagated', result.stdout)
 
+    def test_skip_fails_unless_named(self):
+        runner = Path(__file__).with_name('run_parallel.py')
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'test_tool.py').write_text('''
+import unittest
+class ToolTests(unittest.TestCase):
+    def test_ran(self):
+        pass
+    @unittest.skip('нужен инструмент')
+    def test_tool(self):
+        pass
+''')
+            for allowed, code in [([], 1), (['test_tool.ToolTests.test_tool'], 0), (['test_tool.ToolTests'], 0),
+                                  (['test_tool.ToolTests.test_ran'], 1)]:
+                with self.subTest(allowed=allowed):
+                    result = subprocess.run([sys.executable, str(runner), '--dir', directory,
+                                             *(f'--allow-skip={name}' for name in allowed)],
+                                            text=True, capture_output=True, timeout=10, check=False)
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                    self.assertEqual('skipped without --allow-skip' in result.stdout, bool(code), result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

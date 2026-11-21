@@ -396,11 +396,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - name: openvpn, wireguard-tools, pki и qrencode для тестов пакета
+      - name: openvpn, wireguard-tools, pki, qrencode и age для тестов пакета
         timeout-minutes: 8
         uses: ./.github/actions/apt-install
         with:
-          packages: openvpn wireguard-tools strongswan-pki libstrongswan-standard-plugins qrencode
+          packages: openvpn wireguard-tools strongswan-pki libstrongswan-standard-plugins qrencode age
       - name: sing-box для самопроверки аварийки hy2
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -443,8 +443,8 @@ jobs:
           # shellcheck disable=SC2086
           # Тесты больше ждут таймаутов и процессов, чем считают: 8 процессов на 4 ядра.
           python -m pytest infra/vpn2/tests -q -n 8 --dist loadgroup -rs $COVERAGE | tee /tmp/pytest.log
-          # Тест без openvpn, wg, Caddy или sudo пропускается: в CI это отказ, а не зелёный прогон.
-          ! grep -E 'SKIPPED.*(needs |cannot be made here)' /tmp/pytest.log
+          # Пропущенный тест в CI - отказ, а не зелёный прогон, какой бы ни была причина.
+          ! grep -E '^SKIPPED|[0-9]+ skipped' /tmp/pytest.log
 
   # Роли и то, что из них выходит: шаблоны рисует настоящий ansible, пробы в своём
   # сетевом пространстве гоняют sing-box. Две части набора infra/tests, каждая сверяет,
@@ -510,4 +510,8 @@ jobs:
           export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"
           export RUN_NETNS_TESTS=1
           "$SING_BOX_BIN" version
-          python3 infra/tests/run_parallel.py --shard "${{ matrix.part }}/2"
+          # Пропуск роняет прогон; здесь не идут только эти: панель с Caddy - в e2e/image-checks.sh,
+          # живая панель - в e2e/speedtest.spec.ts, живой AdGuard - проба руками (ADGUARD_BIN, адреса на lo).
+          python3 infra/tests/run_parallel.py --shard "${{ matrix.part }}/2" \
+            --allow-skip test_panel_proxy.PanelProxyTests --allow-skip test_speedtest.LivePanelTest \
+            --allow-skip test_adguard_ratelimit.AdguardRatelimitTests.test_live_single_and_parallel_pool_clients

@@ -119,7 +119,7 @@ def run_partition(args):
     chunk = int(args.chunk) if args.chunk and args.chunk.isdigit() else args.chunk
     selected = unittest.TestSuite(parts.get((args.module, args.group, args.cls, chunk), []))
     result = unittest.TextTestRunner(verbosity=2).run(selected)
-    Path(args.report).write_text(str(result.testsRun))
+    Path(args.report).write_text(json.dumps({'ran': result.testsRun, 'skipped': [t.id() for t, _ in result.skipped]}))
     return int(not result.wasSuccessful() or not result.testsRun)
 
 
@@ -201,6 +201,8 @@ def main():
     parser.add_argument('--shard', help='k/N: run part k of N')
     parser.add_argument('--manifest', help='write discovered and this part\'s test ids as JSON')
     parser.add_argument('--check-manifests', nargs='+', metavar='MANIFEST')
+    parser.add_argument('--allow-skip', action='append', default=[], metavar='TEST',
+                        help='test id (or its module.Class) that may skip here; any other skip fails the run')
     args = parser.parse_args()
     if args.module:
         return run_partition(args)
@@ -266,26 +268,27 @@ def main():
         started = time.monotonic()
         with log.open('w') as output, lock:
             if stopping.is_set():
-                return key, 1, 0, 0.0, ''
+                return key, 1, {'ran': 0, 'skipped': []}, 0.0, ''
             process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
                                        preexec_fn=(lambda: os.nice(nice)) if nice else None)
             children.add(process)
         code = process.wait()
         with lock:
             children.discard(process)
-        count = int(report.read_text()) if report.exists() else 0
-        return key, code, count, time.monotonic() - started, log.read_text()
+        counts = json.loads(report.read_text()) if report.exists() else {'ran': 0, 'skipped': []}
+        return key, code, counts, time.monotonic() - started, log.read_text()
 
     def chain(keys, directory, nice=0):
         return [run(key, directory, nice) for key in keys]
 
     started = time.monotonic()
-    results = []
+    results, skipped = [], []
 
     def report(batch):
-        for key, code, count, seconds, output in batch:
-            results.append((key, code, count, seconds))
-            print(f'===== {name(key)}: exit={code}, tests={count}, seconds={seconds:.1f}', flush=True)
+        for key, code, counts, seconds, output in batch:
+            results.append((key, code, counts['ran'], seconds))
+            skipped.extend(counts['skipped'])
+            print(f'===== {name(key)}: exit={code}, tests={counts["ran"]}, seconds={seconds:.1f}', flush=True)
             print(output, end='', flush=True)
 
     with tempfile.TemporaryDirectory(prefix='infra-parts-') as directory:
@@ -305,6 +308,7 @@ def main():
 
     ran = sum(count for _key, _code, count, _seconds in results)
     failed = [name(key) for key, code, _count, _seconds in results if code]
+    unexpected = sorted(t for t in skipped if not any(t == a or t.startswith(a + '.') for a in args.allow_skip))
     print('slowest partitions:', ', '.join(
         f'{name(key)}={seconds:.0f}s' for key, _code, _count, seconds in sorted(results, key=lambda r: -r[3])[:10]))
     seconds = time.monotonic() - started
@@ -315,8 +319,10 @@ def main():
         Path(args.manifest).write_text(json.dumps(manifest))
     print(f'infra partitions{"" if total == 1 else f" {shard}/{total}"}: {len(results)} of {len(parts)}, jobs={args.jobs}, tests={ran} of {expected}, '
           f'seconds={seconds:.1f}, cpu={usage.ru_utime + usage.ru_stime:.0f}s of {seconds * (os.cpu_count() or 1):.0f}s, '
-          f'failed={failed}', flush=True)
-    return int(bool(failed) or ran != expected or len(results) != len(parts))
+          f'failed={failed}, skipped={len(skipped)}', flush=True)
+    if unexpected:
+        print('skipped without --allow-skip:', *unexpected, sep='\n  ', flush=True)
+    return int(bool(failed) or bool(unexpected) or ran != expected or len(results) != len(parts))
 
 
 if __name__ == '__main__':

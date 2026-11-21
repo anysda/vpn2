@@ -3,6 +3,7 @@
 # Пакет, которого здесь нет, apt-install не ставит.
 
 # checks.yml
+age
 apache2-utils
 iproute2
 iptables

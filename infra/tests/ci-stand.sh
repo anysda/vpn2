@@ -582,8 +582,12 @@ cmd_up_wait() {
 
 # Долгая команда на entry отвязана от ssh: обрыв сессии её не убивает.
 # Вывод идёт в журнал на entry, отсюда его хвост печатается по мере роста.
+# Деплой разработки тянет плавающие :dev; образ уже на узлах - он с первого деплоя
+# прогона, и dev, сдвинувшийся посреди прогона, его не подменяет.
 entry_run() {
   local name=$1 command=$2 shown=0 lines rc
+  [[ $command != *--development* ]] \
+    || command="for c in tgbot emergency; do docker image inspect ghcr.io/anysda/vpn2/\$c:dev >/dev/null 2>&1 && export \${c^^}_IMAGE_PULL=false; done; $command"
   ssh_node "$ENTRY" "rm -f /root/$name.rc; cd /opt/anysda-vpn2 || exit; setsid nohup bash -c '$command > /root/$name.log 2>&1; echo \$? > /root/$name.rc' >/dev/null 2>&1 < /dev/null &"
   while :; do
     lines=$(ssh_node "$ENTRY" "wc -l < /root/$name.log" 2>/dev/null || echo "$shown")

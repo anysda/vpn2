@@ -606,5 +606,5 @@ class PublishedManifestTests(Work):
         for forbidden in ('gh ', 'gh auth', 'gh run', '--manifest', 'release-manifest'):
             self.assertNotIn(forbidden, install)
         steps = [install.index(step) for step in ('git clone', '\n./deploy.sh -key\n', '\n./deploy.sh -yaml\n')]
-        self.assertIn('ssh-copy-id', install)
+        self.assertIn('admin.ssh_pubkey', install)
         self.assertEqual(steps, sorted(steps))

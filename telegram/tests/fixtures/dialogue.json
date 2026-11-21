@@ -4668,11 +4668,6 @@
  ],
  "events/configs": [
   [
-   "event",
-   200,
-   "ok"
-  ],
-  [
    "tg",
    "POST",
    "/sendPhoto",
@@ -4705,7 +4700,7 @@
   [
    "event",
    200,
-   "ok"
+   "{\"ok\": true, \"sent\": true}"
   ],
   [
    "tg",
@@ -4725,7 +4720,7 @@
   [
    "event",
    200,
-   "ok"
+   "{\"ok\": true, \"sent\": true}"
   ],
   [
    "tg",
@@ -4745,12 +4740,12 @@
   [
    "event",
    200,
-   "ok"
+   "{\"ok\": true, \"sent\": true}"
   ],
   [
    "event",
-   200,
-   "ok"
+   400,
+   "invalid notification"
   ],
   [
    "tg",
@@ -4770,12 +4765,12 @@
   [
    "event",
    200,
-   "ok"
+   "{\"ok\": true, \"sent\": true}"
   ],
   [
    "event",
-   200,
-   "ok"
+   400,
+   "invalid notification"
   ],
   [
    "tg",
@@ -4805,7 +4800,7 @@
   [
    "event",
    200,
-   "ok"
+   "{\"ok\": true, \"sent\": true}"
   ],
   [
    "tg",
@@ -4816,14 +4811,14 @@
     "text": "Сервер: `?`\nЛогин: `?`\nПароль: `?`\n\n*?* — IKEv2",
     "parse_mode": "Markdown"
    }
-  ]
- ],
- "events/invite": [
+  ],
   [
    "event",
    200,
-   "ok"
-  ],
+   "{\"ok\": true, \"sent\": true}"
+  ]
+ ],
+ "events/invite": [
   [
    "tg",
    "POST",
@@ -4845,15 +4840,15 @@
   [
    "event",
    200,
-   "ok"
+   "{\"ok\": true, \"sent\": true}"
+  ],
+  [
+   "event",
+   400,
+   "invalid notification"
   ]
  ],
  "events/invite_without_bot_name": [
-  [
-   "event",
-   200,
-   "ok"
-  ],
   [
    "tg",
    "POST",
@@ -4871,6 +4866,11 @@
     "chat_id": 100,
     "text": "🔐 Вам предоставлен доступ к VPN.\nНайдите нашего бота в Telegram и отправьте ему сообщение:\n/start pw-1"
    }
+  ],
+  [
+   "event",
+   200,
+   "{\"ok\": true, \"sent\": true}"
   ]
  ],
  "events/deploy": [
@@ -4886,9 +4886,7 @@
    null
   ],
   [
-   "tg",
-   "POST",
-   "/sendMessage",
+   "queued",
    {
     "chat_id": 100,
     "text": "✅ *Установка завершена*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
@@ -4907,9 +4905,7 @@
    null
   ],
   [
-   "tg",
-   "POST",
-   "/sendMessage",
+   "queued",
    {
     "chat_id": 100,
     "text": "⚠️ *Установка завершена с предупреждениями*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи\n\n? Не проверено: часть проверок не измерена. Причины — в сводке деплоя 99-verify.",
@@ -4928,9 +4924,7 @@
    null
   ],
   [
-   "tg",
-   "POST",
-   "/sendMessage",
+   "queued",
    {
     "chat_id": 100,
     "text": "✅ *Установка завершена*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
@@ -4963,9 +4957,7 @@
    null
   ],
   [
-   "tg",
-   "POST",
-   "/sendMessage",
+   "queued",
    {
     "chat_id": 100,
     "text": "✅ *Установка завершена*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
@@ -5008,9 +5000,7 @@
    null
   ],
   [
-   "tg",
-   "POST",
-   "/sendMessage",
+   "queued",
    {
     "chat_id": 100,
     "text": "⚠️ *Установка завершена с предупреждениями*\n\n? Не проверено: часть проверок не измерена. Причины — в сводке деплоя 99-verify.",

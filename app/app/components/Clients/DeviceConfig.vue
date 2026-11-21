@@ -59,7 +59,7 @@ function download() {
   URL.revokeObjectURL(a.href)
   toast.add({ title: `Скачивается ${fileName.value}`, color: 'success' })
 }
-const sendTg = () => act('tg', () => $fetch<unknown>(`${base.value}/${k.value.send}`, { method: 'POST' }), { title: k.value.sent, color: 'success' }, 'Ошибка отправки')
+const sendTg = () => act('tg', () => $fetch<{ warning?: string }>(`${base.value}/${k.value.send}`, { method: 'POST' }), r => sentToast(k.value.sent, r.warning), 'Ошибка отправки')
 
 const IKE_ROWS = [
   { k: 'Remote ID (iOS) / Server identity (Android)', field: 'remoteId', lab: 'Remote ID', secret: false },

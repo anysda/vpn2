@@ -52,6 +52,20 @@ describe('sendBotEvent', () => {
     expect(err).toMatchObject({ statusCode: 502, statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram' })
     expect(err.cause).toBe(cause)
   })
+
+  it('Telegram принял - без предупреждения; не ответил - предупреждение «в очереди», не успех', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, sent: true })
+    expect(await sendBotEvent(body)).toEqual({})
+    fetchMock.mockResolvedValueOnce({ ok: true, sent: false })
+    expect(await sendBotEvent(body)).toEqual({ warning: 'Telegram не ответил — сообщение в очереди, бот повторит отправку в течение часа' })
+  })
+
+  it('Telegram отказал - 502 с кодом отказа', async () => {
+    fetchMock.mockRejectedValue(Object.assign(new Error('502'), { data: { ok: false, status: 403 } }))
+    expect(await rejection(sendBotEvent(body))).toMatchObject({
+      statusCode: 502, statusMessage: 'telegram_rejected', message: 'Telegram не принял сообщение бота, код 403',
+    })
+  })
 })
 
 describe('очередь outbox', () => {

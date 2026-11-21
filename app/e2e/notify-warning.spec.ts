@@ -92,13 +92,34 @@ test('ответ с warning: новый клиент показывает пре
   await expect(warningToast(page, `Клиент «${name}» создан`, WARNING)).toBeVisible()
 })
 
+test('VPN2-994: приглашение в очереди бота - тост с причиной, не «отправлено»', async ({ page }) => {
+  const queued = 'Telegram не ответил — сообщение в очереди, бот повторит отправку в течение часа'
+  await page.route('**/api/admin/telegram', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    const response = await route.fetch()
+    await route.fulfill({ response, json: { ...await response.json(), configured: true, running: true } })
+  })
+  await openHome(page, '/clients')
+  const { id, name } = await client(page)
+  try {
+    await page.route(`**/api/clients/${id}/send-password-to-tg`, route => route.fulfill({ json: { ok: true, warning: queued } }))
+    const panel = await openClient(page, name)
+    await panel.getByRole('button', { name: 'Отправить доступ к боту' }).click()
+    await expect(toast(page, queued)).toBeVisible()
+    await expect(toast(page, 'Приглашение отправлено в Telegram')).toHaveCount(0)
+  }
+  finally {
+    await page.request.delete(`/api/clients/${id}`)
+  }
+})
+
 test('очередь бота заполнена: изменения записаны, панель предупреждает, ошибок нет', async ({ page }) => {
   test.skip(!container, 'нужен одноразовый локальный контейнер с подставным ботом')
   await openHome(page, '/clients')
   const original = await (await page.request.get('/api/admin/telegram')).json()
   test.skip(original.configured, 'настоящие настройки бота менять нельзя')
   const ids: number[] = []
-  let held: string[] = []
+  let held: Record<string, unknown>[] = []
   const link = (id: number) => inside(`
     import { DatabaseSync } from 'node:sqlite';
     const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
@@ -112,8 +133,8 @@ test('очередь бота заполнена: изменения запис�
     expect((await page.request.put('/api/admin/telegram', {
       data: { bot_token: '123456789:E2E_UNAVAILABLE_aaaaaaaaaaaaaaaaaaaaaaa', chat_id: '123456789' },
     })).ok()).toBe(true)
-    // Очередь целиком из ожидающих: вытеснять нечего. Принятые ботом записи
-    // прежних тестов освободили бы место - на время теста они вне счёта.
+    // Очередь целиком из ожидающих: вытеснять нечего. Принятые и неудачные записи
+    // прежних тестов освободили бы место - на время теста они вне очереди.
     // Срок повтора далеко, неудачных попыток нет - в «Уведомлениях» не видны.
     held = JSON.parse(inside(`
       import { DatabaseSync } from 'node:sqlite';
@@ -122,8 +143,8 @@ test('очередь бота заполнена: изменения запис�
       const now = Date.now();
       const add = db.prepare("INSERT INTO bot_outbox (id, label, payload, status, attempts, last_failure, due, expires, created) VALUES (?, 'e2e', '{}', 'queued', 0, 0, ?, ?, ?)");
       db.exec('BEGIN IMMEDIATE');
-      const held = db.prepare("SELECT id FROM bot_outbox WHERE status = 'accepted'").all().map(row => row.id);
-      db.exec("UPDATE bot_outbox SET status = 'failed' WHERE status = 'accepted'");
+      const held = db.prepare("SELECT * FROM bot_outbox WHERE status != 'queued'").all();
+      db.exec("DELETE FROM bot_outbox WHERE status != 'queued'");
       for (let i = 0; i < 1024; i++) add.run('e2e-full-' + i, now + 3600000, now + 3600000, now);
       db.exec('COMMIT');
       console.log(JSON.stringify(held));
@@ -159,8 +180,10 @@ test('очередь бота заполнена: изменения запис�
       import { DatabaseSync } from 'node:sqlite';
       const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
       db.exec("PRAGMA busy_timeout=5000; DELETE FROM bot_outbox WHERE id LIKE 'e2e-full-%'");
-      const back = db.prepare("UPDATE bot_outbox SET status = 'accepted' WHERE id = ?");
-      for (const id of JSON.parse(process.argv[1])) back.run(id);
+      for (const row of JSON.parse(process.argv[1])) {
+        const keys = Object.keys(row);
+        db.prepare(`INSERT OR IGNORE INTO bot_outbox (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).run(...Object.values(row));
+      }
     `, held)
     for (const id of ids) await page.request.delete(`/api/clients/${id}`)
     await page.request.put('/api/admin/telegram', { data: { bot_token: '', chat_id: String(original.chat_id ?? '') } })

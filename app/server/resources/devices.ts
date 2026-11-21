@@ -192,20 +192,17 @@ export default {
       botSecretOrThrow()
       return host
     }, wgConfig)
-    await sendBotEvent(wgBotEvent(deviceConfigName(client.name, device.name, device.id), conf))
-    return { ok: true }
+    return { ok: true, ...await sendBotEvent(wgBotEvent(deviceConfigName(client.name, device.name, device.id), conf)) }
   }),
   'POST /clients/:id/devices/:deviceId/send-ovpn-to-tg': admin(async (event) => {
     const { client, device, conf } = await panelConfig(event, () => requireOvpnEndpoint(botSecretOrThrow), ovpnConfig)
-    await sendBotEvent({ type: 'client_send_openvpn', name: deviceConfigName(client.name, device.name, device.id), conf })
-    return { ok: true }
+    return { ok: true, ...await sendBotEvent({ type: 'client_send_openvpn', name: deviceConfigName(client.name, device.name, device.id), conf }) }
   }),
   /** IKEv2 двумя сообщениями: текст с server/login/password и ca.crt файлом; набор полей одинаков для всех ОС. */
   'POST /clients/:id/devices/:deviceId/send-ikev2-to-tg': admin(async (event) => {
     const { client, device } = await panelDevice(event, () => requireIkev2(botSecretOrThrow))
     const { username, server, password, caCertPem } = await buildIkev2ClientInfo(device.id)
-    await sendBotEvent({ type: 'client_send_ikev2', clientName: client.name, username, server, password, caCertPem })
-    return { ok: true as const }
+    return { ok: true as const, ...await sendBotEvent({ type: 'client_send_ikev2', clientName: client.name, username, server, password, caCertPem }) }
   }),
 
   /** Серверный CA как PEM; в letsencrypt-режиме 404: корень LE уже в trust-store клиентов. */

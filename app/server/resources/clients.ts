@@ -105,8 +105,7 @@ export default {
     const id = idParam(event)
     botSecretOrThrow()
     const client = await clientOr404(id)
-    await sendBotEvent({ type: 'client_send_password', name: client.name, password: client.password })
-    return { ok: true }
+    return { ok: true, ...await sendBotEvent({ type: 'client_send_password', name: client.name, password: client.password }) }
   }),
 
   /**

@@ -201,7 +201,7 @@ async function addDev() {
         <span :title="tgReason || undefined">
           <button
             type="button" class="pill w" :disabled="!canSend || busy.has('tg')"
-            @click="act('tg', () => sendBotAccess(d!.id), { title: 'Приглашение отправлено в Telegram', color: 'success' }, 'Ошибка отправки')">
+            @click="act('tg', () => sendBotAccess(d!.id), r => sentToast('Приглашение отправлено в Telegram', r.warning), 'Ошибка отправки')">
             Отправить доступ к боту
           </button>
         </span>

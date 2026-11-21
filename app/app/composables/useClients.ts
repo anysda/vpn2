@@ -27,7 +27,7 @@ type Patch = Partial<Pick<Client, 'name' | 'expiresAt' | 'deviceLimit' | 'frozen
 export const updateClient = (id: number, patch: Patch) => send<Warned>(`/${id}`, 'PATCH', patch, true)
 export const removeClient = (id: number) => send<{ operation: AccessOperation }>(`/${id}`, 'DELETE', undefined, true)
 export const reissueClient = (id: number) => send(`/${id}/reissue`, 'POST', undefined, true)
-export const sendBotAccess = (id: number) => send(`/${id}/send-password-to-tg`, 'POST')
+export const sendBotAccess = (id: number) => send<Warned>(`/${id}/send-password-to-tg`, 'POST')
 export const unlinkClient = (id: number) => send<Warned>(`/${id}/unlink`, 'POST')
 export const addDevice = (id: number, name: string) => send<Warned>(`/${id}/devices`, 'POST', { name })
 export const removeDevice = (id: number, device: number) => send(`/${id}/devices/${device}`, 'DELETE', undefined, true)

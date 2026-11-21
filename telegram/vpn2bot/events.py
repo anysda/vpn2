@@ -9,13 +9,13 @@ from contextlib import suppress
 
 from aiohttp import web
 
-from . import api, config, texts
+from . import api, config, outbox, texts
 from .config import log
 from .outbox import Outbox, QueueFull
 from .texts import md, md_bold
 
 OUTBOX_KEY = web.AppKey('outbox', Outbox)
-# The event loop holds tasks weakly: a send without a reference here may be collected half-way.
+# The event loop holds tasks weakly: a deploy notice without a reference here may be collected half-way.
 sending: set[asyncio.Task] = set()
 
 
@@ -29,7 +29,7 @@ async def report_rejected(payload: dict, status: int, delivery_id: str | None = 
 
 async def event_outbox(webapp):
     webapp[OUTBOX_KEY] = queue = Outbox(config.OUTBOX_PATH)
-    worker = asyncio.create_task(queue.run(api.send, report_rejected))
+    worker = asyncio.create_task(queue.run(deliver, report_rejected))
     yield
     worker.cancel()
     with suppress(asyncio.CancelledError):
@@ -84,38 +84,50 @@ QUEUED = {
 }
 
 
-async def send_config(data: dict) -> None:
+def admin_file(kind: str, filename: str, content: bytes, caption: str) -> dict:
+    return {'chat_id': config.CHAT_ID, 'caption': caption,
+            'file': {'kind': kind, 'name': filename, 'data': base64.b64encode(content).decode()}}
+
+
+async def deliver(chat_id: int, file: dict | None = None, caption: str = '', **message) -> None:
+    """One queued message: a text, or a file (photo or document) with its caption."""
+    if file:
+        await api.send_file(chat_id, file['kind'], file['name'], base64.b64decode(file['data']), caption)
+    else:
+        await api.send(chat_id, **message)
+
+
+def config_files(data: dict) -> list[dict]:
     """WireGuard: the QR picture first, then the file. OpenVPN embeds certificates, so a file only."""
     wireguard = data['type'] == 'client_send_wireguard'
     name, conf = data.get('name', '?'), data.get('conf', '')
     if not conf:
-        return
+        return []
     caption = f'{md_bold(name)} — {"WireGuard" if wireguard else "OpenVPN"}'
     qr = b''
     with suppress(ValueError, TypeError):
         qr = base64.b64decode(data.get('qr'), validate=True)
-    if wireguard and qr.startswith(b'\x89PNG\r\n\x1a\n'):
-        await api.send_file(config.CHAT_ID, 'photo', 'qr.png', qr, caption)
-    await api.send_file(config.CHAT_ID, 'document', f'{name}.{"conf" if wireguard else "ovpn"}',
-                        conf.encode('utf-8'), caption)
+    photo = [admin_file('photo', 'qr.png', qr, caption)] if wireguard and qr.startswith(b'\x89PNG\r\n\x1a\n') else []
+    return photo + [admin_file('document', f'{name}.{"conf" if wireguard else "ovpn"}', conf.encode('utf-8'), caption)]
 
 
-async def send_ikev2(data: dict) -> None:
+def ikev2_messages(data: dict) -> list[dict]:
     username = data.get('username', '?')
-    await api.send(config.CHAT_ID, f'Сервер: `{data.get("server", "?")}`\nЛогин: `{username}`\n'
-                   f'Пароль: `{data.get("password", "?")}`\n\n{md_bold(username)} — IKEv2', 'Markdown')
-    if data.get('caCertPem'):
-        await api.send_file(config.CHAT_ID, 'document', f'{username}-ca.crt',
-                            data['caCertPem'].encode('utf-8'), f'{md_bold(username)} — CA-сертификат IKEv2')
+    text = (f'Сервер: `{data.get("server", "?")}`\nЛогин: `{username}`\n'
+            f'Пароль: `{data.get("password", "?")}`\n\n{md_bold(username)} — IKEv2')
+    ca = data.get('caCertPem')
+    return admin_note(text) + ([admin_file('document', f'{username}-ca.crt', ca.encode('utf-8'),
+                                           f'{md_bold(username)} — CA-сертификат IKEv2')] if ca else [])
 
 
-async def send_invite(data: dict) -> None:
-    if data.get('password', ''):
-        await api.send(config.CHAT_ID, f'📨 Приглашение для «{data.get("name", "?")}». Перешлите клиенту сообщение ниже ↓')
-        await api.send(config.CHAT_ID, texts.invite(data['password']))
+def invite_messages(data: dict) -> list[dict]:
+    if not data.get('password', ''):
+        return []
+    return [{'chat_id': config.CHAT_ID, 'text': f'📨 Приглашение для «{data.get("name", "?")}». Перешлите клиенту сообщение ниже ↓'},
+            {'chat_id': config.CHAT_ID, 'text': texts.invite(data['password'])}]
 
 
-async def announce_deploy(data: dict) -> None:
+async def announce_deploy(data: dict, queue: Outbox) -> None:
     unmeasured = data.get('verify_unmeasured') is True
     text = title = '⚠️ *Установка завершена с предупреждениями*' if unmeasured else '✅ *Установка завершена*'
     # Right after a deploy the panel may still be starting.
@@ -128,17 +140,22 @@ async def announce_deploy(data: dict) -> None:
             await asyncio.sleep(3)
     if unmeasured:
         text += '\n\n? Не проверено: часть проверок не измерена. Причины — в сводке деплоя 99-verify.'
-    await api.send(config.CHAT_ID, text, 'Markdown')
+    try:
+        queue.enqueue(admin_note(text))
+    except Exception as e:
+        log.error('outbox cannot accept the deploy notice: %s', type(e).__name__)
 
 
-# Sent at once past the queue: the admin forwards these to the client himself.
-SENT = {
-    'client_send_wireguard': send_config,
-    'client_send_openvpn': send_config,
-    'client_send_ikev2': send_ikev2,
-    'client_send_password': send_invite,
-    'deploy_done': announce_deploy,
+# The admin forwards these to the client himself: the panel waits for Telegram's answer, and a message
+# that did not leave stays queued for an hour, not for a day.
+FORWARDED = {
+    'client_send_wireguard': config_files,
+    'client_send_openvpn': config_files,
+    'client_send_ikev2': ikev2_messages,
+    'client_send_password': invite_messages,
 }
+FORWARD_TTL_SEC = 60 * 60
+SEND_WAIT_SEC = 5.0
 
 
 async def handle_event(request: web.Request) -> web.Response:
@@ -147,21 +164,32 @@ async def handle_event(request: web.Request) -> web.Response:
     try:
         data = await request.json()
         kind = data.get('type')
-        payloads = QUEUED[kind](data) if kind in QUEUED else None
+        build = QUEUED.get(kind) or FORWARDED.get(kind)
+        payloads = build(data) if build else None
     except Exception:
         return web.Response(status=400)
-    if kind in SENT:
-        task = asyncio.create_task(SENT[kind](data))
+    queue = request.app[OUTBOX_KEY]
+    if kind == 'deploy_done':
+        # deploy.sh does not wait: the summary is queued once the panel answers the status request.
+        task = asyncio.create_task(announce_deploy(data, queue))
         sending.add(task)
         task.add_done_callback(sending.discard)
     if payloads is None:
         return web.Response(text='ok')
     delivery_id = data.get('deliveryId')
     try:
-        event_id = request.app[OUTBOX_KEY].enqueue(payloads, delivery_id)
+        ids = queue.enqueue(payloads, delivery_id, FORWARD_TTL_SEC if kind in FORWARDED else outbox.TTL_SEC)
     except ValueError:
         return web.Response(status=400, text='invalid notification')
     except (QueueFull, sqlite3.Error, OSError):
         log.error('outbox cannot accept notification')
         return web.Response(status=503, text='notification queue unavailable')
-    return web.json_response({'ok': True, 'event_id': event_id, 'delivery_id': delivery_id})
+    if kind not in FORWARDED:
+        return web.json_response({'ok': True, 'event_id': ids[-1], 'delivery_id': delivery_id})
+    outcome = await queue.outcome(ids, SEND_WAIT_SEC)
+    if outcome is None:
+        return web.json_response({'ok': True, 'sent': False}, status=202)
+    status = next((status for status in outcome if status), None)
+    if status:
+        return web.json_response({'ok': False, 'status': status}, status=502)
+    return web.json_response({'ok': True, 'sent': True})

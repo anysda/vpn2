@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import suppress
+import json
 import sqlite3
 import tempfile
 import time
@@ -8,7 +9,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from telegram import Bot
-from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 
 from harness import FakeTelegram, import_bot
 
@@ -80,9 +81,9 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
 
     def test_receipt_is_bound_to_payload(self):
         payload = {'chat_id': 200, 'text': 'original'}
-        event_id = self.queue.enqueue([payload], 'stable-id')
+        [event_id] = self.queue.enqueue([payload], 'stable-id')
         self.queue.remove(event_id)
-        self.assertEqual(self.open(self.queue.path).enqueue([payload], 'stable-id'), event_id)
+        self.assertEqual(self.open(self.queue.path).enqueue([payload], 'stable-id'), [event_id])
         with self.assertRaises(ValueError):
             self.queue.enqueue([{'chat_id': 200, 'text': 'different'}], 'stable-id')
         self.assertEqual(self.rows(), [])
@@ -102,9 +103,9 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_lease_survives_reopen_and_preserves_chat_order(self):
         with patch('vpn2bot.outbox.time.time', return_value=100):
-            first = self.queue.enqueue([{'chat_id': 200, 'text': 'first'}])
-            second = self.queue.enqueue([{'chat_id': 200, 'text': 'second'}])
-            other = self.queue.enqueue([{'chat_id': 300, 'text': 'other'}])
+            [first] = self.queue.enqueue([{'chat_id': 200, 'text': 'first'}])
+            [second] = self.queue.enqueue([{'chat_id': 200, 'text': 'second'}])
+            [other] = self.queue.enqueue([{'chat_id': 300, 'text': 'other'}])
             self.assertEqual(self.queue.claim()['id'], first)
             reopened = self.open(self.queue.path)
             self.assertEqual(reopened.claim()['id'], other)
@@ -125,7 +126,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_backoff_ambiguous_send_and_permanent_error(self):
         for error, minimum in ((TelegramError('Internal Server Error'), 5), (TimeoutError(), 60)):
-            event_id = self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
+            [event_id] = self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
             now = time.time()
             send = AsyncMock(side_effect=error)
             await self.worker_until(send, lambda: bool(self.rows()) and self.rows()[0][2] < now + 100
@@ -144,7 +145,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
                                    (401, {'ok': False, 'error_code': 401, 'description': 'Unauthorized'})]}
         self.bot.api.bot = Bot(self.bot.config.TOKEN, request=FakeTelegram([], answers))
         for minimum, maximum in ((5, 60), (60, 400)):
-            event_id = self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
+            [event_id] = self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
             now = time.time()
             await self.worker_until(self.bot.api.send, lambda: self.rows()[0][1] == 1 and self.rows()[0][2] > now + 1)
             self.assertTrue(now + minimum <= self.rows()[0][2] < now + maximum, self.rows())
@@ -201,6 +202,72 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         self.queue.enqueue([{'chat_id': 300, 'text': 'new recipient'}])
         self.assertIsNone(self.queue.claim())
         send.assert_awaited_once()
+
+    async def forward(self, send, reported=None, **body):
+        """POST /event of an admin-forwarded message while the queue worker runs; the panel's answer."""
+        request = self.event(**body)
+        worker = asyncio.create_task(self.queue.run(send, reported or AsyncMock()))
+        try:
+            with patch.object(self.bot.events, 'SEND_WAIT_SEC', 1):
+                response = await self.bot.events.handle_event(request)
+        finally:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+        return response.status, json.loads(response.text)
+
+    async def test_forwarded_config_is_not_sent_green_while_telegram_is_down_and_leaves_once_after(self):
+        conf = {'type': 'client_send_openvpn', 'name': 'ivan-phone', 'conf': 'client\n'}
+        down = AsyncMock(side_effect=NetworkError('proxy to Telegram is down'))
+        with patch.object(self.bot.api, 'send_file', down):
+            self.assertEqual(await self.forward(self.bot.events.deliver, **conf), (202, {'ok': True, 'sent': False}))
+        self.assertEqual(len(self.rows()), 1)
+        # The bot restarts with the message queued; Telegram is back.
+        self.queue = self.open(self.queue.path)
+        self.queue.db.execute('UPDATE events SET due = 0')
+        self.queue.db.commit()
+        up = AsyncMock()
+        with patch.object(self.bot.api, 'send_file', up):
+            await self.worker_until(self.bot.events.deliver, lambda: not self.rows())
+        up.assert_awaited_once_with(self.bot.config.CHAT_ID, 'document', 'ivan-phone.ovpn', b'client\n',
+                                    '*ivan-phone* — OpenVPN')
+
+    async def test_forwarded_invite_answers_sent_only_after_telegram_took_every_part(self):
+        sent = AsyncMock()
+        with patch.object(self.bot.api, 'send', sent):
+            answer = await self.forward(self.bot.events.deliver, type='client_send_password', name='Иван', password='pw')
+        self.assertEqual(answer, (200, {'ok': True, 'sent': True}))
+        self.assertEqual(sent.await_count, 2)
+        self.assertEqual(self.rows(), [])
+
+    async def test_forwarded_message_refused_for_good_is_an_error_and_not_retried(self):
+        reported = AsyncMock()
+        answer = await self.forward(AsyncMock(side_effect=Forbidden('bot was kicked from the group chat')), reported,
+                                    type='client_send_ikev2', username='ivan', server='vpn', password='p')
+        self.assertEqual(answer, (502, {'ok': False, 'status': 403}))
+        self.assertEqual(self.rows(), [])
+        self.assertEqual(reported.await_args.args[1], 403)
+
+    async def test_forwarded_message_not_sent_within_an_hour_is_dropped_and_reported(self):
+        with patch('vpn2bot.outbox.time.time', return_value=1000):
+            answer = await self.forward(AsyncMock(side_effect=TimeoutError()), type='client_send_password', name='И', password='pw')
+        self.assertEqual(answer, (202, {'ok': True, 'sent': False}))
+        reported = AsyncMock()
+        with patch('vpn2bot.outbox.time.time', return_value=1000 + 3601):
+            await self.worker_until(AsyncMock(), lambda: reported.await_count == 2, reported)
+        self.assertEqual(self.rows(), [])
+        self.assertEqual([c.args[1:] for c in reported.await_args_list], [(504, None)] * 2)
+
+    async def test_deploy_notice_is_queued_and_a_full_queue_leaves_no_task_error(self):
+        with patch.object(self.bot.api, 'status', AsyncMock(side_effect=RuntimeError('panel starting'))), \
+                patch.object(self.bot.events.asyncio, 'sleep', AsyncMock()):
+            self.assertEqual((await self.bot.events.handle_event(self.event(type='deploy_done'))).text, 'ok')
+            await asyncio.gather(*self.bot.events.sending)
+            self.assertIn('Установка завершена', self.open(self.queue.path).claim()['payload'])
+            with patch.object(self.queue, 'enqueue', side_effect=self.QueueFull()):
+                await self.bot.events.handle_event(self.event(type='deploy_done'))
+                results = await asyncio.gather(*self.bot.events.sending, return_exceptions=True)
+        self.assertEqual(results, [None])
 
 
 if __name__ == '__main__':

@@ -82,6 +82,11 @@ export function doneToast(title: string, warning?: string) {
   return warning ? { title, description: warning, color: 'warning' as const } : { title, color: 'success' as const }
 }
 
+/** Тост пересылки в Telegram: `warning` - сообщение ещё в очереди бота, не зелёный. */
+export function sentToast(title: string, warning?: string) {
+  return warning ? { title: warning, color: 'warning' as const } : { title, color: 'success' as const }
+}
+
 type Note = string | { title: string, description?: string, color?: 'success' | 'info' | 'warning' }
 
 /** Действие: ключ занят, пока идёт запрос; ошибка (кроме 401) - красным тостом (`fail` объектом - свой заголовок, причина ниже), успех - тостом `done`. */

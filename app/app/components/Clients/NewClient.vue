@@ -24,7 +24,7 @@ function submit() {
     emit('created', client.id)
     if (!form.bot || !canSend.value) return
     await sendBotAccess(client.id).then(
-      () => toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' }),
+      r => toast.add(sentToast('Приглашение отправлено в Telegram', r.warning)),
       () => toast.add({ title: 'Клиент создан, но пароль не отправлен в Telegram', color: 'warning' }))
   })
 }

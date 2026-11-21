@@ -109,10 +109,20 @@ test.describe('bot-delivery', () => {
       await queue.retryBotEvents()
       expect(await queue.botDeliveries()).toEqual([])
 
-      await db.insert(schema.botOutbox).values(Array.from({ length: 1024 }, (_, i) => ({
+      const fixture = (i: number) => ({
         id: `full-${i}`, label: 'fixture', payload: '{}', status: 'queued' as const,
         due: now + 30_000, expires: now + 3_600_000, created: now, lastFailure: now,
-      })))
+      })
+      // Неудачная запись уже отмечена тревогой: место в очереди за ней не держится.
+      await db.insert(schema.botOutbox).values([
+        { ...fixture(-1), id: 'failed-old', payload: '', status: 'failed' as const, created: now - 1 },
+        ...Array.from({ length: 1023 }, (_, i) => fixture(i)),
+      ])
+      expect(await queue.notifyBot('client_notify', { chatId: 100, text: 'evicts' }, 'Уведомление клиенту «Тест»')).toMatchObject({ label: 'Уведомление клиенту «Тест»' })
+      const ids = (await db.select({ id: schema.botOutbox.id }).from(schema.botOutbox)).map(row => row.id)
+      expect(ids).not.toContain('failed-old')
+      for (const id of ids.filter(id => !id.startsWith('full-'))) await db.delete(schema.botOutbox).where(eq(schema.botOutbox.id, id))
+      await db.insert(schema.botOutbox).values(fixture(1023))
       const overflow = await queue.notifyBot('client_notify', { chatId: 100, text: 'overflow' }, 'Уведомление клиенту «Тест»').catch(error => error)
       expect(overflow).toMatchObject({ statusCode: 503 })
       expect(await queue.botDeliveries()).toHaveLength(1024)

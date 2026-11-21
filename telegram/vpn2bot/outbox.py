@@ -1,5 +1,6 @@
 """Panel notifications that survive a restart and a Telegram outage; one bot process owns the file."""
 import asyncio
+from contextlib import suppress
 from datetime import timedelta
 import hashlib
 import json
@@ -26,6 +27,8 @@ CREATE TABLE IF NOT EXISTS receipts (delivery_id TEXT PRIMARY KEY, digest TEXT N
 
 # Telegram refused the message for good: dropped and reported to the panel with this status.
 REJECTED = {BadRequest: 400, Forbidden: 403, InvalidToken: 404}
+# Not sent within its lifetime: dropped and reported like a refusal, so a queued message is never lost silently.
+EXPIRED = 504
 
 
 class QueueFull(Exception):
@@ -40,17 +43,31 @@ class Outbox:
         self.db.executescript(SCHEMA)
         Path(path).chmod(0o600)
         self.throttled_until = 0.0
+        self.wake = asyncio.Event()
+        # Outcome of a message somebody waits for: None - sent, a status - dropped (REJECTED, EXPIRED).
+        self.waiting: dict[int, asyncio.Future] = {}
+        self.expired: list[dict] = []
+
+    def settle(self, event_id: int, status: int | None) -> None:
+        future = self.waiting.pop(event_id, None)
+        if future and not future.done():
+            future.set_result(status)
 
     def expire(self, now: float) -> None:
-        count = self.db.execute('DELETE FROM events WHERE expires <= ?', (now,)).rowcount
+        rows = self.db.execute('DELETE FROM events WHERE expires <= ? RETURNING id, payload', (now,)).fetchall()
         self.db.execute('DELETE FROM receipts WHERE expires <= ?', (now,))
-        if count:
-            log.warning('outbox expired=%d', count)
+        if rows:
+            log.warning('outbox expired=%d', len(rows))
+        for event_id, payload in rows:
+            self.expired.append(json.loads(payload))
+            self.settle(event_id, EXPIRED)
 
-    def enqueue(self, payloads: list[dict], delivery_id: str | None = None) -> int:
-        """All payloads or none; a repeated delivery_id with the same payloads returns the first id."""
+    def enqueue(self, payloads: list[dict], delivery_id: str | None = None, ttl: float = TTL_SEC) -> list[int]:
+        """All payloads or none; a repeated delivery_id with the same payloads returns the first ids."""
+        if not payloads:
+            raise ValueError('no messages')
         for payload in payloads:
-            text = payload['text']
+            text = payload['caption'] if 'file' in payload else payload['text']
             if not isinstance(text, str) or not text.strip() or len(text.encode('utf-16-le')) > 8192:
                 raise ValueError('invalid notification text')
         if delivery_id is not None and (not isinstance(delivery_id, str) or not 1 <= len(delivery_id) <= 128):
@@ -64,19 +81,30 @@ class Outbox:
             if receipt:
                 if receipt[0] != digest:
                     raise ValueError('delivery id reused with different payload')
-                return receipt[1]
+                return [receipt[1]]
             if self.db.execute('SELECT count(*) FROM events').fetchone()[0] + len(payloads) > MAX_EVENTS:
                 raise QueueFull()
-            for payload in payloads:
-                event_id = self.db.execute(
-                    'INSERT INTO events (chat_id, payload, expires, due) VALUES (?, ?, ?, ?)',
-                    (payload['chat_id'], json.dumps(payload | ({'delivery_id': delivery_id} if delivery_id else {}), ensure_ascii=False), now + TTL_SEC,
-                     max(now, self.throttled_until))).lastrowid
+            ids = [self.db.execute(
+                'INSERT INTO events (chat_id, payload, expires, due) VALUES (?, ?, ?, ?)',
+                (payload['chat_id'], json.dumps(payload | ({'delivery_id': delivery_id} if delivery_id else {}), ensure_ascii=False), now + ttl,
+                 max(now, self.throttled_until))).lastrowid for payload in payloads]
             if delivery_id is not None:
                 self.db.execute('INSERT INTO receipts VALUES (?, ?, ?, ?)',
-                                (delivery_id, digest, event_id, now + TTL_SEC))
-        log.info('outbox accepted id=%d', event_id)
-        return event_id
+                                (delivery_id, digest, ids[-1], now + TTL_SEC))
+        log.info('outbox accepted id=%d', ids[-1])
+        self.wake.set()
+        return ids
+
+    async def outcome(self, ids: list[int], timeout: float) -> list[int | None] | None:
+        """What became of the messages within `timeout`; None while any of them is still queued."""
+        loop = asyncio.get_running_loop()
+        futures = [self.waiting.setdefault(event_id, loop.create_future()) for event_id in ids]
+        try:
+            done, _ = await asyncio.wait(futures, timeout=timeout)
+        finally:
+            for event_id in ids:
+                self.waiting.pop(event_id, None)
+        return [future.result() for future in futures] if len(done) == len(futures) else None
 
     def claim(self) -> dict | None:
         """The oldest due message of a chat whose earlier messages are all gone; leased before the send."""
@@ -101,9 +129,14 @@ class Outbox:
     async def run(self, send, on_rejected) -> None:
         while True:
             try:
+                self.wake.clear()
                 row = self.claim()
+                while self.expired:
+                    await self.report(on_rejected, self.expired.pop(0), EXPIRED)
                 if row is None:
-                    await asyncio.sleep(0.5)
+                    with suppress(TimeoutError):
+                        async with asyncio.timeout(0.5):
+                            await self.wake.wait()
                     continue
                 await self.deliver(row, send, on_rejected)
             except (sqlite3.Error, OSError):
@@ -114,6 +147,7 @@ class Outbox:
         payload = json.loads(row['payload'])
         # The panel's delivery this message belongs to: its bell row shows the refusal.
         delivery_id = payload.pop('delivery_id', None)
+        rejected = None
         try:
             async with asyncio.timeout(45):
                 await send(**payload)
@@ -136,16 +170,20 @@ class Outbox:
                             row['id'], row['attempts'] + 1, delay, type(error).__name__)
                 return
             log.warning('outbox rejected id=%d status=%d', row['id'], rejected)
-            try:
-                await on_rejected(payload, rejected, delivery_id)
-            except Exception as report_error:
-                log.warning('outbox rejection report failed id=%d error=%s',
-                            row['id'], type(report_error).__name__)
+            await self.report(on_rejected, {**payload, 'delivery_id': delivery_id}, rejected)
         # A sent message is not sent again because its acknowledgement failed to commit.
         while True:
             try:
                 self.remove(row['id'])
-                return
+                break
             except sqlite3.Error:
                 log.error('outbox acknowledgement failed id=%d', row['id'])
                 await asyncio.sleep(1)
+        self.settle(row['id'], rejected)
+
+    @staticmethod
+    async def report(on_rejected, payload: dict, status: int) -> None:
+        try:
+            await on_rejected(payload, status, payload.pop('delivery_id', None))
+        except Exception as error:
+            log.warning('outbox rejection report failed status=%d error=%s', status, type(error).__name__)

@@ -112,10 +112,17 @@ function postBotEvent(body: Record<string, unknown>, timeout: number): Promise<u
   })
 }
 
-export async function sendBotEvent(body: Record<string, unknown>): Promise<void> {
-  await postBotEvent(body, 8000).catch((cause) => {
+/**
+ * Пересылка админу (приглашение, конфиги): бот ждёт ответа Telegram несколько секунд. Не ответил -
+ * сообщение в очереди бота на час, `warning`; отказ Telegram - ошибка, повторов нет.
+ */
+export async function sendBotEvent(body: Record<string, unknown>): Promise<{ warning?: string }> {
+  const ack = await postBotEvent(body, 8000).catch((cause) => {
+    const status = (cause as { data?: { status?: unknown } }).data?.status
+    if (typeof status === 'number') throw createError({ statusCode: 502, statusMessage: 'telegram_rejected', message: `Telegram не принял сообщение бота, код ${status}`, cause })
     throw createError({ statusCode: 502, statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram', cause })
-  })
+  }) as { sent?: boolean } | null
+  return ack?.sent === false ? { warning: 'Telegram не ответил — сообщение в очереди, бот повторит отправку в течение часа' } : {}
 }
 
 const DELAYS = [30, 60, 120, 240, 480].map(seconds => seconds * 1000)
@@ -148,7 +155,8 @@ export async function notifyBot(type: string, payload: Record<string, unknown>, 
     await tx.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
     const [size] = await tx.select({ n: count() }).from(botOutbox)
     if (Number(size?.n) >= CAPACITY) {
-      const [old] = await tx.select({ id: botOutbox.id }).from(botOutbox).where(eq(botOutbox.status, 'accepted')).orderBy(asc(botOutbox.created)).limit(1)
+      // Принятое ботом или уже отмеченное тревогой; ожидающие не вытесняются.
+      const [old] = await tx.select({ id: botOutbox.id }).from(botOutbox).where(ne(botOutbox.status, 'queued')).orderBy(asc(botOutbox.created)).limit(1)
       if (!old) throw createError({ statusCode: 503, message: `${label}: очередь заполнена. Повторов не будет.` })
       await tx.delete(botOutbox).where(eq(botOutbox.id, old.id))
     }

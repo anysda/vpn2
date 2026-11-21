@@ -9,7 +9,6 @@ The panel draws the PNG, the bot only forwards it. fixtures/qr-worst-wg.png is
 the panel's answer for qr-worst-wg.conf, recorded once; app/e2e/qr-size.sh
 passes a fresh pair from a live panel in QR_WORST_CONF and QR_WORST_PNG.
 """
-import asyncio
 import base64
 import os
 from pathlib import Path
@@ -17,16 +16,15 @@ import shutil
 import struct
 import subprocess
 import tempfile
-from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 import zlib
 
 import httpx
 
 from telegram import Bot
 
-from harness import FakeTelegram, import_bot, update
+from harness import FakeTelegram, import_bot, post_event, update
 
 HERE = Path(__file__).resolve().parent
 LIVE = bool(os.environ.get('QR_WORST_PNG'))
@@ -170,12 +168,14 @@ class QrFromPanelTests(unittest.IsolatedAsyncioTestCase):
             'text': 'Панель временно недоступна. Попробуйте позже.'})
 
     async def send_event(self, extra):
-        request = SimpleNamespace(headers={'X-Tgbot-Secret': self.bot.config.SECRET}, json=AsyncMock(
-            return_value={'type': 'client_send_wireguard', 'name': 'ivan-phone', 'conf': self.conf, **extra}))
+        body = {'type': 'client_send_wireguard', 'name': 'ivan-phone', 'conf': self.conf, **extra}
         local, tg = self.clients(self.panel())
-        with local, tg:
-            self.assertEqual((await self.bot.events.handle_event(request)).status, 200)
-            await asyncio.gather(*self.bot.events.sending)
+        with local, tg, tempfile.TemporaryDirectory() as directory:
+            outbox = self.bot.outbox.Outbox(f'{directory}/outbox.sqlite')
+            try:
+                self.assertEqual((await post_event(self.bot, outbox, body, True))[0], 200)
+            finally:
+                outbox.db.close()
         self.assertEqual(self.panel_calls, [])
         return self.methods()
 

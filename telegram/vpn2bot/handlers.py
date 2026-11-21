@@ -231,7 +231,8 @@ async def invite(ask: Ask) -> None:
         await ask.answer('У клиента нет пароля для приглашения', alert=True)
         return
     await ask.answer('Отправляю приглашение…')
-    await events.send_invite(c)
+    for message in events.invite_messages(c):
+        await api.send(**message)
 
 
 async def delete_client_ask(ask: Ask) -> None:

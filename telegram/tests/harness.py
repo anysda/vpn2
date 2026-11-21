@@ -5,6 +5,7 @@ their payloads, panel requests, answers to /event and queued notifications.
 """
 import asyncio
 import copy
+from contextlib import suppress
 import importlib
 import json
 import os
@@ -165,7 +166,17 @@ async def post_event(bot, outbox, body, trusted):
     request = SimpleNamespace(
         headers={'X-Tgbot-Secret': ENV['TGBOT_SECRET'] if trusted else 'wrong'},
         app={bot.events.OUTBOX_KEY: outbox}, json=read_json)
-    response = await bot.events.handle_event(request)
+    if not (trusted and isinstance(body, dict) and body.get('type') in bot.events.FORWARDED):
+        response = await bot.events.handle_event(request)
+        return [response.status, response.text]
+    # The panel waits for Telegram's answer to these: the queue worker runs meanwhile, as in the bot.
+    worker = asyncio.create_task(outbox.run(bot.events.deliver, bot.events.report_rejected))
+    try:
+        response = await bot.events.handle_event(request)
+    finally:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
     return [response.status, response.text]
 
 

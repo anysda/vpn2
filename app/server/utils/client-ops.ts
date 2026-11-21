@@ -44,17 +44,20 @@ function assertExpiryAllowed(expiresAt: string | null | undefined): void {
   }
 }
 
-async function assertNameFree(name: string, exceptId = 0): Promise<void> {
-  const dup = await useDb().select({ id: clients.id }).from(clients).where(and(eq(clients.name, name), ne(clients.id, exceptId))).limit(1)
+async function assertNameFree(name: string, exceptId = 0, db: Pick<ReturnType<typeof useDb>, 'select'> = useDb()): Promise<void> {
+  const dup = await db.select({ id: clients.id }).from(clients).where(and(eq(clients.name, name), ne(clients.id, exceptId))).limit(1)
   if (dup.length) throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${name}» уже существует` })
 }
 
 export async function createClient(input: ClientCreateInput, actor: string): Promise<Client & { warning?: string }> {
   assertExpiryAllowed(input.expiresAt)
   const name = input.name.trim()
-  await assertNameFree(name)
   const values = { ...normalized(input), name, filterTraffic: input.filterTraffic ?? true, password: generatePassword() }
-  const [row] = (await useDb().insert(clients).values(values).returning()) as [Client]
+  // Уникального индекса на имени нет (в базах 1.2.0 бывают двойники): проверка и вставка - одной транзакцией.
+  const row = await useDb().transaction(async (tx) => {
+    await assertNameFree(name, 0, tx)
+    return (await tx.insert(clients).values(values).returning())[0] as Client
+  }, { behavior: 'immediate' })
   // Клиент уже создан: сбой очереди бота - предупреждение в ответе, не ошибка.
   const warning = await notifyWarning(notifyBot('client_created', { name: row.name }), 'Уведомление о клиенте не отправлено')
   await recordEvent({ type: 'client_created', level: 'info', object: `client:${row.id}`, actor, title: `Клиент создан · ${row.name}`, detail: actor })

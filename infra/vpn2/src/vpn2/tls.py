@@ -12,8 +12,10 @@ This command, run once a minute by vpn2-tls.timer:
 """
 
 import argparse
+import contextlib
 import grp
 import hashlib
+import io
 import ipaddress
 import json
 import os
@@ -451,10 +453,12 @@ def install_caddy():
 
 def ip_certificate(host, wait=60, acme_url=LE, acme_root=''):
     """The panel HTTPS site on the entry IP before any stage: a CA certificate within `wait`
-    seconds, else the self-signed pair. Returns the self-signed fingerprint, '' for a CA one."""
-    main(['--prepare', '--host', host, '--acme-url', acme_url, '--acme-root', acme_root])
-    subprocess.run(['systemctl', 'reload-or-restart', 'caddy'], check=True, capture_output=True, timeout=60)
-    main(['--initial', '--wait', str(wait)])
+    seconds, else the self-signed pair. Returns the self-signed fingerprint, '' for a CA one.
+    Silent: the caller prints the outcome to the human."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        main(['--prepare', '--host', host, '--acme-url', acme_url, '--acme-root', acme_root])
+        subprocess.run(['systemctl', 'reload-or-restart', 'caddy'], check=True, capture_output=True, timeout=60)
+        main(['--initial', '--wait', str(wait)])
     return read_json('/etc/vpn2/tls/state.json', {}).get('self_signed', '')
 
 

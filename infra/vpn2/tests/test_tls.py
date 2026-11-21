@@ -323,10 +323,11 @@ def test_initial_wait_ends_on_refusal_and_is_skipped_while_refusal_is_latched(tm
         assert sleep.called, 'новый хост ждёт первый выпуск'
 
 
-def test_ip_certificate_prepares_the_ip_site_and_returns_the_self_signed_fingerprint(tmp_path):
+def test_ip_certificate_prepares_the_ip_site_and_returns_the_self_signed_fingerprint(tmp_path, capsys):
     calls = []
     state = tmp_path / 'state.json'
-    with patch.object(tls, 'main', side_effect=lambda argv: calls.append(argv[0])), \
+    # Мастер печатает итог своим блоком: сырая строка TLS с текстом ACME в терминал не идёт.
+    with patch.object(tls, 'main', side_effect=lambda argv: calls.append(argv[0]) or print('TLS: ACME: certificate operation failed')), \
             patch.object(tls.subprocess, 'run') as run, patch.object(tls, 'read_json',
                                                                     side_effect=lambda *_args: json.loads(state.read_text())):
         state.write_text(json.dumps({'self_signed': 'AB:CD'}))
@@ -334,6 +335,7 @@ def test_ip_certificate_prepares_the_ip_site_and_returns_the_self_signed_fingerp
         state.write_text('{}')
         assert tls.ip_certificate('192.0.2.1') == ''
     assert calls == ['--prepare', '--initial'] * 2
+    assert capsys.readouterr().out == ''
     assert run.call_args_list[0].args[0] == ['systemctl', 'reload-or-restart', 'caddy']
     with pytest.raises(ValueError):
         tls.serve_routes('../x', 'route {}')

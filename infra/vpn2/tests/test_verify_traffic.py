@@ -235,6 +235,67 @@ class OpenVPNManagementTests(unittest.TestCase):
         self.assertEqual(euid, [0])
 
 
+class OpenVPNSessionCleanupTests(unittest.TestCase):
+    """Сессия временного клиента на сервере живёт до ping-restart 60 с после его остановки: следующий
+    запуск с того же 169.254.253.6:порт попадал в неё с новым CN и получал AUTH_FAILED."""
+
+    def test_cleanup_ends_server_sessions_of_verify_clients(self):
+        sessions = {'vpn2-verify-0a1b2c3d-b': '169.254.253.6:48905', 'phone': '203.0.113.5:1194'}
+
+        def management(*commands):
+            for command in commands:
+                if command.startswith('kill '):
+                    sessions.pop(command[5:], None)
+            return ''.join(f'CLIENT_LIST,{cn},{addr},10.67.67.2,,0,0\n' for cn, addr in sessions.items()) + 'END\n'
+
+        def run(*args, **_):
+            return subprocess.CompletedProcess(args, 0, '', '')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            with mock.patch.multiple(vt, run=run, management=management, manual_markers=mock.Mock(),
+                                     CCD=tmp / 'ccd', SWAN_FILE=tmp / 'swan.conf', WORK=tmp / 'work',
+                                     MANUAL_DIR=tmp / 'manual'), \
+                    mock.patch.object(vt.time, 'sleep', lambda _s: None):
+                sessions_left = vt.verify_sessions()
+                vt.cleanup()
+                self.assertEqual(vt.verify_sessions(), [])
+        self.assertEqual(sessions_left, ['vpn2-verify-0a1b2c3d-b'])
+        self.assertEqual(list(sessions), ['phone'])
+
+
+class ManagementReplyTests(unittest.TestCase):
+    """Настоящий дочерний процесс и сокет: quit в том же чтении, что команда, openvpn обрывает без ответа."""
+
+    def serve(self, path, sessions):
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(path)
+        server.listen(1)
+
+        def answer():
+            connection, _ = server.accept()
+            with connection, server:
+                connection.sendall(b'>INFO:OpenVPN Management Interface Version 5\r\n')
+                while (chunk := connection.recv(4096).decode()) and 'quit' not in chunk:
+                    if chunk.startswith('status 2'):
+                        rows = ''.join(f'CLIENT_LIST,{cn},169.254.253.6:48905,10.67.67.251,,0,0\r\n' for cn in sessions)
+                        connection.sendall(f'TITLE,OpenVPN 2.7\r\nHEADER,CLIENT_LIST,Common Name\r\n{rows}END\r\n'.encode())
+                    else:
+                        connection.sendall(b'SUCCESS: common name found, 1 client(s) killed\r\n')
+
+        thread = threading.Thread(target=answer, daemon=True)
+        thread.start()
+        return thread
+
+    def test_status_reply_arrives_before_quit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'mgmt.sock')
+            thread = self.serve(path, ['vpn2-verify-0a1b2c3d-b', 'dev_7'])
+            with mock.patch.multiple(vt, MGMT=path, MANAGED=Path(tmp) / 'api-managed'):
+                self.assertEqual(vt.verify_sessions(), ['vpn2-verify-0a1b2c3d-b'])
+            thread.join(5)
+
+
 class CleanupLinkDownTests(unittest.TestCase):
     def cleanup_calls(self):
         calls = []

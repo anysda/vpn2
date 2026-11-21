@@ -616,8 +616,17 @@ def stale_peers():
     return [key for path in WORK.glob('wg-*.pub') if (key := path.read_text().strip()) in peers]
 
 
+def verify_sessions():
+    """CN временных клиентов, чьи сессии ещё живут на сервере OpenVPN."""
+    with contextlib.suppress(OSError, RuntimeError, subprocess.SubprocessError):
+        return sorted({row.split(',')[1] for row in management('status 2').splitlines()
+                       if row.startswith('CLIENT_LIST,vpn2-verify-')})
+    return []
+
+
 def leftovers():
     return [name for name, present in (
+        ('сессия OpenVPN', bool(verify_sessions())),
         ('netns', bool({net.name for net in NETS} & set(run('ip', 'netns', 'list', check=False).stdout.split()))),
         ('veth', any(run('ip', 'link', 'show', net.host_if, check=False).returncode == 0 for net in NETS)),
         ('conn IKEv2', SWAN_FILE.exists()),
@@ -642,6 +651,13 @@ def cleanup(protocols=()):
     settle = time.monotonic() + 1
     for path in CCD.glob('vpn2-verify-*'):
         path.unlink(missing_ok=True)
+    # Остановленный клиент сервер забывает только по ping-restart через 60 с; следующий запуск
+    # с того же адреса и порта попал бы в его сессию с чужим CN.
+    deadline = time.monotonic() + 5
+    while (names := verify_sessions()) and time.monotonic() < deadline:
+        with contextlib.suppress(OSError, RuntimeError, subprocess.SubprocessError):
+            management(*(f'kill {name}' for name in names))
+        time.sleep(0.3)
     if SWAN_FILE.exists():
         SWAN_FILE.unlink()
         run('swanctl', '--load-all', '--noprompt', check=False)

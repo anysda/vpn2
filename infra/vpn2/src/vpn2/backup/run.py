@@ -250,7 +250,7 @@ def upload_s3(settings, final, key, retention):
     keys = sorted(name for name, *_rest in rows)
     if not keys:
         raise Stop(listed or 1, _named('rclone', listed, list_why) if listed else 'архива нет в списке бакета')
-    for name in keys[:len(keys) - retention] if retention > 0 else keys:
+    for name in keys[:max(len(keys) - retention, 0)] if retention is not None else ():
         if name == key:
             continue
         rc, _out, why = env.s3(settings, 'deletefile', 's3:' + name)
@@ -267,7 +267,8 @@ def _make(settings, paths, enter, check, pause, wait):
     if not (recipient := keys.recipient(root or '/')):
         sys.stderr.write(FATAL_TEXT.format(public=f'/{keys.PUBLIC}'))
         raise Stop(2, reason='нет ключа шифрования')
-    retention = int(settings.retention) if settings.retention.isdecimal() else 0
+    # Негодное число из config.yaml до проверки деплоем: архив снимается, старые не удаляются.
+    retention = int(settings.retention) if re.fullmatch(r'[0-9]+', settings.retention) else None
     enter('каталог для архива не подготовлен')
     os.makedirs(settings.local_dir, exist_ok=True)
     os.chmod(settings.local_dir, 0o700)
@@ -295,13 +296,18 @@ def _make(settings, paths, enter, check, pause, wait):
         shutil.move(work / f'{name}.tar.gz.age', final)
         os.chmod(final, 0o600)
         enter('старые архивы не убраны')
-        rotate_local(settings.local_dir, final, retention)
+        if retention is not None:
+            rotate_local(settings.local_dir, final, retention)
         if settings.backend == 's3':
             enter('выгрузка в S3 не прошла')
             upload_s3(settings, final, f'{name}.tar.gz.age', retention)
+    if retention is None:
+        warning = '; '.join(filter(None, (warning, f'backup.retention «{settings.retention}» - не целое число: '
+                                                   'старые архивы не удалены, исправь config.yaml')))
     print(f"\n{'backup:':<12} {final}\n{'size:':<12} {os.path.getsize(final)} bytes\n"
           f"{'hash:':<12} {archive.sha_file(final)}\n"
-          f"{'backend:':<12} {settings.backend}\n{'retention:':<12} keep last {settings.retention}")
+          f"{'backend:':<12} {settings.backend}\n{'retention:':<12} "
+          + (f'keep last {retention}' if retention is not None else 'keep all'))
     if warning:
         print(f"{'warning:':<12} {warning}")
     return warning

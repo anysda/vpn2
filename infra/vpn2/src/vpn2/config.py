@@ -154,7 +154,8 @@ def _scalar(node, key):
     if key.startswith('entry_resources.') and key != 'entry_resources.adaway_enabled' and (
             not value.isdigit() or (key.endswith('.retention_days') and int(value) == 0)):
         raise ConfigError(key, 'ожидается целое число' + (' > 0' if key.endswith('retention_days') else ' >= 0'))
-    if key.startswith('failover.') and not re.fullmatch(r'[0-9]+', value):
+    # backup.retention пустой - по умолчанию 10; 0 - остаётся только новый архив.
+    if (key.startswith('failover.') or key == 'backup.retention' and value) and not re.fullmatch(r'[0-9]+', value):
         raise ConfigError(key, 'ожидается целое число >= 0' + (', секунды' if key.endswith('interval') else ''))
     return value
 

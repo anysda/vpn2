@@ -197,6 +197,41 @@ S3 = {'BACKUP_BACKEND': 's3', 'BACKUP_S3_BUCKET': 'b', 'BACKUP_S3_ENDPOINT': 'ht
       'ANYSDA_S3_ACCESS_KEY': 'access-key', 'ANYSDA_S3_SECRET_KEY': 'secret-key'}
 
 
+def old_archives(root, monkeypatch):
+    old = [f'anysda-vpn2-2020-01-0{n}T000000Z.tar.gz.age' for n in (1, 2, 3)]
+    for name in old:
+        put(root / 'out dir' / name, 'x')
+    put(root / 's3', ''.join(f'  10 2020-01-0{n} 00:00:00.000000000 {name}\n' for n, name in enumerate(old, 1)))
+    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3'))
+    return old
+
+
+@needs_tools
+@pytest.mark.parametrize('retention', ['30d', '-1', '1.5'])
+def test_bad_retention_deletes_nothing_and_says_why(node, monkeypatch, capsys, retention):
+    """VPN2-992: негодный backup.retention из прежнего config.yaml - архив снят, старые целы локально и в S3."""
+    root, paths, events = node
+    old = old_archives(root, monkeypatch)
+    assert create(root, paths, values(root, **S3, BACKUP_RETENTION=retention)) == 4
+    assert all((root / 'out dir' / name).exists() for name in old)
+    assert not [line for line in (root / 'log').read_text().splitlines() if ' deletefile ' in line]
+    why = f'backup.retention «{retention}» - не целое число: старые архивы не удалены, исправь config.yaml'
+    assert f"{'warning:':<12} {why}" in capsys.readouterr().out
+    assert [event for event, _kw in events] == [{'type': 'backup_warning', 'detail': why}]
+
+
+@needs_tools
+@pytest.mark.parametrize(('retention', 'gone'), [('0', 3), ('5', 0)])
+def test_retention_count_local_and_s3(node, monkeypatch, retention, gone):
+    """0, как в 1.2.0: остаётся только новый архив; больше, чем архивов, - не удаляется ни один."""
+    root, paths, _events = node
+    old = old_archives(root, monkeypatch)
+    assert create(root, paths, values(root, **S3, BACKUP_RETENTION=retention)) == 0
+    assert [name for name in old if not (root / 'out dir' / name).exists()] == old[:gone]
+    assert [f'rclone deletefile s3:b/{name}' for name in old[:gone]] == [
+        line for line in (root / 'log').read_text().splitlines() if ' deletefile ' in line]
+
+
 @needs_tools
 @pytest.mark.parametrize(('extra', 'stub_env', 'code', 'detail'), [
     ({}, {'STUB_AGE_FAIL': '7'}, 7, 'упаковка и шифрование не прошли: age: код выхода 7'),

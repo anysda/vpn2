@@ -108,3 +108,16 @@ def test_markup_value_refused_with_key_line_and_quote_hint(value):
     assert 'строка 4' in caught.value.reason and 'заключите значение в кавычки' in caught.value.reason
     quoted = "'" + value.replace("'", "''") + "'"
     assert config.loads(text.format(quoted)).raw['admin']['password'] == value
+
+
+@pytest.mark.parametrize('value', ['30d', '-1', '1.5', '"30d"', "' 3'", '٣'])
+def test_backup_retention_not_a_count_refused(value):
+    """VPN2-992: опечатка в backup.retention - отказ с ключом, а не ротация «оставить 0»."""
+    with pytest.raises(config.ConfigError) as caught:
+        config.loads(f'entry:\n  host: 192.0.2.1\nbackup:\n  retention: {value}\n')
+    assert (caught.value.key, caught.value.reason) == ('backup.retention', 'ожидается целое число >= 0')
+
+
+@pytest.mark.parametrize(('value', 'read'), [('30', '30'), ('"30"', '30'), ('0', '0'), ('', '')])
+def test_backup_retention_count_accepted(value, read):
+    assert config.loads(f'entry:\n  host: 192.0.2.1\nbackup:\n  retention: {value}\n').raw['backup']['retention'] == read

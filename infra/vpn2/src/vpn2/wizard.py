@@ -256,6 +256,12 @@ class Wizard:
         row = next((item for item in draft['exits'] if item['tag'] == tag), None)
         if not row:
             raise Refusal(400, f'Экзита {tag} нет в списке')
+        from vpn2.manager import Manager
+        with self.lock:
+            # config.yaml без единого задания менеджера - след неудачного запуска установки (отказ, неверный файл):
+            # проверка не сверяет с ним теги, «Установить» запишет его заново.
+            if not self.meta().get('job') and not any(Manager().jobs.glob('*/job.json')):
+                self.config.unlink(missing_ok=True)
         problems = self.manager('exit.check', {'tag': tag, 'host': row['host']})['problems']
         with self.lock:
             draft = self.draft()
@@ -316,14 +322,15 @@ class Wizard:
 
     # --- установка ---
     def config_text(self, draft):
+        # Каждое значение в кавычках: без них YAML читает no, null, 123 не строкой, а config.yaml их отвергает.
         q = json.dumps
         entry = read_json(STATE / 'entry.json', {}).get('host', '')
         lines = ['# Записан мастером установки. Секреты - в хранилище entry, не здесь.',
-                 'entry:', f'  host: {entry}', 'exits:']
-        lines += [f'  - tag: {row["tag"]}\n    host: {q("root@" + row["host"])}' for row in draft['exits'] if not row['skipped']]
-        lines += ['admin:', f'  user: {draft["panel"]["admin_user"]}', f'  ssh_pubkey: {q(draft["admin_ssh_key"])}']
+                 'entry:', f'  host: {q(entry)}', 'exits:']
+        lines += [f'  - tag: {q(row["tag"])}\n    host: {q("root@" + row["host"])}' for row in draft['exits'] if not row['skipped']]
+        lines += ['admin:', f'  user: {q(draft["panel"]["admin_user"])}', f'  ssh_pubkey: {q(draft["admin_ssh_key"])}']
         if draft['panel']['domain']:
-            lines += ['panel:', f'  domain: {draft["panel"]["domain"]}']
+            lines += ['panel:', f'  domain: {q(draft["panel"]["domain"])}']
         if draft['telegram']['enabled']:
             lines += ['telegram:', f'  chat_id: {q(draft["telegram"]["chat_id"])}']
         if draft['youtube']:

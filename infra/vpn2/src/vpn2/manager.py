@@ -237,9 +237,10 @@ class Manager:
         задания: журнал выпуска, что оно оставило открытым, доводится, как у ./deploy.sh recover."""
         folder = self.folder(job['id'])
         original = self.config.read_text()
+        # Неверный файл - отказ до записи: состав до прошлой попытки задания остаётся.
+        exits = self.exits(original) + ([(job['tag'], job['host'])] if job['kind'] == 'add' else [])
         (folder / 'config.orig').write_text(original)
         (folder / 'config.orig').chmod(0o600)
-        exits = self.exits(original) + ([(job['tag'], job['host'])] if job['kind'] == 'add' else [])
         wanted = [item for item in exits if item[0] not in job['skipped'] and not (job['kind'] == 'remove' and item[0] == job['tag'])]
         if wanted != self.exits(original):
             config.set_exits(self.config, wanted)
@@ -272,10 +273,11 @@ class Manager:
             raise Refused('прошлый деплой упал на середине: сначала полная установка')
         if not self.config.is_file():
             raise Refused('config.yaml не заполнен')
+        # Неверный config.yaml - отказ до папки задания.
+        found = dict(self.exits())
         if kind == 'add' and (problems := self.problems(tag, host)):
             raise Refused('; '.join(problems))
         if kind == 'remove':
-            found = dict(self.exits())
             if tag not in found:
                 raise Refused(f'экзита {tag} нет в config.yaml')
             if len(found) == 1:
@@ -423,7 +425,7 @@ class Manager:
     def watch(self):
         """Задание кончилось без читателя: итог и возврат config.yaml сразу, а не при первом чтении."""
         while True:
-            with self.mutex, contextlib.suppress(OSError, ValueError):
+            with self.mutex, contextlib.suppress(OSError, ValueError, config.ConfigError):
                 self.load(0)
             threading.Event().wait(5)
 
@@ -444,7 +446,7 @@ def answer(manager, line):
         method, params = validate(json.loads(line))
         try:
             return {'api': API, 'ok': True, 'result': manager.execute(method, params)}
-        except Refused as refusal:
+        except (Refused, config.ConfigError) as refusal:
             return {'api': API, 'ok': True, 'result': {'refused': str(refusal)}}
     except (Invalid, ValueError, TypeError, RecursionError):
         return {'api': API, 'ok': False, 'error': 'validation'}

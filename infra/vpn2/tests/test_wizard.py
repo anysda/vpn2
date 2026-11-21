@@ -365,3 +365,42 @@ def test_admin_password_reaches_the_deploy_and_leaves_after_the_panel_stage(tmp_
     assert (tmp_path / 'handover/admin_password').exists(), 'стадии панели не было: пароль ещё нужен повтору'
     deploy.finish_secrets(panel=True)
     assert not (tmp_path / 'handover/admin_password').exists()
+
+
+@pytest.mark.parametrize('word', ['no', 'on', 'off', 'yes', 'true', 'null', 'y', 'e1'])
+def test_every_value_reads_back_from_config_yaml_the_same(setup, word):
+    """Значения мастера, что YAML без кавычек прочёл бы не строкой или разметкой, - в config.yaml те же."""
+    _client, _fake, wiz, tmp = setup
+    (tmp / 'state/entry.json').write_text(json.dumps({'host': f' {word}: #"é" '}))
+    part = wiz.check_draft({'exits': [{'tag': word, 'host': '198.51.100.7', 'skipped': False}], 'admin_ssh_key': f'{KEY} {word}: #"ü"',
+                            'panel': {'domain': f'{word}.example.com', 'admin_user': word},
+                            'telegram': {'enabled': True, 'chat_id': '123'}, 'backup': {'target': 's3', 's3': {
+                                'endpoint': f'https://s3.example.com/{word}:#"\'x', 'bucket': f'{word}-1e3', 'region': '0x10'}}})
+    draft = {**wizard.DRAFT, **part}
+    cfg = config.loads(wiz.config_text(draft))
+    assert cfg.entry.host == f' {word}: #"é" ' and [(node.tag, node.host) for node in cfg.exits] == [(word, '198.51.100.7')]
+    assert cfg.raw['admin'] == {'user': word, 'ssh_pubkey': draft['admin_ssh_key']}
+    assert cfg.raw['panel'] == {'domain': f'{word}.example.com'} and cfg.raw['telegram'] == {'chat_id': '123'}
+    assert cfg.raw['backup']['s3'] == draft['backup']['s3']
+
+
+def test_entry_stuck_after_a_refused_install_recovers_by_installing_again(setup, monkeypatch):
+    """config.yaml прошлой неудачной установки (без кавычек, его отверг менеджер) не мешает: проверка экзита
+    его не видит, «Установить» пишет заново."""
+    client, fake, wiz, tmp = setup
+    client.login(wizard.new_link())
+    filled(client)
+    stuck = 'entry:\n  host: 192.0.2.1\nexits:\n  - tag: no\n    host: "root@198.51.100.7"\n'
+    wiz.config.write_text(stuck)
+    jobs = tmp / 'manager/jobs'
+    (jobs / '1').mkdir(parents=True)
+    monkeypatch.setattr(manager, 'Manager', lambda: type('M', (), {'jobs': jobs})())
+    # Задание менеджера есть (ответ на «Установить» потерян): файл его, не трогается.
+    (jobs / '1/job.json').write_text('{}')
+    assert client('POST', '/api/exit/check', {'tag': 'nl'}) == (200, {'problems': []})
+    assert wiz.config.read_text() == stuck
+    (jobs / '1/job.json').unlink()
+    assert client('PUT', '/api/draft', {'exits': [{'tag': 'no', 'host': '198.51.100.7', 'skipped': False}]})[0] == 200
+    assert client('POST', '/api/exit/check', {'tag': 'no'}) == (200, {'problems': []}) and not wiz.config.exists()
+    assert client('POST', '/api/install')[0] == 200
+    assert [node.tag for node in config.loads(wiz.config.read_text()).exits] == ['no']

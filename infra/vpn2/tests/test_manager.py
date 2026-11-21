@@ -422,3 +422,42 @@ def test_service_of_stage_29_keeps_the_development_mode_for_jobs(env):
         control_infra='/opt/anysda-vpn2/infra', control_vpn2='/opt/vpn2/venv/bin/vpn2', vpn2_env=env)
     assert ('\nEnvironment=VPN2_DEVELOPMENT=true\n' in unit) == (env.get('VPN2_DEVELOPMENT') == 'true')
     assert 'VPN2_DEVELOPMENT' in unit or 'Environment=DEPLOY_ROOT=/opt/anysda-vpn2/infra\nExecStart=' in unit
+
+
+BROKEN = {'by hand': CONFIG.replace('tag: se', 'tag: no'), 'empty': '',
+          'half-written': 'entry:\n  host: "192.0.2.1"\nexits:\n  - tag: "se'}
+
+
+@pytest.mark.parametrize('broken', BROKEN.values(), ids=BROKEN)
+def test_broken_config_is_a_refusal_and_the_service_stays_up(fake, monkeypatch, broken):
+    """Каждое действие, что читает config.yaml, - отказ словами; служба и её сторож живы, файл исправлен - работа идёт."""
+    monkeypatch.setattr(manager, 'callers', lambda: {os.getuid()})
+    call(fake, 'install.run')
+    fake.end(1)
+    assert call(fake, 'job.read', job=1)['state'] == 'failed'
+    fake.config.write_text(broken)
+    path = Path(f'/tmp/vpn2-manager-test-{os.getpid()}.sock')
+    threading.Thread(target=manager.serve, args=(fake, path), daemon=True).start()
+    for _ in range(100):
+        if path.exists():
+            break
+        time.sleep(0.02)
+    try:
+        refused = [manager.call(method, params, path)['result'].get('refused', '') for method, params in (
+            ('job.retry', {'job': 1}), ('job.skip', {'job': 1, 'tag': 'at'}), ('job.forget', {'job': 1}),
+            ('exit.check', {'tag': 'nl', 'host': '192.0.2.9'}), ('exit.add', {'tag': 'nl', 'host': '192.0.2.9'}),
+            ('exit.remove', {'tag': 'at'}), ('status.read', {}), ('install.run', {}))]
+        assert [text.startswith('config.yaml: ') for text in refused] == [True, True, False, *[True] * 5], refused
+        assert fake.latest() == 1 and fake.spawned == [[]], 'отказ - до папки и процесса задания'
+        # Задание, чей процесс пропал при неверном файле: чтение - отказ, сторож жив.
+        fsutil.write_json(fake.folder(1) / 'job.json', {**fsutil.read_json(fake.folder(1) / 'job.json'), 'state': 'running'})
+        assert manager.call('job.read', {'job': 1}, path)['result']['refused'].startswith('config.yaml: ')
+        watch = threading.Thread(target=fake.watch, daemon=True)
+        watch.start()
+        time.sleep(0.2)
+        assert watch.is_alive()
+        fake.config.write_text(CONFIG)
+        assert manager.call('job.read', {'job': 1}, path)['result']['state'] == 'failed'
+        assert manager.call('status.read', {}, path)['result']['nodes'][1]['tag'] == 'se'
+    finally:
+        path.unlink(missing_ok=True)

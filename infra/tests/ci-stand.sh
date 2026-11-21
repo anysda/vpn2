@@ -1559,7 +1559,7 @@ cmd_exit_toggle() {
   check 'сторож: «выключены вручную: нет»' watchdog_says "$again" 'выключены вручную: нет'
   state=$(exit_state)
   check "панель: $EXIT_TAG включён и в работе: $state" test "$state" = 'disabled=false active=true'
-  out=$(ssh_node "$ENTRY" "journalctl -u anysda-failover-watchdog --since @$since -o cat --no-pager | grep -F 'таких узлов нет'")
+  out=$(ssh_node "$ENTRY" "journalctl -u anysda-failover-watchdog --since @$since -o cat --no-pager | grep -F 'таких узлов нет'" || true)
   check "в журнале сторожа нет «таких узлов нет»: ${out:-пусто}" test -z "$out"
   return "$rc"
 }

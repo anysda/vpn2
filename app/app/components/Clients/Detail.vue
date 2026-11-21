@@ -62,11 +62,14 @@ async function save(patch: Parameters<typeof updateClient>[1], done: string, fai
   return true
 }
 
+// Сбой сохранения возвращает сохранённое значение, если поле ещё показывает отправленное.
 async function saveName() {
   const el = nameEl.value!
+  const id = d.value!.id
   const v = (el.textContent ?? '').trim()
   if (!v || v === d.value!.name) el.textContent = d.value!.name
   else if (await save({ name: v }, 'Имя сохранено')) el.textContent = v
+  else if (d.value?.id === id && (el.textContent ?? '').trim() === v) el.textContent = d.value.name
 }
 
 async function saveExpiry() {
@@ -78,14 +81,19 @@ async function saveExpiry() {
     return
   }
   const ms = (iso: string | null) => iso ? new Date(iso).getTime() : null
-  if (ms(next) !== ms(d.value!.expiresAt) && await save({ expiresAt: next }, 'Срок действия сохранён')) await load()
+  const id = d.value!.id
+  if (ms(next) === ms(d.value!.expiresAt)) return
+  if (await save({ expiresAt: next }, 'Срок действия сохранён')) await load()
+  else if (d.value?.id === id && expDraft.value.trim() === raw) expDraft.value = expText(d.value)
 }
 
 const minLimit = computed(() => Math.max(1, d.value?.devices.length ?? 0))
 async function saveLimit(next: number | null, quiet = true) {
   limDraft.value = next === null ? '' : String(next)
-  if (next === d.value!.deviceLimit) return
-  if (!await save({ deviceLimit: next }, 'Лимит девайсов сохранён', 'Ошибка сохранения лимита', quiet)) limDraft.value = limText(d.value!)
+  if (next === d.value!.deviceLimit) return true
+  if (await save({ deviceLimit: next }, 'Лимит девайсов сохранён', 'Ошибка сохранения лимита', quiet)) return true
+  limDraft.value = limText(d.value!)
+  return false
 }
 function typedLimit() {
   const n = limDraft.value.trim() ? Number.parseInt(limDraft.value, 10) : null
@@ -93,7 +101,28 @@ function typedLimit() {
   toast.add({ title: `Лимит — не меньше ${minLimit.value}`, color: 'error' })
   limDraft.value = limText(d.value!)
 }
-const stepLimit = (by: number) => saveLimit(d.value!.deviceLimit === null ? minLimit.value : d.value!.deviceLimit + by)
+// «+»/«−» считают от числа на экране: нажатия во время сохранения не теряются, уходит одно последнее.
+let stepTo: number | undefined
+let stepping = false
+async function stepLimit(by: number) {
+  const typed = Number.parseInt(limDraft.value, 10)
+  const shown = Number.isFinite(typed) ? typed : d.value!.deviceLimit
+  stepTo = shown === null ? minLimit.value : Math.max(minLimit.value, shown + by)
+  limDraft.value = String(stepTo)
+  if (stepping) return
+  stepping = true
+  const id = d.value!.id
+  try {
+    while (stepTo !== undefined && d.value?.id === id) {
+      const next = stepTo
+      stepTo = undefined
+      if (!await saveLimit(next)) stepTo = undefined
+    }
+  }
+  finally {
+    stepping = false
+  }
+}
 
 async function saveExit(e: Event) {
   const el = e.target as HTMLSelectElement
@@ -215,7 +244,7 @@ async function addDev() {
     <div class="crw">
       <span>Лимит девайсов<template v-if="d.deviceLimit === null"> · <b>лимит снят (∞)</b></template></span>
       <div class="stp">
-        <button type="button" aria-label="Меньше" :disabled="d.deviceLimit !== null && d.deviceLimit <= minLimit" @click="stepLimit(-1)">
+        <button type="button" aria-label="Меньше" :disabled="Number.parseInt(limDraft, 10) <= minLimit" @click="stepLimit(-1)">
           −
         </button>
         <input

@@ -778,6 +778,48 @@ test.describe('create-concurrency', () => {
     }
   })
 
+  test('VPN2-996: упавшее сохранение возвращает сохранённое, двойной «+» во время сохранения прибавляет 2', async ({ page, guard }) => {
+    await openHome(page, '/clients')
+    const name = uniq('save-fail')
+    const created = await page.request.post('/api/clients', { data: { name, deviceLimit: 3 } })
+    expect(created.status()).toBe(200)
+    const url = `/api/clients/${(await created.json()).id}`
+    const patch = new RegExp(`${url}$`)
+    try {
+      const panel = await openClient(page, name)
+      guard.allow(500, patch, 'PATCH')
+      await page.route(patch, route => route.request().method() === 'PATCH'
+        ? route.fulfill({ status: 500, json: { message: 'Панель временно недоступна' } })
+        : route.fallback())
+      await clientName(panel).click()
+      await clientName(panel).fill(`${name}-x`)
+      await clientName(panel).press('Enter')
+      await expect(clientName(panel)).toHaveText(name)
+      const expiry = panel.getByLabel('Истекает')
+      await expiry.fill('01.01.2031')
+      await expiry.press('Enter')
+      await expect(expiry).toHaveValue('')
+      await page.unroute(patch)
+
+      // Второе нажатие приходит, пока первое сохранение ещё идёт.
+      await page.route(patch, async (route) => {
+        if (route.request().method() !== 'PATCH') return route.fallback()
+        await new Promise(resolve => setTimeout(resolve, 700))
+        await route.fallback()
+      })
+      const plus = panel.getByRole('button', { name: 'Больше' })
+      await plus.click()
+      await plus.click()
+      await expect(panel.getByLabel('Лимит девайсов')).toHaveValue('5')
+      await expect.poll(async () => (await (await page.request.get(url)).json()).deviceLimit).toBe(5)
+      await panel.getByRole('button', { name: 'Меньше' }).click()
+      await expect.poll(async () => (await (await page.request.get(url)).json()).deviceLimit).toBe(4)
+    }
+    finally {
+      await page.request.delete(url)
+    }
+  })
+
   test('параллельные новые устройства соблюдают лимит клиента', async ({ page }) => {
     await loginApi(page)
     const created = await page.request.post('/api/clients', { data: { name: uniq('create-limit'), deviceLimit: 1 } })

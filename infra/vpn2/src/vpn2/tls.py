@@ -451,15 +451,17 @@ def install_caddy():
         raise RuntimeError('caddy: установка не прошла')
 
 
-def ip_certificate(host, wait=60, acme_url=LE, acme_root=''):
+def ip_certificate(host, wait=60, acme_url=LE, acme_root='', config='/etc/vpn2/tls/config.json',
+                   state='/etc/vpn2/tls/state.json'):
     """The panel HTTPS site on the entry IP before any stage: a CA certificate within `wait`
     seconds, else the self-signed pair. Returns the self-signed fingerprint, '' for a CA one.
-    Silent: the caller prints the outcome to the human."""
-    with contextlib.redirect_stdout(io.StringIO()):
-        main(['--prepare', '--host', host, '--acme-url', acme_url, '--acme-root', acme_root])
-        subprocess.run(['systemctl', 'reload-or-restart', 'caddy'], check=True, capture_output=True, timeout=60)
-        main(['--initial', '--wait', str(wait)])
-    return read_json('/etc/vpn2/tls/state.json', {}).get('self_signed', '')
+    Stage 30 already moved the panel to a domain: its site stays as is. Silent: the caller prints the outcome."""
+    if is_ip(read_json(config, {}).get('host') or host):
+        with contextlib.redirect_stdout(io.StringIO()):
+            main(['--prepare', '--host', host, '--acme-url', acme_url, '--acme-root', acme_root])
+            subprocess.run(['systemctl', 'reload-or-restart', 'caddy'], check=True, capture_output=True, timeout=60)
+            main(['--initial', '--wait', str(wait)])
+    return read_json(state, {}).get('self_signed', '')
 
 
 def serve_routes(name, routes, caddy_dir='/etc/caddy', site=''):

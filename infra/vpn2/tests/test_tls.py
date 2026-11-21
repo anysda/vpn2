@@ -341,6 +341,16 @@ def test_ip_certificate_prepares_the_ip_site_and_returns_the_self_signed_fingerp
         tls.serve_routes('../x', 'route {}')
 
 
+def test_ip_certificate_keeps_the_panel_already_on_a_domain(tmp_path):
+    """VPN2-991: повтор мастера после стадии 30 с доменом - конфиг TLS и Caddyfile панели домена не переписываются на IP."""
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'role': 'panel', 'host': 'vpn.example.com'}))
+    with patch.object(tls, 'main') as main, patch.object(tls.subprocess, 'run') as run:
+        assert tls.ip_certificate('192.0.2.1', config=config, state=tmp_path / 'state.json') == ''
+    main.assert_not_called()
+    run.assert_not_called()
+
+
 def test_install_caddy_runs_the_pinned_installer_and_fails_loudly():
     from vpn2 import deploy
     with patch.object(deploy, 'svc', return_value=0) as svc:

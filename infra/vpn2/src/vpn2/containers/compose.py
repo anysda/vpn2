@@ -66,7 +66,7 @@ def scrape_config(environ):
             continue
         lines += [f'  - job_name: node-{tag}', f"    proxy_url: 'socks5://127.0.0.1:{10100 + int(address.rsplit('.', 1)[-1])}'",
                   '    static_configs:', "      - targets: ['127.0.0.1:9100']",
-                  f"        labels: {{ host: {tag}, instance: '{address}:9100' }}"]
+                  f"        labels: {{ host: {json.dumps(tag)}, instance: '{address}:9100' }}"]
     return '\n'.join(lines) + '\n', skipped
 
 

@@ -135,3 +135,10 @@ def test_node_env(name, tmp_path):
     except config.ConfigError as error:
         result = 'ConfigError: ' + str(error)
     assert result == NODEVARS[name]
+
+
+def test_scrape_label_of_a_yaml_word_tag_stays_the_tag():
+    env = {'EXIT_TAGS': 'null no', 'MGMT_IP_NULL': '10.99.0.2', 'MGMT_IP_NO': '10.99.0.3'}
+    scrape, _ = compose.scrape_config(env)
+    labels = [job['static_configs'][0]['labels']['host'] for job in yaml.safe_load(scrape)['scrape_configs']]
+    assert labels == ['ru', 'null', 'no']

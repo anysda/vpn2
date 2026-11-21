@@ -121,3 +121,12 @@ def test_backup_retention_not_a_count_refused(value):
 @pytest.mark.parametrize(('value', 'read'), [('30', '30'), ('"30"', '30'), ('0', '0'), ('', '')])
 def test_backup_retention_count_accepted(value, read):
     assert config.loads(f'entry:\n  host: 192.0.2.1\nbackup:\n  retention: {value}\n').raw['backup']['retention'] == read
+
+
+@pytest.mark.parametrize('tag', ['no', 'on', 'null', 'yes'])
+def test_set_exits_writes_a_tag_that_reads_back(tmp_path, tag):
+    """Новый экзит с тегом-словом YAML: config.yaml после exit.add читается, тег тот же."""
+    path = tmp_path / 'config.yaml'
+    path.write_text('entry:\n  host: 192.0.2.1\nexits:\n  - tag: nl\n    host: root@192.0.2.2\n')
+    config.set_exits(path, [('nl', '192.0.2.2'), (tag, '192.0.2.9')])
+    assert [(node.tag, node.host) for node in config.load(path).exits] == [('nl', '192.0.2.2'), (tag, '192.0.2.9')]

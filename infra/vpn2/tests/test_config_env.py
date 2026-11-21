@@ -262,14 +262,14 @@ class SetExitsTests(Case):
         path.write_text(self.TEXT)
         path.chmod(0o640)
         vpn2_config.set_exits(path, [('se', '192.0.2.2'), ('nl', '192.0.2.3'), ('at', '192.0.2.4')])
-        self.assertEqual(path.read_text(), self.TEXT.replace('100\n\n', '100\n  - tag: at\n    host: root@192.0.2.4\n\n'))
+        self.assertEqual(path.read_text(), self.TEXT.replace('100\n\n', '100\n  - tag: "at"\n    host: "root@192.0.2.4"\n\n'))
         vpn2_config.set_exits(path, [('se', '192.0.2.2'), ('at', '192.0.2.4')])
-        self.assertEqual(path.read_text(), self.TEXT.split('  - tag: nl')[0] + '  - tag: at\n    host: root@192.0.2.4\n\n'
+        self.assertEqual(path.read_text(), self.TEXT.split('  - tag: nl')[0] + '  - tag: "at"\n    host: "root@192.0.2.4"\n\n'
                                            '# админ\nadmin:\n  user: a\n')
         vpn2_config.set_exits(path, [('at', '192.0.2.4')])
         cfg = vpn2_config.load(path)
         self.assertEqual((cfg.exits, cfg.raw['admin']), ((vpn2_config.Node('at', '192.0.2.4'),), {'user': 'a'}))
-        self.assertIn('# список\nexits:\n  - tag: at', path.read_text())
+        self.assertIn('# список\nexits:\n  - tag: "at"', path.read_text())
         self.assertEqual(path.stat().st_mode & 0o777, 0o640)
 
 

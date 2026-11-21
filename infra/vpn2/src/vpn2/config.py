@@ -4,6 +4,7 @@
 текстовые значения остаются строками в той же форме, что в файле. Значения с секретами в тексты ошибок не попадают.
 """
 import base64
+import json
 import os
 import re
 from pathlib import Path
@@ -346,7 +347,7 @@ def set_exits(path, exits):
     column = items[0].start_mark.column if items else 4
     known = {next((value.value for key, value in item.value if key.value == 'tag'), '') for item in items}
     added = [line for tag, host in exits if tag not in known
-             for line in (f'{" " * (column - 2)}- tag: {tag}', f'{" " * column}host: root@{host}')]
+             for line in (f'{" " * (column - 2)}- tag: {json.dumps(tag)}', f'{" " * column}host: {json.dumps("root@" + host)}')]
     at = spans[-1] if spans else node.start_mark.line + 1
     lines[at:at] = added
     drop = {number + (len(added) if number >= at else 0) for number in drop}

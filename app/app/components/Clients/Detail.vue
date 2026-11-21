@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { updateClient, type ClientDetail, type ClientTraffic, type Device } from '~/composables/useClients'
 import { accessProtocols, accessStatus, protocolNames, type AccessOperation } from '#shared/access-operation'
+import { failedStatus } from '#shared/error-text'
 
 const props = defineProps<{ clientId: number, traffic: ClientTraffic | null, exits: string[] }>()
 const emit = defineEmits<{ changed: [], deleting: [id: number], gone: [id: number] }>()
@@ -52,14 +53,22 @@ async function changed() {
   emit('changed')
 }
 
-/** Правка поля; `quiet` - тост только с предупреждением сервера. */
+/**
+ * Правка поля; `quiet` - тост только с предупреждением сервера. `refused` - сервер отверг само значение
+ * (400/409/422): черновик остаётся для исправления; `failed` - прочий сбой, поле берёт сохранённое.
+ */
 async function save(patch: Parameters<typeof updateClient>[1], done: string, fail = 'Ошибка сохранения', quiet = false) {
   const id = d.value!.id
   const note = (r: { warning?: string }) => quiet && !r.warning ? undefined : doneToast(done, r.warning)
-  if (!await act('save', () => updateClient(id, patch), note, fail)) return false
+  let refused = false
+  const req = () => updateClient(id, patch).catch((e: unknown) => {
+    refused = [400, 409, 422].includes(failedStatus(e) ?? 0)
+    throw e
+  })
+  if (!await act('save', req, note, fail)) return refused ? 'refused' : 'failed'
   if (d.value?.id === id) Object.assign(d.value, patch)
   emit('changed')
-  return true
+  return 'saved'
 }
 
 // Сбой сохранения возвращает сохранённое значение, если поле ещё показывает отправленное.
@@ -67,9 +76,13 @@ async function saveName() {
   const el = nameEl.value!
   const id = d.value!.id
   const v = (el.textContent ?? '').trim()
-  if (!v || v === d.value!.name) el.textContent = d.value!.name
-  else if (await save({ name: v }, 'Имя сохранено')) el.textContent = v
-  else if (d.value?.id === id && (el.textContent ?? '').trim() === v) el.textContent = d.value.name
+  if (!v || v === d.value!.name) {
+    el.textContent = d.value!.name
+    return
+  }
+  const result = await save({ name: v }, 'Имя сохранено')
+  if (result === 'saved') el.textContent = v
+  else if (result === 'failed' && d.value?.id === id && (el.textContent ?? '').trim() === v) el.textContent = d.value.name
 }
 
 async function saveExpiry() {
@@ -83,15 +96,16 @@ async function saveExpiry() {
   const ms = (iso: string | null) => iso ? new Date(iso).getTime() : null
   const id = d.value!.id
   if (ms(next) === ms(d.value!.expiresAt)) return
-  if (await save({ expiresAt: next }, 'Срок действия сохранён')) await load()
-  else if (d.value?.id === id && expDraft.value.trim() === raw) expDraft.value = expText(d.value)
+  const result = await save({ expiresAt: next }, 'Срок действия сохранён')
+  if (result === 'saved') await load()
+  else if (result === 'failed' && d.value?.id === id && expDraft.value.trim() === raw) expDraft.value = expText(d.value)
 }
 
 const minLimit = computed(() => Math.max(1, d.value?.devices.length ?? 0))
 async function saveLimit(next: number | null, quiet = true) {
   limDraft.value = next === null ? '' : String(next)
   if (next === d.value!.deviceLimit) return true
-  if (await save({ deviceLimit: next }, 'Лимит девайсов сохранён', 'Ошибка сохранения лимита', quiet)) return true
+  if (await save({ deviceLimit: next }, 'Лимит девайсов сохранён', 'Ошибка сохранения лимита', quiet) === 'saved') return true
   limDraft.value = limText(d.value!)
   return false
 }
@@ -127,7 +141,7 @@ async function stepLimit(by: number) {
 async function saveExit(e: Event) {
   const el = e.target as HTMLSelectElement
   const tag = el.value || null
-  if (!await save({ preferredExit: tag }, `Предпочитаемый экзит: ${tag ? exitLabel(tag) : 'авто'}`, 'Ошибка')) el.value = d.value?.preferredExit ?? ''
+  if (await save({ preferredExit: tag }, `Предпочитаемый экзит: ${tag ? exitLabel(tag) : 'авто'}`, 'Ошибка') !== 'saved') el.value = d.value?.preferredExit ?? ''
 }
 
 async function toggleFreeze() {

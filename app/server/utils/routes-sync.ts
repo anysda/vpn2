@@ -3,13 +3,14 @@ import { asc } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { routes } from '../database/schema'
 
-/** Правила панели - в manual-routes.json роутера; число записанных правил. */
-export async function syncRoutesFile(): Promise<number> {
+// По очереди: иначе запись по устаревшему снимку базы могла лечь последней.
+const routesQueue = serialQueue()
+
+/** Правила панели - в manual-routes.json роутера. */
+export const syncRoutesFile = () => routesQueue(async () => {
   const rows = await useDb().select({ type: routes.type, value: routes.value, outbound: routes.outbound }).from(routes).orderBy(asc(routes.id))
   await controlApply('settings.apply', { resource: 'routes', config: rows })
-  useLogger().info({ count: rows.length }, 'routes synced')
-  return rows.length
-}
+})
 
 const DOMAIN_RE = /^\*?\.?[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i
 const CIDR_RE = /^(?:\d{1,3}\.){3}\d{1,3}(?:\/(?:\d|[12]\d|3[0-2]))?$/

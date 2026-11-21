@@ -42,7 +42,8 @@ async function initPanel() {
     if (vacuumed) log.info('database compacted')
   }, err => log.warn({ err }, 'database not compacted'))
 
-  if (exitNodes().length) await syncClientPrefsFile().catch((error) => {
+  // Во время деплоя файл роутера не трогаем: cron запишет после него.
+  if (exitNodes().length && await deployIdle()) await syncClientPrefsFile().catch((error) => {
     if (!(error instanceof ControlUnavailable)) throw error
     log.warn(error.message)
   })

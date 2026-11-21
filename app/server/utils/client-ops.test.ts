@@ -7,7 +7,7 @@ import * as schema from '../database/schema'
 
 const state = vi.hoisted(() => ({ db: null as unknown, sync: vi.fn(async () => {}) }))
 vi.mock('../database/client', () => ({ useDb: () => state.db }))
-vi.mock('./client-prefs', () => ({ syncClientPrefsFile: state.sync }))
+vi.mock('./client-prefs', () => ({ syncClientPrefsFile: state.sync, routerApplied: async (sync: () => Promise<unknown>) => sync().then(() => true, () => false) }))
 vi.mock('./route-outbound', () => ({ assertKnownOutbound: async () => {} }))
 vi.stubGlobal('useLogger', () => ({ info: () => {}, warn: () => {}, error: () => {} }))
 vi.stubGlobal('useRuntimeConfig', () => ({}))

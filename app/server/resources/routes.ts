@@ -6,7 +6,11 @@ import { devices, routes } from '../database/schema'
 const Outbound = z.string().min(1).max(64)
 const routeEvent = (type: string, id: number, title: string, detail: string, actor: string) =>
   recordEvent({ type, level: 'info', object: `route:${id}`, actor, title, detail: joinDetail(detail, actor) })
-const syncRoutes = () => syncRoutesFile().catch(err => useLogger().error({ err }, 'route sync failed'))
+// Правка уже в базе, cron повторит отправку роутеру: ответ не должен выдавать её за применённую.
+function applied<T>(ok: boolean, row: T): T {
+  if (!ok) throw createError({ statusCode: 502, statusMessage: 'routes_not_applied', message: 'Маршруты сохранены, но роутер их ещё не получил: повтор раз в минуту' })
+  return row
+}
 
 // Снимок пишет роутер рядом с manual-routes.json, перечитываем по смене ревизии.
 let cached: { revision: string, plan: RoutePlan } | null = null
@@ -57,13 +61,12 @@ export default {
     if (!type) throw createError({ statusCode: 400, statusMessage: 'invalid_value', message: 'Нужен домен или IPv4/CIDR' })
     await assertKnownOutbound(body.outbound)
     const db = useDb()
-    // libsql оборачивает ошибку UNIQUE так, что по тексту её не узнать: 409 даёт только SELECT заранее.
-    const dup = await db.select({ id: routes.id }).from(routes).where(eq(routes.value, value)).limit(1)
-    if (dup.length) throw createError({ statusCode: 409, statusMessage: 'route_exists', message: `Правило «${value}» уже существует` })
-    const [row] = await db.insert(routes).values({ type, value, outbound: body.outbound }).returning()
-    await syncRoutes()
-    await routeEvent('route_added', row!.id, `Маршрут добавлен · ${row!.value}`, `через ${outboundLabel(row!.outbound)}`, actorOf(user))
-    return row
+    // Параллельный POST того же правила: вставка ничего не возвращает, тоже 409.
+    const [row] = await db.insert(routes).values({ type, value, outbound: body.outbound }).onConflictDoNothing().returning()
+    if (!row) throw createError({ statusCode: 409, statusMessage: 'route_exists', message: `Правило «${value}» уже существует` })
+    const ok = await routerApplied(syncRoutesFile)
+    await routeEvent('route_added', row.id, `Маршрут добавлен · ${row.value}`, `через ${outboundLabel(row.outbound)}`, actorOf(user))
+    return applied(ok, row)
   }),
   'PATCH /routes/:id': admin(async (event, user) => {
     const id = idParam(event)
@@ -73,20 +76,20 @@ export default {
     const [before] = await db.select({ outbound: routes.outbound }).from(routes).where(eq(routes.id, id)).limit(1)
     const [row] = await db.update(routes).set({ outbound }).where(eq(routes.id, id)).returning()
     if (!row) throw notFound()
-    await syncRoutes()
+    const ok = await routerApplied(syncRoutesFile)
     if (before && before.outbound !== row.outbound) {
       await routeEvent('route_exit', row.id, `Выход маршрута изменён · ${row.value}`,
         `${outboundLabel(before.outbound)} → ${outboundLabel(row.outbound)}`, actorOf(user))
     }
-    return row
+    return applied(ok, row)
   }),
   'DELETE /routes/:id': admin(async (event, user) => {
     const id = idParam(event)
     const [removed] = await useDb().delete(routes).where(eq(routes.id, id)).returning({ id: routes.id, value: routes.value, outbound: routes.outbound })
     if (!removed) throw notFound()
-    await syncRoutes()
+    const ok = await routerApplied(syncRoutesFile)
     await routeEvent('route_deleted', removed.id, `Маршрут удалён · ${removed.value}`, `был через ${outboundLabel(removed.outbound)}`, actorOf(user))
-    return { ok: true }
+    return applied(ok, { ok: true })
   }),
 
   /** «Проверка маршрута»: каким выходом уйдёт домен или IP, для всех или для клиента. */

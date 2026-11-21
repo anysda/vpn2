@@ -12,7 +12,7 @@ const calls = vi.hoisted(() => ({
 
 vi.mock('./bot-api', () => ({
   requireBotAuth: () => {},
-  clientByChat: async () => ({ id: 5 }),
+  clientByChat: async () => ({ id: 5, preferredExit: 'at' }),
   botClientView: async (id: number) => ({ id }),
 }))
 vi.mock('./client-ops', async importOriginal => ({
@@ -27,7 +27,10 @@ vi.mock('./create-device', () => ({
   provisionDeviceKeys: async () => {},
 }))
 vi.mock('./openvpn', () => ({ caReady: async () => true }))
-vi.mock('./client-prefs', () => ({ syncClientPrefsFile: calls.syncPrefs }))
+vi.mock('./client-prefs', () => ({
+  syncClientPrefsFile: calls.syncPrefs,
+  routerApplied: async (sync: () => Promise<unknown>) => sync().then(() => true, () => { calls.logged(); return false }),
+}))
 
 type Event = { body?: unknown, params?: Record<string, string>, query?: Record<string, string>, status?: number }
 type Handler = (event: Event) => Promise<unknown>

@@ -4,13 +4,14 @@ import { provisionDeviceKeys } from './create-device'
 import { ensureDeviceWg, syncWireguardConfig } from './wireguard'
 import { ensureDeviceOvpn } from './openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
+import { syncClientPrefsFile } from './client-prefs'
 
 vi.hoisted(() => vi.stubGlobal('defineEventHandler', (h: unknown) => h))
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
 vi.mock('./auth', async () => (await import('../test/stubs')).authModule)
 vi.mock('./bot-api', async () => ({ ...(await import('../test/stubs')).botApiModule, botClientView: vi.fn(async () => 'view') }))
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<object>(), readBodyAs: vi.fn(async (e: { body: unknown }) => e.body) }))
-vi.mock('./client-prefs', () => ({ syncClientPrefsFile: vi.fn(async () => { calls.push('prefs') }) }))
+vi.mock('./client-prefs', () => ({ syncClientPrefsFile: vi.fn(async () => { calls.push('prefs') }), routerApplied: async (sync: () => Promise<unknown>) => sync().then(() => true, () => false) }))
 vi.mock('./bot', async importOriginal => ({ ...await importOriginal<object>(), notifyClient: vi.fn(), notifyWarning: vi.fn() }))
 vi.mock('./wireguard', () => ({ ensureDeviceWg: vi.fn(), syncWireguardConfig: vi.fn() }))
 vi.mock('./openvpn', () => ({ ensureDeviceOvpn: vi.fn(), caReady: vi.fn(async () => true) }))
@@ -90,11 +91,19 @@ describe('маршруты создания переживают сбой выд
 
   it('панель - и сверка настроек клиента после выдачи', async () => {
     const route = (await import('../resources/devices')).default['POST /clients/:id/devices']
-    dbRows.clients = [{ id: 7, name: 'Анна', tgChatId: null }]
+    dbRows.clients = [{ id: 7, name: 'Анна', tgChatId: null, preferredExit: 'at' }]
     allFail()
     const event = Object.assign(fakeEvent({ id: '7' }) as object, { body: { name: 'phone' } })
     expect(await route(event as never)).toEqual({ id: 5, clientId: 7, name: 'phone', createdAt: 1 })
     expect(logged).toEqual(allLogged)
     expect(calls.at(-1)).toBe('prefs')
+  })
+
+  it('панель - роутер не получил экзит закреплённого клиента: девайс создан, предупреждение', async () => {
+    const route = (await import('../resources/devices')).default['POST /clients/:id/devices']
+    dbRows.clients = [{ id: 7, name: 'Анна', tgChatId: null, preferredExit: 'at' }]
+    vi.mocked(syncClientPrefsFile).mockRejectedValueOnce(new Error('deploy busy'))
+    const event = Object.assign(fakeEvent({ id: '7' }) as object, { body: { name: 'phone' } })
+    expect(await route(event as never)).toMatchObject({ id: 5, warning: 'Экзит клиента для этого девайса роутер ещё не получил: повтор раз в минуту' })
   })
 })

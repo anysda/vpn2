@@ -120,10 +120,7 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     if (upd.name !== undefined) await assertNameFree(upd.name, id)
     throw createError({ statusCode: 409, statusMessage: 'device_limit_below_count', message: 'Лимит не может быть меньше числа устройств клиента' })
   }
-  const synced = patch.preferredExit === undefined || await syncClientPrefsFile().then(() => true, (err) => {
-    useLogger().error({ err }, 'client prefs sync failed')
-    return false
-  })
+  const synced = patch.preferredExit === undefined || await routerApplied(syncClientPrefsFile)
 
   const object = `client:${row.id}`
   const changes = [

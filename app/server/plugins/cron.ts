@@ -17,7 +17,11 @@ export default defineNitroPlugin((nitroApp) => {
     await runAccessOperations()
     await reportControlExpiry().catch(err => log.error({ err }, 'cron: control expiry report failed'))
     await syncControlExpiry().catch(err => log.error({ err }, 'cron: control expiry sync failed'))
-    if (await deployIdle()) await syncClientPrefsFile().catch(err => log.error({ err }, 'cron: client prefs sync failed'))
+    // Файлы роутера из базы: правка, не дошедшая из-за деплоя или сбоя службы, доезжает здесь.
+    if (await deployIdle()) {
+      await syncClientPrefsFile().catch(err => log.error({ err }, 'cron: client prefs sync failed'))
+      await syncRoutesFile().catch(err => log.error({ err }, 'cron: routes sync failed'))
+    }
     await collectTraffic().catch(err => log.error({ err }, 'cron: traffic collection failed'))
   }
 

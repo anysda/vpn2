@@ -140,8 +140,9 @@ async function addDevice(
     }
   }, idempotency)
   await provisionDeviceKeys(created.device.id, ovpnReady)
-  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
-  return { ...created, client }
+  // Адреса нового девайса нужны роутеру только для закреплённого экзита; не дошли - cron повторит.
+  const prefsApplied = !client.preferredExit || await routerApplied(syncClientPrefsFile)
+  return { ...created, client, prefsApplied }
 }
 
 /** Операция доступа: панель - номера из адреса, бот - свой девайс по чату с ответом-сводкой. */
@@ -165,12 +166,13 @@ export default {
     const { name } = await readBodyAs(event, z.object({ name: NameSchema }))
     // Адресат уведомления - из строки клиента в транзакции вставки: бота могли отвязать.
     let owner!: Client
-    const { device, replay } = await addDevice(event, name, { source: 'panel', clientId, name }, () => clientOr404(clientId), { exists: `Девайс «${name}» у клиента уже есть`, limit: limit => `Достигнут лимит девайсов (${limit})` }, (fresh) => { owner = fresh })
+    const { device, replay, prefsApplied } = await addDevice(event, name, { source: 'panel', clientId, name }, () => clientOr404(clientId), { exists: `Девайс «${name}» у клиента уже есть`, limit: limit => `Достигнут лимит девайсов (${limit})` }, (fresh) => { owner = fresh })
     // Повтор по ключу идемпотентности уже уведомил; сбой очереди бота - предупреждение, не ошибка.
-    const warning = !replay && owner?.tgChatId
+    const warnings = [!replay && owner?.tgChatId
       ? await notifyWarning(notifyClient(owner.tgChatId,
           `➕ Администратор добавил вам устройство «${name}». Откройте «📱 Мои устройства», чтобы получить конфиг.`, owner.name))
-      : undefined
+      : undefined, prefsApplied ? undefined : 'Экзит клиента для этого девайса роутер ещё не получил: повтор раз в минуту']
+    const warning = warnings.filter(Boolean).join(' ')
     return { id: device.id, clientId, name: device.name, createdAt: device.createdAt, ...(warning ? { warning } : {}) }
   }),
   'DELETE /clients/:id/devices/:deviceId': admin((event, user) => panelAccess(event, 'delete', actorOf(user))),

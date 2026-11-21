@@ -92,3 +92,16 @@ export async function deployIdle(): Promise<boolean> {
   const status = await control<{ deploy: 'idle' | 'busy' }>('manager.status.read', {}).catch(() => null)
   return status?.deploy === 'idle'
 }
+
+/** Файл роутера по правке панели. false - не записан (идёт деплой, роутер недоступен или отказал): cron повторит после деплоя. */
+export async function routerApplied(sync: () => Promise<unknown>): Promise<boolean> {
+  try {
+    if (!await deployIdle()) return false
+    await sync()
+    return true
+  }
+  catch (err) {
+    useLogger().error({ err }, 'router file sync failed')
+    return false
+  }
+}

@@ -411,3 +411,14 @@ def test_job_runs_with_the_run_settings_of_the_manager(tmp_path, monkeypatch):
     manager.Manager(tmp_path, tmp_path / 'config.yaml', tmp_path / 'lock', tmp_path).spawn(tmp_path, [], False)
     assert '--setenv=VPN2_DEVELOPMENT=true' in calls[0] and '--setenv=TLS_ACME_URL=https://198.18.10.1:14000/dir' in calls[0]
     assert not any('SOMETHING_ELSE' in arg for arg in calls[0])
+
+
+@pytest.mark.parametrize('env', [{}, {'VPN2_DEVELOPMENT': 'false'}, {'VPN2_DEVELOPMENT': 'true'}])
+def test_service_of_stage_29_keeps_the_development_mode_for_jobs(env):
+    """Служба 29-control сменяет службу мастера: exit-add/remove и повтор установки идут в режиме деплоя системы."""
+    jinja2 = pytest.importorskip('jinja2')
+    template = Path(__file__).resolve().parents[3] / 'infra/ansible/roles/control/templates/vpn2-manager.service.j2'
+    unit = jinja2.Environment(trim_blocks=True, keep_trailing_newline=True).from_string(template.read_text()).render(
+        control_infra='/opt/anysda-vpn2/infra', control_vpn2='/opt/vpn2/venv/bin/vpn2', vpn2_env=env)
+    assert ('\nEnvironment=VPN2_DEVELOPMENT=true\n' in unit) == (env.get('VPN2_DEVELOPMENT') == 'true')
+    assert 'VPN2_DEVELOPMENT' in unit or 'Environment=DEPLOY_ROOT=/opt/anysda-vpn2/infra\nExecStart=' in unit

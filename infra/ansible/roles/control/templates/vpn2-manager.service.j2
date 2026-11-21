@@ -6,6 +6,10 @@ After=network-online.target
 Type=simple
 # Задания идут службой vpn2-manager-job через systemd-run: перезапуск менеджера их не обрывает.
 Environment=DEPLOY_ROOT={{ control_infra }}
+{% if vpn2_env.VPN2_DEVELOPMENT | default('') == 'true' %}
+# Система поставлена ./deploy.sh --development: задания менеджера идут так же.
+Environment=VPN2_DEVELOPMENT=true
+{% endif %}
 ExecStart={{ control_vpn2 }} manager serve
 RuntimeDirectory=vpn2-manager
 RuntimeDirectoryMode=0755

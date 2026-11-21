@@ -18,3 +18,6 @@
 - {section: firewall, name: 'nft ip6 filter ufw6-user-input', field: 'rules[]', reason: '443 выпуск открывал на стадии 30 - после портов VPN, чистая установка открывает его на 00-bootstrap; набор правил сверяется'}
 - {section: firewall, name: ufw, field: 'status[]', reason: '443 выпуск открывал на стадии 30 - после портов VPN, чистая установка открывает его на 00-bootstrap; набор правил сверяется'}
 - {section: files, name: '/etc/ufw/user*.rules', field: sha256, reason: '443 выпуск открывал на стадии 30 - после портов VPN, чистая установка открывает его на 00-bootstrap; набор правил сверяют nft и ufw status'}
+- {section: files, name: '/opt/anysda-vpn2/.git', field: '*', reason: 'выпуск ставится git clone и обновляется git pull, чистая установка стенда - деревом ветки без .git'}
+- {section: files, name: '/opt/anysda-vpn2/.git/*', field: '*', reason: 'выпуск ставится git clone и обновляется git pull, чистая установка стенда - деревом ветки без .git'}
+- {section: files, name: /etc/systemd/system/vpn2-manager.service, field: sha256, reason: 'чистая установка стенда идёт ./deploy.sh --development - юнит менеджера с VPN2_DEVELOPMENT=true, обновление идёт без флагов'}

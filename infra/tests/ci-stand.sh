@@ -9,11 +9,11 @@
 #   sudo infra/tests/ci-stand.sh up [--release]         поднять ВМ; с флагом - с дисков сохранённого выпуска
 #   sudo infra/tests/ci-stand.sh up-bg [--release] | up-wait  то же фоном и ожидание
 #   sudo infra/tests/ci-stand.sh deploy <образ панели>  полный деплой
-#   sudo infra/tests/ci-stand.sh deploy-release <тег> <манифест>  установка выпуска по манифесту
+#   sudo infra/tests/ci-stand.sh deploy-release <тег> <манифест>  выпуск по его README: git clone, ./deploy.sh
 #   sudo infra/tests/ci-stand.sh wizard <образ панели>  чистая установка мастером: ./deploy.sh без config.yaml, API мастера
 #   sudo infra/tests/ci-stand.sh release-save           остановить ВМ, диски и базу слепка выпуска - в кэш
 #   infra/tests/ci-stand.sh release-key <тег>            ключ кэша установленного выпуска (stand.yml)
-#   sudo infra/tests/ci-stand.sh deploy-upgrade <образ> <тег>     поверх выпуска - дерево ветки
+#   sudo infra/tests/ci-stand.sh deploy-upgrade <образ> <тег>     обновление до ветки: git pull && ./deploy.sh
 #   sudo infra/tests/ci-stand.sh deploy-udp             стадии до 22-adguard
 #   sudo infra/tests/ci-stand.sh verify [--stop-openvpn]
 #   sudo infra/tests/ci-stand.sh ansible-ping           ansible с entry достаёт все узлы
@@ -88,6 +88,12 @@ DEPLOY_LOCK_WAIT+=" && { [ ! -e $OLD_STATE/deploy.lock ] || flock -w 70 $OLD_STA
 # Let's Encrypt на адрес 198.18.x не выпустит: сертификаты выдаёт тестовый ACME (pebble) на мосту,
 # без проверки вызова. Стадии берут адрес и корень из окружения ssh-сессии (pam_env, /etc/environment).
 PEBBLE_URL=https://github.com/letsencrypt/pebble/releases/download/v2.10.1/pebble-linux-amd64.tar.gz
+# Вместо GitHub и ghcr у сценария обновления - репозиторий (git daemon) и реестр образов стенда на мосту,
+# с сертификатом тестового ACME; реестр - на 443: имя образа в манифесте без порта, как у ghcr.
+# entry зовёт их адресами README: git clone - через url.insteadOf,
+# манифест выпуска - через VPN2_RELEASE_SOURCE в /etc/environment.
+GITHUB_URL=https://github.com/anysda/vpn2
+REGISTRY=$NET.1
 PEBBLE_SHA256=4f2fcb5bca8c85c9cf73ad140fccfc0d2be40bd81ab99879c79b7b8a0b4f70ed
 ACME_URL=https://$NET.1:14000/dir
 ACME_ROOT=/etc/vpn2-ci/acme.pem
@@ -199,6 +205,96 @@ EOF
   PEBBLE_VA_ALWAYS_VALID=1 PEBBLE_VA_NOSLEEP=1 PEBBLE_WFE_NONCEREJECT=0 \
     setsid nohup "$dir/pebble" -config "$dir/pebble.json" > "$dir/pebble.log" 2>&1 < /dev/null &
   log "тестовый ACME: $ACME_URL"
+}
+
+# Репозиторий стенда: main указывает на <ревизию>, как main GitHub в момент установки или обновления.
+remote_up() {  # <ревизия>
+  local bare=$STAND_DIR/git/vpn2.git commit
+  commit=$(git -C "$REPO_ROOT" rev-parse "${1:?ревизия}^{commit}") || die "ревизии $1 нет в $REPO_ROOT"
+  [[ -d $bare ]] || git init -q --bare -b main "$bare"
+  git -C "$REPO_ROOT" push -q -f "$bare" "$commit:refs/heads/main" || die "main репозитория стенда не встал на $1"
+  [[ -f $STAND_DIR/git/daemon.pid ]] && kill -0 "$(cat "$STAND_DIR/git/daemon.pid")" 2>/dev/null && return
+  git daemon --detach --reuseaddr --export-all --listen="$NET.1" --pid-file="$STAND_DIR/git/daemon.pid" \
+    --base-path="$STAND_DIR/git" "$STAND_DIR/git" || die 'git daemon стенда не встал'
+}
+
+# Реестр образов стенда; раннер ему доверяет: docker - certs.d, buildx и python - системный корень.
+registry_up() {
+  install -D -m 644 "$STAND_DIR/acme.pem" "/etc/docker/certs.d/$REGISTRY/ca.crt"
+  install -m 644 "$STAND_DIR/acme.pem" /usr/local/share/ca-certificates/vpn2-ci-stand.crt
+  update-ca-certificates >/dev/null
+  docker inspect vpn2-ci-registry >/dev/null 2>&1 || docker run -d -q --name vpn2-ci-registry -p "$REGISTRY:443:5000" \
+    -v "$STAND_DIR/acme.pem:/certs/cert.pem:ro" -v "$STAND_DIR/acme/acme.key:/certs/key.pem:ro" \
+    -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/cert.pem -e REGISTRY_HTTP_TLS_KEY=/certs/key.pem \
+    mirror.gcr.io/library/registry:2 >/dev/null || die 'реестр стенда не встал'
+  local t0=$SECONDS
+  until curl -fsS -o /dev/null "https://$REGISTRY/v2/"; do
+    (( SECONDS - t0 < 30 )) || die "реестр стенда не отвечает на https://$REGISTRY/v2/"
+    sleep 1
+  done
+}
+
+# Узлы ходят к GitHub и ghcr стенда (до базы слепка: в слепок установки это не попадает): образы
+# из манифеста тянут и экзиты (docker ставится позже и берёт системный корень), репозиторий и
+# манифест - только entry.
+stand_sources() {
+  local node ip
+  for node in "${NODES[@]}"; do
+    read -r _ ip _ <<<"$node"
+    ssh_node "$ip" "install -m 644 $ACME_ROOT /usr/local/share/ca-certificates/vpn2-ci-stand.crt && update-ca-certificates >/dev/null" \
+      || die "узел $ip не доверяет реестру стенда"
+  done
+  ssh_node "$ENTRY" "git config --system url.git://$NET.1/vpn2.git.insteadOf $GITHUB_URL \
+    && { grep -q '^VPN2_RELEASE_SOURCE=' /etc/environment || echo VPN2_RELEASE_SOURCE=https://$REGISTRY/vpn2/panel >> /etc/environment; }" \
+    || die 'entry не настроен на репозиторий и реестр стенда'
+}
+
+# Манифест выпуска - в реестр стенда тегом release-<commit>, как его публикует images.yml в ghcr.
+manifest_publish() {  # <файл манифеста>
+  python3 - "https://$REGISTRY/v2/vpn2/panel" "${1:?файл манифеста}" <<'PY' || die "манифест $1 не опубликован в реестре стенда"
+import hashlib, json, sys, urllib.parse, urllib.request
+base, path = sys.argv[1:]
+data = open(path, 'rb').read()
+
+def blob(body, media):
+    digest = 'sha256:' + hashlib.sha256(body).hexdigest()
+    with urllib.request.urlopen(urllib.request.Request(base + '/blobs/uploads/', method='POST')) as answer:
+        location = urllib.parse.urljoin(base, answer.headers['Location'])
+    urllib.request.urlopen(urllib.request.Request(f"{location}{'&' if '?' in location else '?'}digest={digest}",
+                                                  data=body, method='PUT',
+                                                  headers={'Content-Type': 'application/octet-stream'})).close()
+    return {'mediaType': media, 'digest': digest, 'size': len(body)}
+
+manifest = {'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.manifest.v1+json',
+            'artifactType': 'application/vnd.anysda.vpn2.release.v1+json',
+            'config': blob(b'{}', 'application/vnd.oci.empty.v1+json'),
+            'layers': [blob(data, 'application/vnd.anysda.vpn2.release-manifest.v1+json')]}
+urllib.request.urlopen(urllib.request.Request(f"{base}/manifests/release-{json.loads(data)['commit']}", method='PUT',
+                       data=json.dumps(manifest).encode(), headers={'Content-Type': manifest['mediaType']})).close()
+PY
+}
+
+# Сборка ветки - в реестр стенда, как её выкладывает images.yml: панель этого коммита, бот, аварийка
+# и мастер - образы dev; манифест строит тот же vpn2.release build-manifest.
+release_publish() {  # <образ панели>
+  local dir=$STAND_DIR/release component source pushed
+  mkdir -p "$dir/digests"
+  for component in panel tgbot emergency wizard; do
+    source=$1
+    [[ $component == panel ]] || { source=ghcr.io/anysda/vpn2/$component:dev; docker pull -q "$source" >/dev/null; } \
+      || die "образ $source не скачан"
+    docker tag "$source" "$REGISTRY/vpn2/$component:stand" && docker push -q "$REGISTRY/vpn2/$component:stand" >/dev/null \
+      || die "образ $component не выложен в реестр стенда"
+    pushed=$(docker inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$REGISTRY/vpn2/$component:stand" \
+      | sed -n "s|^$REGISTRY/vpn2/$component@||p" | head -1)
+    [[ -n $pushed ]] || die "digest образа $component в реестре стенда не известен"
+    echo "$pushed" > "$dir/digests/$component.txt"
+  done
+  PYTHONPATH="$REPO_ROOT/infra/vpn2/src" python3 -m vpn2.release build-manifest --root "$REPO_ROOT" \
+    --digests "$dir/digests" --output "$dir/release-manifest.json" --repository "$REGISTRY/vpn2" \
+    || die 'манифест сборки ветки не построен'
+  manifest_publish "$dir/release-manifest.json"
+  log "сборка $(git -C "$REPO_ROOT" rev-parse --short HEAD) выложена в реестр стенда"
 }
 
 # Прогрев ВМ сразу после загрузки, пока раннер собирает панель и деплой
@@ -590,7 +686,7 @@ entry_run() {
   local name=$1 command=$2 shown=0 lines rc
   [[ $command != *--development* ]] \
     || command="for c in tgbot emergency; do docker image inspect ghcr.io/anysda/vpn2/\$c:dev >/dev/null 2>&1 && export \${c^^}_IMAGE_PULL=false; done; $command"
-  ssh_node "$ENTRY" "rm -f /root/$name.rc; cd /opt/anysda-vpn2 || exit; setsid nohup bash -c '$command > /root/$name.log 2>&1; echo \$? > /root/$name.rc' >/dev/null 2>&1 < /dev/null &"
+  ssh_node "$ENTRY" "rm -f /root/$name.rc; cd /opt/anysda-vpn2 || exit; setsid nohup bash -c '{ $command; } > /root/$name.log 2>&1; echo \$? > /root/$name.rc' >/dev/null 2>&1 < /dev/null &"
   while :; do
     lines=$(ssh_node "$ENTRY" "wc -l < /root/$name.log" 2>/dev/null || echo "$shown")
     if (( lines > shown )); then
@@ -620,37 +716,23 @@ stage_stats() {
   entry_stats "после ${label%, }"
 }
 
-# push_tree             - чистый каталог, исходники ветки (ls-files);
-# push_tree --ref <тег>  - чистый каталог, исходники тега (git archive);
-# push_tree --over <тег> - каталог остаётся, поверх файлы ветки, удалённые с
-#                          тега пути стираются; config.yaml не трогается и не
-#                          рендерится, неотслеживаемые infra/secrets и
-#                          infra/state старого выпуска остаются (в потоке их нет).
+# push_tree               - чистый каталог, исходники ветки (ls-files);
+# push_tree --clone <тег>  - выпуск по его README: git clone (main репозитория стенда - на теге),
+#                            config.yaml - шаблон тега.
 push_tree() {
   local mode=${1:-} tag=${2:-} template=$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml
   case "$mode" in
     '') log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) → entry:/opt/anysda-vpn2"
         ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
-        git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2' ;;
-    --ref) log "исходники $tag → entry:/opt/anysda-vpn2"
-        ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
-        # umask 0022: права каталогов как у дерева ветки, иначе слепок считает их лишними
-        git -C "$REPO_ROOT" -c tar.umask=0022 archive "${tag:?тег}" | ssh_node "$ENTRY" 'tar -xf - -C /opt/anysda-vpn2' ;;
-    --over) log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) поверх $tag → entry:/opt/anysda-vpn2"
-        # поток из ls-files: секретов и состояния в нём нет, они остаются на месте;
-        # отслеживаемый infra/secrets/.gitignore ложится как в чистой установке
-        git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2 --exclude=config.yaml'
-        # --no-renames: переименованный после тега файл считается удалённым, старое имя стирается
-        # опустевший каталог уходит вместе с файлом, как при git pull: иначе слепок
-        # видит каталог, которого в чистой установке нет
-        git -C "$REPO_ROOT" diff -z --name-only --no-renames --diff-filter=D "${tag:?тег}" HEAD \
-          | ssh_node "$ENTRY" 'cd /opt/anysda-vpn2 && xargs -0 -r sh -c '\''for f; do rm -f -- "$f"; d=$(dirname -- "$f"); [ "$d" = . ] || rmdir -p --ignore-fail-on-non-empty -- "$d" 2>/dev/null || true; done'\'' _'
-        return 0 ;;
+        git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - --no-same-owner -C /opt/anysda-vpn2' ;;
+    --clone) log "git clone $GITHUB_URL ($tag) → entry:/opt/anysda-vpn2"
+        remote_up "${tag:?тег}"
+        ssh_node "$ENTRY" "rm -rf /opt/anysda-vpn2 && git clone -q $GITHUB_URL /opt/anysda-vpn2" || die "git clone $tag на entry не прошёл" ;;
     *) die "push_tree: неизвестный режим $mode" ;;
   esac
   # Выпуск ставится своим шаблоном: config.yaml 1.2.0 - с паролем root.
   local rendered
-  rendered=$( { if [[ $mode == --ref ]]; then git -C "$REPO_ROOT" show "$tag:infra/tests/fixtures/config/etalon.yaml"; else cat "$template"; fi; } \
+  rendered=$( { if [[ $mode == --clone ]]; then git -C "$REPO_ROOT" show "$tag:infra/tests/fixtures/config/etalon.yaml"; else cat "$template"; fi; } \
     | sed -e "s|@ENTRY_HOST@|$ENTRY|g" -e "s|@EXIT_HOST@|$EXIT|g" -e "s|@EXIT_TAG@|$EXIT_TAG|g" \
       -e "s|@PASSWORD@|$(cat "$STAND_DIR/root-password")|g" -e "s|@ADMIN_KEY@|$(cat "$STAND_DIR/id_ed25519.pub")|g" \
       -e "s|@ADMIN_PASSWORD@|$(cat "$STAND_DIR/admin-password")|g" -e "s|@PANEL_IMAGE@|$PANEL_REF|g")
@@ -659,7 +741,7 @@ push_tree() {
   fi
   ssh_node "$ENTRY" "umask 077; cat > /opt/anysda-vpn2/config.yaml" <<<"$rendered"
   # Пароль панели деплой не хранит: стенд помнит свой (выпуск 1.2.0 держал его в /etc/anysda).
-  [[ $mode == --ref ]] || ssh_node "$ENTRY" "umask 077; cat > $ADMIN_PASSWORD_FILE" < "$STAND_DIR/admin-password"
+  [[ $mode == --clone ]] || ssh_node "$ENTRY" "umask 077; cat > $ADMIN_PASSWORD_FILE" < "$STAND_DIR/admin-password"
 }
 
 # Как человек по README: ./deploy.sh -key на entry, строка - в authorized_keys экзитов.
@@ -887,18 +969,21 @@ cmd_wizard() {
   log "мастер: установка и уход за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
 }
 
-# Сценарий 4, шаг 1: выпуск <тег> ставится по манифесту (образы по digest).
+# Сценарий 4, шаг 1: выпуск <тег> по его README - git clone и ./deploy.sh; манифест выпуска
+# (опубликованный в GitHub) деплой скачивает сам из реестра стенда.
 cmd_deploy_release() {
   local tag=${1:?тег выпуска} manifest=${2:?файл манифеста выпуска} started=$SECONDS rc=0
   [[ -f $manifest ]] || die "нет файла манифеста $manifest"
   host_stats 'до деплоя'
   apt_proxy_up --if-down
+  registry_up
+  manifest_publish "$manifest"
   reboot_nodes
   push_tree
+  stand_sources
   snapshot_base
-  push_tree --ref "$tag"
-  ssh_node "$ENTRY" 'cat > /root/release-manifest.json' < "$manifest"
-  entry_run release './deploy.sh --manifest /root/release-manifest.json' || rc=$?
+  push_tree --clone "$tag"
+  entry_run release ./deploy.sh || rc=$?
   log "установка выпуска $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   warm_report
   return "$rc"
@@ -938,7 +1023,7 @@ release_base_tree() {
   local tree=$SNAP_DIR/tree
   ssh_node "$ENTRY" "rm -rf $tree && mkdir -p $tree/opt/anysda-vpn2"
   git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - \
-    | ssh_node "$ENTRY" "tar -xzf - -C $tree/opt/anysda-vpn2"
+    | ssh_node "$ENTRY" "tar -xzf - --no-same-owner -C $tree/opt/anysda-vpn2"
   snapshot_run "$ENTRY" "--root $tree --out $SNAP_DIR/tree.json"
   ssh_node "$ENTRY" "python3 - $SNAP_DIR/base.json $SNAP_DIR/tree.json" <<'PY' || die 'база слепка: дерево ветки не подставлено'
 import json, sys
@@ -978,7 +1063,8 @@ release_key() {
   local tag=${1:?тег выпуска}
   printf '%s-%s-%s\n' "$tag" "$IMAGE_KEY" "$( {
     declare -p NODES NET
-    declare -f seed warm_script push_tree snapshot_base snapshot_tool snapshot_run cmd_deploy_release acme_up reboot_nodes
+    declare -f seed warm_script push_tree snapshot_base snapshot_tool snapshot_run cmd_deploy_release acme_up reboot_nodes \
+      remote_up registry_up stand_sources manifest_publish
     git -C "$REPO_ROOT" show "$tag:infra/tests/fixtures/config/etalon.yaml"
     cat "$REPO_ROOT/infra/tests/snapshot.py"
   } | sha256sum | cut -c1-16)"
@@ -1278,7 +1364,8 @@ cmd_deploy_again() {
   cmd_snapshot "$out" snapshot-again
 }
 
-# Сценарий 4, шаг 2: поверх выпуска <тег> - дерево ветки, ./deploy.sh --development.
+# Сценарий 4, шаг 2: обновление по README - git pull && ./deploy.sh; main репозитория стенда - коммит
+# ветки, его сборка - в реестре стенда.
 cmd_deploy_upgrade() {
   local image=${1:?образ панели (docker-образ на этой машине)} tag=${2:?тег выпуска} started=$SECONDS rc=0
   close_entry_mux
@@ -1293,11 +1380,15 @@ cmd_deploy_upgrade() {
   local cert_before issued
   cert_before=$(served_fp)
   issued=$(openssl s_client -connect "$ENTRY:443" </dev/null 2>/dev/null | openssl x509 -noout -startdate | cut -d= -f2)
-  push_tree --over "$tag"
-  load_panel "$image" || return 1
-  entry_run deploy './deploy.sh --development' || rc=$?
+  registry_up
+  release_publish "$image"
+  remote_up HEAD
+  log 'обновление: git pull && ./deploy.sh'
+  entry_run deploy 'git pull && ./deploy.sh' || rc=$?
   log "обновление с $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
+  [[ $(ssh_node "$ENTRY" 'git -C /opt/anysda-vpn2 rev-parse HEAD') == "$(git -C "$REPO_ROOT" rev-parse HEAD)" ]] \
+    || die 'обновление: git pull не привёл дерево entry к коммиту ветки'
   password_refused || die 'обновление: вход по паролю не закрыт'
   # Пароль архивов 1.2.0 (stand-etalon из config.yaml выпуска) показан рядом с новым ключом и ушёл с сервера.
   [[ $(ssh_node "$ENTRY" "grep -c 'Пароль архивов, сделанных до перехода на ключ: stand-etalon' /root/deploy.log") == 1 ]] \
@@ -1744,6 +1835,8 @@ cmd_collect() {
 
 cmd_down() {
   local node name
+  docker rm -f vpn2-ci-registry >/dev/null 2>&1 || true
+  [[ ! -f $STAND_DIR/git/daemon.pid ]] || kill "$(cat "$STAND_DIR/git/daemon.pid")" 2>/dev/null || true
   for node in "${NODES[@]}"; do
     read -r name _ <<<"$node"
     if [[ -f "$STAND_DIR/$name.pid" ]]; then

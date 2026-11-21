@@ -5,10 +5,10 @@ name: stand
 #   WireGuard/OpenVPN/IKEv2; дальше на своём стенде одна из двух частей:
 #   again - слепок против эталона и повторный деплой (слепок тот же с допусками
 #   ignore-again.yml); restore - restore эталонного архива бэкапа.
-# upgrade: выпуск UPGRADE_FROM, поставленный по манифесту (на dev диски узлов
-#   после установки живут в кэше, ВМ грузятся с них), обновление деревом ветки, слепок
-#   как у чистой установки с допусками ignore-upgrade.yml. С прошлого выпуска,
-#   на ветке выпуска - с 1.1.5.
+# upgrade: выпуск UPGRADE_FROM по его README - git clone и ./deploy.sh (на dev диски узлов
+#   после установки живут в кэше, ВМ грузятся с них), обновление git pull && ./deploy.sh;
+#   GitHub и ghcr заменяют репозиторий и реестр стенда. Слепок как у чистой установки
+#   с допусками ignore-upgrade.yml. С прошлого выпуска, на ветке выпуска - с 1.1.5.
 # Бот с поддельным токеном (панель жива, бот на паузе) - после обновления.
 # udp-cut: на своём стенде обрыв UDP entry → экзит.
 # Запускается на dev, на ветке выпуска и вручную, не на каждый PR. Коммит выпуска
@@ -439,8 +439,11 @@ jobs:
         if: steps.release-cache.outputs.cache-hit != 'true' && github.event_name == 'push'
         run: sudo infra/tests/ci-stand.sh up-wait
 
+      # Токен - для API релизов GitHub, из которого build-manifest берёт хеши компонентов.
       - name: обновление до ветки
-        run: sudo infra/tests/ci-stand.sh deploy-upgrade vpn2-stand/panel:${{ github.sha }} "$UPGRADE_FROM"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: sudo --preserve-env=GITHUB_TOKEN infra/tests/ci-stand.sh deploy-upgrade vpn2-stand/panel:${{ github.sha }} "$UPGRADE_FROM"
 
       # Слепки в stand-report: collect проверяет их на пароль стенда, а
       # артефакт отчёта их отдаёт.

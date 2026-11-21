@@ -422,11 +422,19 @@ def test_terminal_deploy_after_a_failed_wizard_install_closes_the_wizard(tree, i
     monkeypatch.setattr(wizard, 'RUN', tree / 'wizard-run')
     monkeypatch.setattr(wizard, 'CADDY', caddy)
     monkeypatch.setattr(tls, 'serve_routes', functools.partial(tls.serve_routes, caddy_dir=caddy))
+    from vpn2 import manager
+    job = tree / 'manager/jobs/1/job.json'
+    job.parent.mkdir(parents=True)
+    job.write_text(json.dumps({'id': 1, 'kind': 'install', 'tag': '', 'host': '', 'state': 'failed', 'skipped': []}))
+    defaults = manager.Manager.__init__.__defaults__
+    monkeypatch.setattr(manager.Manager.__init__, '__defaults__', (tree / 'manager', *defaults[1:]))
     extra = {'FAKE_VERIFY': '0', **extra, **({'VPN2_JOB': str(tree / 'job')} if 'VPN2_JOB' in extra else {})}
     done = inproc(*args, **extra)
     assert done.returncode == (0 if closed or 'VPN2_JOB' in extra else 1), done.stderr
     assert state.exists() is not closed
     assert (caddy / tls.ROUTES / 'wizard.conf').exists() is routed and (caddy / tls.SITES).exists() is routed
+    # Упавшее задание установки закрыто: панель добавляет экзит без «забыть».
+    assert json.loads(job.read_text())['state'] == ('forgotten' if closed else 'failed')
     if closed:
         units = (tree / 'units').read_text()
         assert 'systemctl disable vpn2-wizard' in units and 'systemctl stop --no-block vpn2-wizard' in units

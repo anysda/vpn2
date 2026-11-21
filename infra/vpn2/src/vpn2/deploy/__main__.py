@@ -17,7 +17,7 @@ from vpn2.config import STATE_DIR, drop_passwords
 from vpn2.deploy import (CONFIG, INFRA, REPO, ROOT, G, E, admin_key_check, die, finish_secrets, install_prereqs,
                          installed, migrate_state, ok, orchestrator_key, pub, read, report, step, svc, take_secrets)
 from vpn2.deploy.run import EXIT_FIRST, EXIT_STAGES, Deploy, Interrupted
-from vpn2.manager import Progress
+from vpn2.manager import Manager, Progress
 
 # Действия заданий менеджера установки и число их аргументов с действием: exit-add <тег>, exit-remove <тег> <адрес>.
 EXIT_ACTIONS = {'exit-add': 2, 'exit-remove': 3}
@@ -112,9 +112,12 @@ def dispatch(deploy, argv, new_server=None):
     # Секреты уже в хранилище (take_secrets до стадий): успешный прогон стирает их из config.yaml.
     if finish_secrets(panel=action in ('', 'recover') or (action == '30-frontend' and argv[1] in ('ru', 'all'))):
         ok('секреты перенесены в зашифрованное хранилище entry и стёрты из config.yaml')
-    # Установку мастера довёл терминал: маршрут, состояние и юнит мастера уходят, как после done его задания.
-    if action in ('', 'recover') and not deploy.progress and wizard.STATE.is_dir():
-        wizard.Wizard().finish()
+    # Установку мастера довёл терминал: маршрут, состояние и юнит мастера уходят, как после done его задания,
+    # упавшее задание установки закрыто - панель не ждёт «забыть».
+    if action in ('', 'recover') and not deploy.progress:
+        if wizard.STATE.is_dir():
+            wizard.Wizard().finish()
+        Manager().deployed()
     return code
 
 
